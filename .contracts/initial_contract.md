@@ -20,32 +20,44 @@ v1 non-goals:
 
 *Detector*: the dead-code tool under test. *Corpus project*: a repository the detector runs
 against. *Finding*: one normalized detector report item. *Finding identity*: the stable hash
-naming a finding across runs (§7). *Diff class*: `new`, `dropped`, or `confidence-changed`.
-*Run manifest*: the record of resolved refs, versions, and settings for one run. *Blast
-radius*: all finding diffs plus summary totals. *Hook binding point*: pre-triage, triage, or
-post-triage (§10).
+naming a finding across runs (§7). *Finding locator*: a reference to one occurrence in a
+specific report — report reference, identity, line (§7). *Diff class*: `new`, `dropped`, or
+`changed` (§8). *Run manifest*: the record of resolved refs, versions, environments, and
+settings for one run. *Blast radius*: all finding diffs plus summary totals. *Hook binding
+point*: pre-triage, triage, or post-triage (§10).
 
 ## 3. Operating model
 
 - The detector is obtained by cloning its repository and installing the base and head refs
   into two isolated cached virtualenvs (`uv pip` when on `PATH`, stdlib `venv` + `pip`
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
-- Determinism: corpus refs are resolved once per run and then pinned (including
-  latest-on-branch mode); both detector revisions analyze byte-identical checkouts; resolved
-  SHAs are recorded in the run manifest; the analysis phase performs no network access
-  (network only during acquisition).
-- Cache: virtualenvs and checkouts live under the `platformdirs` cache directory, keyed by
-  (repository, resolved SHA), guarded by `filelock`.
+- Two-phase runs: an **acquisition** phase (git fetches, package installs) in which network
+  access is permitted and every fetch is recorded in the run manifest (URLs, resolved SHAs,
+  installed versions), followed by an **analysis** phase whose subprocesses run with
+  networking disabled (§11). Corpus refs are resolved once per run and then pinned
+  (including latest-on-branch mode); both detector revisions analyze byte-identical
+  checkouts.
+- Environment integrity: virtualenv cache entries under the `platformdirs` cache directory
+  are keyed by the full fingerprint (repository, resolved SHA, Python version and ABI,
+  platform tag, installer name and version) and guarded by `filelock`; checkout caches are
+  keyed by (repository, SHA). The manifest records the resolved dependency freeze of both
+  environments, and the report must surface any non-detector dependency delta between the
+  base and head environments as an explicit drift warning. `--fresh` forces same-run
+  rebuilds of both environments.
 - Concurrency: `asyncio` orchestrates per-project subprocesses with a configurable
   parallelism limit and a per-(project, tool) timeout.
 
 ## 4. Supported detectors
 
-- v1 adapters: `vulture`, `skylos`, `culler`, `mollify` (permissively licensed,
-  uv-installable, Python-focused, actively developed).
+- v1 adapters: `vulture` and `skylos` (pure Python, generic source-install path) in
+  Phase 1; `culler` and `mollify` (Rust/maturin builds requiring a declared toolchain) in
+  Phase 2. All four are permissively licensed, uv-installable, and actively developed.
 - Adapters implement a typed `Protocol`: raw invocation output → `list[Finding]`, declaring
-  capabilities (e.g. has-confidence, output format). The interface is not Python-specific
-  (paths plus optional symbol), leaving room for tools such as `knip`.
+  capabilities (e.g. has-confidence, output format) and a **build recipe** — build backend
+  plus toolchain prerequisites with minimum versions (e.g. Rust and maturin for `culler`
+  and `mollify`) — which the runner verifies before building and CI provisions for gated
+  detectors. The interface is not Python-specific (paths plus optional symbol), leaving
+  room for tools such as `knip`.
 - Future candidates (non-normative): `pydeadcode`, `dangle`, `deadpy`, `uncalled`, and
   subset-capability tools (ruff, mypy, pyright, CodeQL).
 - Licensing rule: GPL/AGPL detectors (e.g. `deadcode` AGPL-3.0, pylint GPL-2.0) may only
@@ -87,18 +99,24 @@ post-triage (§10).
   Minor versions are additive-only; breaking changes require a major bump.
 - `Finding` fields: tool, project, path (repo-relative POSIX), symbol (nullable), kind,
   message, line span, `confidence: int | None`, raw excerpt reference.
-- Finding identity: a stable hash over (tool, project name, path, symbol, kind) — excluding
-  line and confidence — with an ordinal disambiguating identical tuples. Identity is what
-  diffing matches on and what `bisect` accepts.
+- Finding identity: a stable hash over (tool, project name, path, symbol, kind), excluding
+  line and confidence. Identity carries no positional ordinal; a report holds a *multiset*
+  of occurrences (line span, message, confidence) per identity. Persistent references — the
+  `bisect` input in particular — use a *finding locator* (report reference, identity, line),
+  never a position-dependent key.
 
 ## 8. Diff engine
 
-- Both revisions see identical files, so matching is exact (identity, line) first, then
-  identity-only; results classify as `new`, `dropped`, or `confidence-changed` (the latter
-  only for tools declaring the confidence capability).
+- Both revisions see identical files. Matching is exact (identity, line) first, then
+  per-identity multiset reconciliation of the remaining occurrences; results classify as
+  `new`, `dropped`, or `changed`, where `changed` carries a
+  `changed_fields ⊆ {line-span, message, confidence}` set (confidence only for tools
+  declaring that capability). Every normalized observable field participates in the
+  comparison; no identity-stable behavior change may go silently unclassified.
 - Caps on maximum results and excerpt lines are configurable; the report always states
-  totals before truncation (new/dropped/changed counts, per project and overall) and notes
-  any truncation.
+  totals before truncation (new/dropped/changed counts, with confidence changes broken out,
+  per project and overall) and notes any truncation. Rendered reports cap message-only
+  changes to a count plus bounded examples; the JSON report retains full detail.
 
 ## 9. Reporting
 
@@ -129,10 +147,30 @@ post-triage (§10).
 
 ## 11. Security posture
 
-Defense-in-depth, not injection *detection*: excerpts are untrusted, sanitization is
-mandatory, and an optional deny-pattern pre-triage hook may veto ingesting an entire
-repository. All of this is documented as best-effort; no component claims to detect prompt
-injection reliably.
+- Trust boundary: user-authored configuration, hooks, and `--old-cmd`/`--new-cmd` are
+  trusted user code; corpus content — files, paths, and detector output derived from them —
+  is always untrusted.
+- Injection: defense-in-depth, not *detection* — excerpts are untrusted, sanitization is
+  mandatory, and an optional deny-pattern pre-triage hook may veto ingesting an entire
+  repository. All best-effort; no component claims to detect prompt injection reliably.
+- Subprocess hygiene: every subprocess launch uses an argv list with `shell=False`; every
+  argv element originates from typed, validated models; per-tool corpus commands are argv
+  lists, never shell strings; corpus content is never interpolated into any command; no
+  `eval`/`exec` of dynamic content anywhere. (ruff `ALL` includes the bandit rules —
+  S602/S604, S102/S307 — and AGENTS.md forbids `noqa`, so the linter mechanically enforces
+  this clause.)
+- Network isolation: analysis-phase subprocesses run with networking disabled (Linux network
+  namespaces or a container with `--network=none`), enforced on the Linux reference platform
+  and in CI, best-effort elsewhere. The manifest records whether isolation was enforced, and
+  reports flag unenforced runs. This also limits the blast radius of a malicious corpus
+  repository exploiting a detector parser bug.
+- Corpus code execution: the core (Phases 1–2) never executes corpus code — detectors only
+  parse it. Any workflow that executes corpus code (coverage evidence, runner files,
+  distillation; Phases 3–4) runs only inside an isolated container: no network, read-only
+  source mount, non-root, CPU/memory/time limits. The sole output channel is declared
+  artifact paths (e.g. coverage data), re-ingested as untrusted, schema-validated input.
+  Without a container runtime these features hard-fail; there is no host-execution
+  fallback.
 
 ## 12. CLI surface
 
@@ -140,11 +178,16 @@ injection reliably.
 
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
   [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
-  [--old-cmd CMD --new-cmd CMD] [--project URL]`
+  [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]`
 - `corpus validate` — parse and validate the corpus TOML.
 - `corpus license-check` — §6, locally or in CI.
-- `bisect --finding ID --tool T --good REF --bad REF` — binary search over detector commits,
-  building virtualenvs per step and running only the affected project.
+- `bisect --report REPORT.json --finding ID [--line N] --good REF --bad REF [--repo URL]
+  [--predicate P]` — binary search over detector commits. The prior report supplies the
+  manifest (detector repository, corpus pins), so every step reproduces the identical
+  checkout; the finding locator resolves the affected project, which is the only project
+  run. The predicate defaults from the finding's diff class in the report (`new` → first
+  commit where present; `dropped` → first where absent; confidence change → first where
+  confidence differs from base) and may be overridden.
 - `schema export` — regenerate `liveness_primer/schemas/`.
 
 ## 13. Internal corpus
@@ -154,7 +197,7 @@ injection reliably.
   `evidence: coverage | manual | llm-assisted | runner`, provenance (source project, commit,
   extraction date), and an optional runner link — a repo-relative path to a runner file
   (e.g. `corpus_runners/<name>.py`) that executably demonstrates the evidence in ambiguous
-  cases.
+  cases. Runner files execute only under the §11 container-isolation rules.
 - Rule: coverage evidence can only support `live`; absence of coverage yields `no-coverage`,
   never `dead`.
 
@@ -163,12 +206,15 @@ injection reliably.
 Phase 4. Only the schemas are contractually fixed now: §13 annotations plus provenance
 tracing every distilled entry to an approved corpus project. Workflows (tool-disagreement
 mining, finding-oscillation mining, interactive or LLM-assisted adversarial reproducers) are
-explicitly experimental and non-normative.
+explicitly experimental and non-normative. All corpus-code execution in distillation is
+subject to the §11 container-isolation rule.
 
 ## 15. Testing strategy (binding)
 
 - Testability by construction: no module-level side effects; git operations exercised
-  against `git init` throwaway repositories; no network in unit tests.
+  against `git init` throwaway repositories; no network in unit tests; sandbox and
+  container launchers are injectable so isolation logic is testable without real
+  containers.
 - Shipped test utilities: a fake detector able to produce any required output/diff
   characteristic between fake pinned "commits", and a fake project factory producing small
   synthetic projects with injected characteristics.
@@ -200,12 +246,14 @@ factory), `internal_corpus/`.
 
 ## 19. Phases and acceptance criteria
 
-1. **Core.** Corpus TOML and validation, the four v1 adapters, two-revision runner with
-   caching, diff engine, all three report modes, `corpus validate` and `license-check` CI,
-   schemas exported and sync-checked, initial corpus list chosen. Acceptance: an end-to-end
-   run against a real detector PR produces the expected structured diff, with full coverage.
-2. **Hooks and bisect.** The three binding points, subprocess bridge, sanitizer, and
-   `bisect`.
+1. **Core.** Corpus TOML and validation, the `vulture` and `skylos` adapters, two-revision
+   runner with fingerprint-keyed caching and enforced network isolation, diff engine, all
+   three report modes, `corpus validate` and `license-check` CI, schemas exported and
+   sync-checked, initial corpus list chosen. Acceptance: an end-to-end run against a real
+   detector PR produces the expected structured diff, with full coverage.
+2. **Hooks, bisect, native-build detectors.** The three binding points, subprocess bridge,
+   sanitizer, `bisect`, and the `culler` and `mollify` adapters via the build-recipe
+   mechanism with CI toolchain provisioning.
 3. **Internal corpus.** Annotation schema, initial manually annotated entries, runner-file
    evidence support.
 4. **Distillation (experimental).** §14 tooling.
