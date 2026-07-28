@@ -29,11 +29,10 @@ keywords = [
 ]
 
 dependencies = [
-    "pydantic",
+    "pydantic>=2",
     "platformdirs>=4",
     "filelock>=3",
     "packaging>=24",
-    "httpx>=0.28,<1",
 ]
 requires-python = ">=3.12"
 
@@ -45,6 +44,11 @@ Issues = "https://github.com/mcdigman/liveness_primer/issues"
 Changelog = "https://github.com/mcdigman/liveness_primer/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+# GitHub-API license verification (`corpus license-check` and its CI job);
+# see .contracts/initial_contract.md §6.
+license = [
+    "httpx>=0.28,<1",
+]
 dev = [
     "pytest>=7.0",
     "ruff",
