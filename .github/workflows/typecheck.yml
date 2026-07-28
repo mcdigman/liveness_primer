@@ -17,8 +17,6 @@ env:
   MYPY_VERSION: "2.1.0"
   # Must be new enough to understand the Python 3.14 stdlib: the job runs under
   # 3.14 (PYTHON_VERSION), whose stdlib uses t-strings (string/templatelib.py).
-  # pyright <= 1.1.406 lacks a stub for it and parse-errors on that source under
-  # pythonVersion = "3.10"; 1.1.410+ ships the 3.14 typeshed and passes.
   PYRIGHT_VERSION: "1.1.410"
 
 # All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the

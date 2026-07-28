@@ -55,7 +55,7 @@ jobs:
         run: .venv/bin/python -m pytest
 
   floor:
-    # Dependency-floor gate: oldest supported Python (3.10) at the lowest-direct
+    # Dependency-floor gate: oldest supported Python at the lowest-direct
     # resolution -> numpy 1.22
     # Pulled out of the declared-support matrix into its own job so
     # it runs on every trigger -- push, PR (including PRs to dev), manual
@@ -70,7 +70,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           enable-cache: true
-          python-version: "3.10"
+          python-version: "3.12"
           cache-dependency-glob: "**/pyproject.toml"
 
       # Install the package (and its numpy) at the lowest-direct resolution,
@@ -79,7 +79,7 @@ jobs:
       # its own lower bound would test nothing useful.
       - name: Install project (lowest-direct resolution)
         run: |
-          uv venv --python 3.10
+          uv venv --python 3.12
           uv pip install --resolution lowest-direct .
           uv pip install pytest
 
@@ -88,9 +88,8 @@ jobs:
 
   matrix:
     # Declared-support gate: run the actual test suite across every supported
-    # Python (requires-python = ">=3.10") against the latest resolvable
-    # numpy. The dependency floor (3.10 + lowest-direct) is covered
-    # separately by the always-on `floor` job above. Heavier than the fast job,
+    # Python against the latest resolvable
+    # Heavier than the fast job,
     # so it runs only on PRs targeting main (gating merges into main) and the
     # weekly cron -- not on every push. workflow_dispatch also triggers it for
     # manual runs.
@@ -104,10 +103,6 @@ jobs:
       matrix:
         include:
           # Each supported Python against the latest resolvable numpy
-          - python-version: "3.10"
-            resolution: highest
-          - python-version: "3.11"
-            resolution: highest
           - python-version: "3.12"
             resolution: highest
           - python-version: "3.13"
