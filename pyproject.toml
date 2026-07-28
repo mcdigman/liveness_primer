@@ -1,0 +1,110 @@
+[project]
+name = "liveness_primer"
+version = "0.0.1"
+description = "Primer for dead code detectors."
+readme = "README.md"
+authors = [
+  { name="Matthew C. Digman", email="matthew.digman@vanderbilt.edu" }
+]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Typing :: Typed",
+]
+
+keywords = [
+    "dead code",
+    "liveness",
+    "primer",
+]
+
+dependencies = [
+    "numpy>=1.22",
+]
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/mcdigman/liveness_primer"
+Documentation = "https://liveness_primer.readthedocs.io/en/latest/"
+Repository = "https://github.com/mcdigman/liveness_primer"
+Issues = "https://github.com/mcdigman/liveness_primer/issues"
+Changelog = "https://github.com/mcdigman/liveness_primer/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff",
+    "mypy",
+    "pyright",
+    "pyrefly",
+    "prek",
+]
+# Sphinx HTML documentation build (docs/). Built locally with
+# `make -C docs html` and in CI by .github/workflows/docs.yml.
+docs = [
+    "sphinx>=7.0",
+    "furo",
+    "myst-parser",
+]
+
+[tool.pyrefly]
+# pyrefly runs as a prek hook (.pre-commit-config.yaml) and resolves the typed
+# packages listed in that hook's additional_dependencies (numpy ships py.typed).
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
+project-excludes = []
+ignore-missing-imports = []
+
+[tool.pyright]
+# Settings for the pyright job in .github/workflows/typecheck.yml. pyright
+# resolves types from the installed environment (the CI job installs .[dev]),
+# so numpy is checked for real via its py.typed marker.
+pythonVersion = "3.10"
+reportMissingImports = "none"
+# Exclude dot-directories (e.g. the CI job's .venv) so pyright does not
+# type-check installed dependencies, and the "build" copy the wheel build
+# creates.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "build"]
+
+[tool.mypy]
+# Settings for the mypy job in .github/workflows/typecheck.yml
+strict = true
+# A plain `mypy .` crawls the whole working tree. Skip the throwaway build/ tree
+# and the local virtualenv. A clean CI checkout has neither, so this only affects local
+# runs; the typecheck.yml job additionally passes --explicit-package-bases.
+exclude = ['^build/', '^\.venv/']
+
+[tool.pydoclint]
+# Docstring-signature linting for the numpy-style docstrings (run by
+# .github/workflows/docstrings.yml)
+style = "numpy"
+check-return-types = true
+check-class-attributes = true
+allow-init-docstring = true
+# pydoclint's built-in default only excludes \.git|\.tox, so a whole-tree run
+# (pydoclint .) descends into .venv/build.
+exclude = '\.git|\.tox|\.venv|\.eggs|_build|buck-out|build|dist|__pycache__|\.mypy_cache|\.pytest_cache|\.ruff_cache'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=77.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["liveness_primer*"]

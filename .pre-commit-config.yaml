@@ -1,0 +1,70 @@
+# Hook configuration for prek (https://github.com/j178/prek), a drop-in
+# replacement for pre-commit that reads this same .pre-commit-config.yaml.
+# See https://pre-commit.com/hooks.html for the available hooks.
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-yaml
+  - id: check-added-large-files
+  - id: check-case-conflict
+  - id: check-docstring-first
+  - id: check-json
+  - id: check-toml
+  - id: check-xml
+  - id: check-ast
+  - id: check-symlinks
+  - id: check-vcs-permalinks
+  - id: debug-statements
+  - id: detect-aws-credentials
+    args: [--allow-missing-credentials]
+  - id: detect-private-key
+  - id: mixed-line-ending
+  - id: pretty-format-json
+    args: [--autofix]
+  - id: requirements-txt-fixer
+  # Additional regression guards
+  - id: check-merge-conflict
+  - id: check-builtin-literals
+  - id: check-illegal-windows-names
+  - id: check-executables-have-shebangs
+  - id: check-shebang-scripts-are-executable
+  - id: destroyed-symlinks
+  - id: forbid-submodules
+  - id: fix-byte-order-marker
+  - id: double-quote-string-fixer
+
+- repo: https://github.com/asottile/pyupgrade
+  rev: v3.21.2
+  hooks:
+  - id: pyupgrade
+    args: [--keep-percent-format, --py310-plus]
+
+- repo: https://github.com/bwhmather/ssort
+  rev: 0.16.0
+  hooks:
+  - id: ssort
+
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.15.18
+  hooks:
+  - id: ruff-check
+    args: [--fix, --preview]
+  - id: ruff-format
+
+- repo: https://github.com/facebook/pyrefly-pre-commit
+  rev: 1.1.1
+  hooks:
+  - id: pyrefly-check
+    args: [--preset=strict]
+    # The dedicated typecheck.yml workflow still runs mypy and pyright.
+    additional_dependencies:
+      - numpy>=1.22
+      - pytest
+
+- repo: https://github.com/rhysd/actionlint
+  rev: v1.7.12
+  hooks:
+  - id: actionlint

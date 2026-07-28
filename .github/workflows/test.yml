@@ -1,0 +1,141 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly (Mon 06:00 UTC):
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the
+# default token to read-only.
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    # Fast, current-Python gate on every push/PR. The full declared-support
+    # matrix (below) is heavier and runs only on PRs to main and the weekly cron,
+    # so routine commits are not slowed down. Skipped on the cron run because the
+    # matrix already covers 3.14 there.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Install the project with its dev extra into a venv so the tests run
+      # against the real installed package (the runner's system Python is
+      # externally managed, so --system installs are rejected). numpy/numba come
+      # in via the project's own dependencies; pytest comes from the [dev] extra.
+      - name: Install project with test extras
+        run: |
+          uv venv
+          uv pip install ".[dev]"
+
+      # Run the test suite.
+      - name: Run tests
+        run: .venv/bin/python -m pytest
+
+  floor:
+    # Dependency-floor gate: oldest supported Python (3.10) at the lowest-direct
+    # resolution -> numpy 1.22
+    # Pulled out of the declared-support matrix into its own job so
+    # it runs on every trigger -- push, PR (including PRs to dev), manual
+    # dispatch, and the weekly cron -- because the floor is where a newly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: "3.10"
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Install the package (and its numpy) at the lowest-direct resolution,
+      # then add pytest separately so the test runner stays current instead of
+      # being floored too: pytest is not a runtime dependency, so pinning it to
+      # its own lower bound would test nothing useful.
+      - name: Install project (lowest-direct resolution)
+        run: |
+          uv venv --python 3.10
+          uv pip install --resolution lowest-direct .
+          uv pip install pytest
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest
+
+  matrix:
+    # Declared-support gate: run the actual test suite across every supported
+    # Python (requires-python = ">=3.10") against the latest resolvable
+    # numpy. The dependency floor (3.10 + lowest-direct) is covered
+    # separately by the always-on `floor` job above. Heavier than the fast job,
+    # so it runs only on PRs targeting main (gating merges into main) and the
+    # weekly cron -- not on every push. workflow_dispatch also triggers it for
+    # manual runs.
+    if: >-
+      github.event_name == 'schedule'
+      || github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each supported Python against the latest resolvable numpy
+          - python-version: "3.10"
+            resolution: highest
+          - python-version: "3.11"
+            resolution: highest
+          - python-version: "3.12"
+            resolution: highest
+          - python-version: "3.13"
+            resolution: highest
+          - python-version: "3.14"
+            resolution: highest
+    name: py${{ matrix.python-version }} (${{ matrix.resolution }})
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Install the package (and its numpy) at the matrix resolution, then
+      # add pytest separately so the test runner stays current instead of being
+      # floored too: pytest is not a runtime dependency, so pinning it to its own
+      # lower bound would test nothing useful.
+      - name: Install project (${{ matrix.resolution }} resolution)
+        run: |
+          uv vpython ${{ matrix.python-version }}
+          uv pip install --resolution ${{ matrix.resolution }} .
+          uv pip install pytest
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest

@@ -1,0 +1,90 @@
+name: Type Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+  # mypy runs only here (it is not a prek hook; pyrefly handles type checking in
+  # lint.yml). Keep in sync with the mypy version in the [dev] extra.
+  MYPY_VERSION: "2.1.0"
+  # Must be new enough to understand the Python 3.14 stdlib: the job runs under
+  # 3.14 (PYTHON_VERSION), whose stdlib uses t-strings (string/templatelib.py).
+  # pyright <= 1.1.406 lacks a stub for it and parse-errors on that source under
+  # pythonVersion = "3.10"; 1.1.410+ ships the 3.14 typeshed and passes.
+  PYRIGHT_VERSION: "1.1.410"
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the
+# default token to read-only.
+permissions:
+  contents: read
+
+jobs:
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Install the project with its dev extra into a venv so mypy resolves the
+      # real numpy types (the runner's system Python is externally managed,
+      # so --system installs are rejected). This matches the pyright job and keeps
+      # CI in step with local runs; strict mode's disallow-untyped-decorators only
+      # stays quiet when pytest resolve to real types rather than Any.
+      - name: Install project with typed extras
+        run: |
+          uv venv
+          uv pip install ".[dev]"
+
+      # Point mypy at the venv interpreter so it sees the installed deps. No
+      # --ignore-missing-imports: imports resolve for real (pygsl_lite is only
+      # imported dynamically via importlib, so mypy never flags it).
+      - name: Run mypy
+        run: >
+          uvx --from "mypy==${{ env.MYPY_VERSION }}" mypy
+          --python-executable .venv/bin/python
+          --explicit-package-bases
+          .
+
+  pyright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Unlike the mypy job (which uses --ignore-missing-imports), pyright
+      # resolves types from the installed environment, so install the project
+      # with its dev extra into a venv (the runner's system Python is externally
+      # managed, so --system installs are rejected).
+      - name: Install project with typed extras
+        run: |
+          uv venv
+          uv pip install ".[dev]"
+
+      - name: Run pyright
+        run: >
+          uvx pyright@${{ env.PYRIGHT_VERSION }}
+          --pythonpath .venv/bin/python

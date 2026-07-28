@@ -1,0 +1,27 @@
+# Build / packaging artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+*.swp
+.skylos/
+.coverage
+tach.toml
+
+# Sphinx HTML docs build output
+docs/_build/
+
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.pyrefly_cache/
+
+# Environments
+.venv/
+venv/
+
+# macOS
+.DS_Store

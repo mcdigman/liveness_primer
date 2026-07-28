@@ -1,0 +1,116 @@
+name: Publish
+
+# Publish to PyPI (or TestPyPI for prereleases) when a GitHub Release is
+# published. release-triggered workflows run from the file on the default
+# branch, so this only takes effect once it is on main -- which is also where
+# releases are cut. Authentication is PyPI Trusted Publishing (OIDC): no API
+# token is stored; each publish job requests a short-lived id-token that PyPI
+# exchanges for upload rights, so the repo + workflow + environment must be
+# registered as a Trusted Publisher on (Test)PyPI first.
+on:
+  release:
+    types: [published]
+
+# Never cancel an in-flight publish.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Build the sdist + wheel once and hand them to whichever publish job runs,
+    # so the artifacts uploaded to the index are exactly what was checked here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check distribution metadata
+        run: uvx twine check dist/*
+
+      # Guard against a mistyped GitHub Release tag: the package version is
+      # static in pyproject.toml, so the build would otherwise upload it under
+      # whatever the release happens to be tagged. Fail unless the release tag
+      # equals the version parsed from the built sdist (an optional leading "v"
+      # is allowed). This runs in build -- the single choke point both publish
+      # jobs need -- because PyPI/TestPyPI uploads are immutable. The tag is read
+      # from env, not interpolated into the script, to avoid injection.
+      - name: Verify release tag matches built version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tag="${TAG#v}"
+          sdist="$(basename dist/*.tar.gz .tar.gz)"
+          built="${sdist#liveness_primer-}"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::Release tag '$tag' does not match built version '$built'"
+            exit 1
+          fi
+          echo "Release tag matches built version: $built"
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  testpypi:
+    # Prereleases (rc/alpha/beta -- i.e. the GitHub Release is marked
+    # "pre-release") publish to TestPyPI ONLY, by design: release candidates are
+    # deliberately not pushed to real PyPI. Cutting a non-prerelease Release is
+    # the explicit gate for a real PyPI upload (see the `pypi` job). TestPyPI
+    # thus also serves as a rehearsal of the upload before a final tag.
+    needs: build
+    if: github.event.release.prerelease
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/liveness_primer
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    # Full releases (not marked pre-release) go to real PyPI.
+    needs: build
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/liveness_primer
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
