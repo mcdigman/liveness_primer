@@ -39,9 +39,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache-dependency-glob: "**/pyproject.toml"
 
-      # Install the project with its dev extra into a venv so mypy resolves the
-      # real numpy types (the runner's system Python is externally managed,
-      # so --system installs are rejected). This matches the pyright job and keeps
+      # Install the project with its dev extra into a venv
+      # This matches the pyright job and keeps
       # CI in step with local runs; strict mode's disallow-untyped-decorators only
       # stays quiet when pytest resolve to real types rather than Any.
       - name: Install project with typed extras

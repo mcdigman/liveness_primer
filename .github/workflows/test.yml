@@ -43,8 +43,7 @@ jobs:
 
       # Install the project with its dev extra into a venv so the tests run
       # against the real installed package (the runner's system Python is
-      # externally managed, so --system installs are rejected). numpy/numba come
-      # in via the project's own dependencies; pytest comes from the [dev] extra.
+      # externally managed, so --system installs are rejected).
       - name: Install project with test extras
         run: |
           uv venv
@@ -55,8 +54,7 @@ jobs:
         run: .venv/bin/python -m pytest
 
   floor:
-    # Dependency-floor gate: oldest supported Python at the lowest-direct
-    # resolution -> numpy 1.22
+    # Dependency-floor gate: oldest supported Python
     # Pulled out of the declared-support matrix into its own job so
     # it runs on every trigger -- push, PR (including PRs to dev), manual
     # dispatch, and the weekly cron -- because the floor is where a newly
@@ -73,7 +71,7 @@ jobs:
           python-version: "3.12"
           cache-dependency-glob: "**/pyproject.toml"
 
-      # Install the package (and its numpy) at the lowest-direct resolution,
+      # Install the package at the lowest-direct resolution,
       # then add pytest separately so the test runner stays current instead of
       # being floored too: pytest is not a runtime dependency, so pinning it to
       # its own lower bound would test nothing useful.
@@ -102,7 +100,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Each supported Python against the latest resolvable numpy
+          # Each supported Python version
           - python-version: "3.12"
             resolution: highest
           - python-version: "3.13"

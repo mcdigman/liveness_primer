@@ -45,8 +45,7 @@ jobs:
 
   install:
     # Confirm the package installs and imports both at the declared dependency
-    # floors (oldest Python + lowest-direct resolution -> numpy 1.22
-    # 0.56) and against the latest releases (modern Python + highest resolution).
+    # and against the latest releases (modern Python + highest resolution).
     needs: build
     runs-on: ubuntu-latest
     strategy:

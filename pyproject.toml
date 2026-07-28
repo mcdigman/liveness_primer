@@ -29,16 +29,11 @@ keywords = [
 ]
 
 dependencies = [
-    "numpy>=1.22",
     "pydantic",
     "platformdirs>=4",
     "filelock>=3",
     "packaging>=24",
     "httpx>=0.28,<1",
-    "PyYAML>=6.0",
-    "types-PyYAML>=6.0",
-    "jsonschema>=4.18",
-    "psutil>=6",
 ]
 requires-python = ">=3.12"
 
@@ -68,7 +63,8 @@ docs = [
 
 [tool.pyrefly]
 # pyrefly runs as a prek hook (.pre-commit-config.yaml) and resolves the typed
-# packages listed in that hook's additional_dependencies (numpy ships py.typed).
+# packages listed in that hook's additional_dependencies.
+
 project-includes = [
     "**/*.py*",
     "**/*.ipynb",
@@ -78,8 +74,7 @@ ignore-missing-imports = []
 
 [tool.pyright]
 # Settings for the pyright job in .github/workflows/typecheck.yml. pyright
-# resolves types from the installed environment (the CI job installs .[dev]),
-# so numpy is checked for real via its py.typed marker.
+# resolves types from the installed environment (the CI job installs .[dev])
 pythonVersion = "3.12"
 reportMissingImports = "none"
 # Exclude dot-directories (e.g. the CI job's .venv) so pyright does not
