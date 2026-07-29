@@ -175,7 +175,3 @@ def main(argv: Sequence[str] | None = None) -> int:
     if exit_code is None:
         return 3 if lines else 0
     return int(exit_code)
-
-
-if __name__ == '__main__':  # pragma: no cover - exercised as a subprocess
-    sys.exit(main())

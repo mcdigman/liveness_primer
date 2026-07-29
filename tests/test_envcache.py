@@ -17,6 +17,7 @@ from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import (
     DetectorEnvironments,
     EnvCacheError,
+    Installer,
     PipInstaller,
     UnsupportedDetectorError,
     UvInstaller,
@@ -231,6 +232,13 @@ def test_installer_failure_raises_env_cache_error(tmp_path: Path) -> None:
     timing_out = PipInstaller(launcher=RecordingLauncher(timed_out=True))
     with pytest.raises(EnvCacheError, match='pip freeze failed: timed out'):
         timing_out.freeze(tmp_path / 'env')
+
+
+def test_choose_installer_returns_installer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, 'which', lambda name: '/opt/uv' if name == 'uv' else None)
+    assert isinstance(choose_installer(), Installer)
+    monkeypatch.setattr(shutil, 'which', lambda _name: None)
+    assert isinstance(choose_installer(), Installer)
 
 
 def test_choose_installer_prefers_uv(monkeypatch: pytest.MonkeyPatch) -> None:

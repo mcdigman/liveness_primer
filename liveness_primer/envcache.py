@@ -22,7 +22,7 @@ import tomllib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from filelock import FileLock, Timeout
 from packaging.requirements import InvalidRequirement, Requirement
@@ -192,6 +192,7 @@ def parse_static_metadata(checkout: Path) -> DetectorMetadata:
     )
 
 
+@runtime_checkable
 class Installer(Protocol):
     """Injectable environment installer (contract §3, §15)."""
 
@@ -204,7 +205,7 @@ class Installer(Protocol):
         str
             The family name.
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
     def identity(self) -> str:
         """Report the installer name and version for the fingerprint.
@@ -214,7 +215,7 @@ class Installer(Protocol):
         str
             E.g. ``pip 25.0`` or ``uv 0.9.2``.
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
     def create_venv(self, env_dir: Path) -> None:
         """Create a fresh virtualenv.
@@ -224,7 +225,7 @@ class Installer(Protocol):
         env_dir : Path
             Directory the virtualenv is created in.
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
     def install_offline(self, env_dir: Path, wheelhouse: Path, target: Path, isolation: Isolation) -> None:
         """Install a project into the virtualenv from the local wheel cache only.
@@ -240,7 +241,7 @@ class Installer(Protocol):
         isolation : Isolation
             Network isolation wrapped around the build (contract §11).
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
     def freeze(self, env_dir: Path) -> tuple[str, ...]:
         """Capture the resolved dependency freeze of the virtualenv.
@@ -255,7 +256,7 @@ class Installer(Protocol):
         tuple[str, ...]
             Freeze lines.
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
 
 def _env_python(env_dir: Path) -> str:
