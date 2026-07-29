@@ -31,19 +31,30 @@ point*: pre-triage, triage, or post-triage (§10).
 - The detector is obtained by cloning its repository and installing the base and head refs
   into two isolated cached virtualenvs (`uv pip` when on `PATH`, stdlib `venv` + `pip`
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
-- Two-phase runs: an **acquisition** phase (git fetches, package installs) in which network
-  access is permitted and every fetch is recorded in the run manifest (URLs, resolved SHAs,
-  installed versions), followed by an **analysis** phase whose subprocesses run with
-  networking disabled (§11). Corpus refs are resolved once per run and then pinned
+- Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
+  into a local wheel cache, wheels preferred; no code from the detector refs executes;
+  every fetch is recorded in the run manifest — URLs, resolved SHAs, installed versions),
+  then a **build** step (networking disabled; the detector installs from the local cache,
+  e.g. `--no-index --find-links`, so build-backend hooks run sandboxed; Rust detectors
+  prefetch crates during fetch and build `--offline`), then an **analysis** step
+  (networking disabled, §11). Corpus refs are resolved once per run and then pinned
   (including latest-on-branch mode); both detector revisions analyze byte-identical
   checkouts.
+- Trust model: detector refs and corpus content are untrusted and execute only with
+  networking disabled and no credentials; third-party dependencies fetched from package
+  indexes are supply-chain-trusted like any development dependency. As in all CI, running a
+  primer on a PR executes that PR's code — the guarantee is isolation, not avoidance.
 - Environment integrity: virtualenv cache entries under the `platformdirs` cache directory
-  are keyed by the full fingerprint (repository, resolved SHA, Python version and ABI,
-  platform tag, installer name and version) and guarded by `filelock`; checkout caches are
-  keyed by (repository, SHA). The manifest records the resolved dependency freeze of both
-  environments, and the report must surface any non-detector dependency delta between the
-  base and head environments as an explicit drift warning. `--fresh` forces same-run
-  rebuilds of both environments.
+  are keyed by the full fingerprint (repository, resolved SHA, adapter build-recipe hash,
+  Python version and ABI, platform tag, installer name and version) and guarded by
+  `filelock`; checkout caches are keyed by (repository, SHA). The manifest records the
+  resolved dependency freeze of both environments. A base/head pair is **comparable** iff
+  the non-detector dependency delta is empty or attributable to declared-requirement
+  differences between the two refs; a non-comparable pair triggers an automatic paired
+  same-run rebuild, after which any remaining delta is ref-attributable by construction and
+  reported as context. The manifest records a `comparable` flag; `--fail-on` gating and
+  `bisect` refuse to act on non-comparable runs. `--fresh` forces same-run rebuilds of both
+  environments.
 - Concurrency: `asyncio` orchestrates per-project subprocesses with a configurable
   parallelism limit and a per-(project, tool) timeout.
 
@@ -107,12 +118,15 @@ point*: pre-triage, triage, or post-triage (§10).
 
 ## 8. Diff engine
 
-- Both revisions see identical files. Matching is exact (identity, line) first, then
-  per-identity multiset reconciliation of the remaining occurrences; results classify as
-  `new`, `dropped`, or `changed`, where `changed` carries a
-  `changed_fields ⊆ {line-span, message, confidence}` set (confidence only for tools
-  declaring that capability). Every normalized observable field participates in the
-  comparison; no identity-stable behavior change may go silently unclassified.
+- Both revisions see identical files. Matching is deterministic and order-independent:
+  (1) full-field-equal occurrences are removed by multiset intersection; (2) remaining
+  occurrences sharing (identity, line) are paired in canonical sort order (message, then
+  confidence) as `changed`; (3) remaining occurrences sharing identity are paired across
+  lines in sorted-line order as `changed`; (4) leftovers classify as `new` or `dropped`.
+  `changed` carries a `changed_fields ⊆ {line-span, message, confidence}` set (confidence
+  only for tools declaring that capability). Every normalized observable field participates
+  in the comparison; no identity-stable behavior change may go silently unclassified, and
+  the canonical ordering makes reports reproducible.
 - Caps on maximum results and excerpt lines are configurable; the report always states
   totals before truncation (new/dropped/changed counts, with confidence changes broken out,
   per project and overall) and notes any truncation. Rendered reports cap message-only
@@ -153,12 +167,17 @@ point*: pre-triage, triage, or post-triage (§10).
 - Injection: defense-in-depth, not *detection* — excerpts are untrusted, sanitization is
   mandatory, and an optional deny-pattern pre-triage hook may veto ingesting an entire
   repository. All best-effort; no component claims to detect prompt injection reliably.
-- Subprocess hygiene: every subprocess launch uses an argv list with `shell=False`; every
-  argv element originates from typed, validated models; per-tool corpus commands are argv
-  lists, never shell strings; corpus content is never interpolated into any command; no
-  `eval`/`exec` of dynamic content anywhere. (ruff `ALL` includes the bandit rules —
-  S602/S604, S102/S307 — and AGENTS.md forbids `noqa`, so the linter mechanically enforces
-  this clause.)
+- Subprocess hygiene: all subprocess launches go through a single audited launcher module
+  that accepts only typed argv lists and exposes no shell parameter; every argv element
+  originates from typed, validated models; per-tool corpus commands are argv lists, never
+  shell strings; corpus content is never interpolated into any command; no `eval`/`exec`
+  of dynamic content anywhere. Enforcement (verified against the pinned ruff): the raw
+  APIs (`subprocess.*`, `os.system`/`os.popen`, `asyncio.create_subprocess_shell`/`_exec`)
+  are banned repo-wide via `TID251` banned-api in `ruff.toml` with a per-file exemption
+  for the launcher, and an AST-walking unit test asserts that no call in the package
+  passes a `shell` keyword. (The bandit S rules alone are insufficient: S603 flags every
+  `subprocess` call, safe or not, and no S rule flags `asyncio.create_subprocess_shell`.)
+  This guards against accident; in-repo code is trusted (§11 trust boundary).
 - Network isolation: analysis-phase subprocesses run with networking disabled (Linux network
   namespaces or a container with `--network=none`), enforced on the Linux reference platform
   and in CI, best-effort elsewhere. The manifest records whether isolation was enforced, and
@@ -174,20 +193,23 @@ point*: pre-triage, triage, or post-triage (§10).
 
 ## 12. CLI surface
 
-`argparse`. Commands:
+`argparse`. Every command accepts `-h`/`--help`; the root parser accepts `--version`,
+printing the package version and `SCHEMA_VERSION`. Commands:
 
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
   [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
   [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]`
 - `corpus validate` — parse and validate the corpus TOML.
 - `corpus license-check` — §6, locally or in CI.
-- `bisect --report REPORT.json --finding ID [--line N] --good REF --bad REF [--repo URL]
-  [--predicate P]` — binary search over detector commits. The prior report supplies the
-  manifest (detector repository, corpus pins), so every step reproduces the identical
-  checkout; the finding locator resolves the affected project, which is the only project
-  run. The predicate defaults from the finding's diff class in the report (`new` → first
-  commit where present; `dropped` → first where absent; confidence change → first where
-  confidence differs from base) and may be overridden.
+- `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF
+  --bad REF [--repo URL] [--predicate P]` — binary search over detector commits. The prior
+  report supplies the manifest (detector repository, corpus pins), so every step reproduces
+  the identical checkout; the finding locator resolves to a full base occurrence in the
+  report, and the affected project is the only project run. When several occurrences share
+  (identity, line), `--occurrence` indexes the report's canonical ordering (§8). Default
+  predicate by diff class: `new` → first commit where the occurrence is present; `dropped`
+  → first where absent; `changed` → first where the occurrence deviates from its base
+  value in any of the finding's `changed_fields`. `--predicate` overrides.
 - `schema export` — regenerate `liveness_primer/schemas/`.
 
 ## 13. Internal corpus
@@ -220,6 +242,9 @@ subject to the §11 container-isolation rule.
   synthetic projects with injected characteristics.
 - Adapters are tested against recorded raw-output fixtures; the diff engine and reports
   against golden files; hooks as pure functions.
+- An AST-walking test enforces the §11 launcher rule: no call anywhere in the package
+  passes a `shell` keyword, and no module outside the launcher reaches the raw subprocess
+  APIs (backstopping the `TID251` ban in `ruff.toml`).
 - All repository QA rules in AGENTS.md apply: full branch and line coverage with non-vacuous
   tests, enforced by the existing coverage.py CI gate.
 
@@ -239,10 +264,10 @@ design intentionally blocks it, but it is not gated in CI initially.
 ## 18. Package layout (informative)
 
 `cli.py`, `config.py` (corpus models), `corpus.py` (checkout and pin resolution),
-`envcache.py`, `runner.py`, `tools/` (adapter protocol plus one module per adapter),
-`findings.py`, `diffing.py`, `report/`, `hooks/` (protocols, `TriageSafetyError`, sanitizer,
-subprocess bridge), `schemas/`, `bisect.py`, `testing/` (fake detector, fake project
-factory), `internal_corpus/`.
+`envcache.py`, `runner.py`, `launcher.py` (the audited subprocess launcher, §11), `tools/`
+(adapter protocol plus one module per adapter), `findings.py`, `diffing.py`, `report/`,
+`hooks/` (protocols, `TriageSafetyError`, sanitizer, subprocess bridge), `schemas/`,
+`bisect.py`, `testing/` (fake detector, fake project factory), `internal_corpus/`.
 
 ## 19. Phases and acceptance criteria
 

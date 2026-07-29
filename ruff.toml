@@ -52,8 +52,29 @@ inline-quotes="single"
 author = "Matthew C. Digman"
 min-file-size = 1024
 
+[lint.flake8-tidy-imports.banned-api]
+# Contract §11 subprocess hygiene: every subprocess launch goes through the
+# audited launcher module, which accepts only typed argv lists and exposes no
+# shell parameter. The bandit S rules cannot enforce this on their own: S603
+# flags every subprocess call regardless of safety, and no S rule flags
+# asyncio.create_subprocess_shell.
+"subprocess.run".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.Popen".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.call".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.check_call".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.check_output".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.getoutput".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.getstatusoutput".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.system".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.popen".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"asyncio.create_subprocess_shell".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"asyncio.create_subprocess_exec".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+
 [lint.per-file-ignores]
 "tests/*" = ["S101", "D103"]
+# The audited launcher (contract §11) is the sole module allowed to touch the
+# raw subprocess APIs. S603 fires on every subprocess call, safe or not.
+"liveness_primer/launcher.py" = ["TID251", "S603"]
 
 [lint.pydocstyle]
 convention = "numpy"
