@@ -295,7 +295,7 @@ def _changed_fields(
             msg = 'confidence differs for a tool without the has-confidence capability'
             raise DiffEngineError(msg)
         changed.append(ChangedField.CONFIDENCE)
-    if not changed:  # pragma: no cover - stage 1 removes full-field-equal pairs
+    if not changed:
         msg = 'paired occurrences with no changed observable field survived stage 1'
         raise DiffEngineError(msg)
     return tuple(changed)
@@ -374,6 +374,13 @@ def diff_findings(
     -------
     ProjectDiff
         All classified diffs in deterministic order plus totals.
+
+    Raises
+    ------
+    DiffEngineError
+        If confidence changes without declared support, a paired occurrence
+        has no changed field, or an indexed identity has no metadata on either
+        side.
     """
     base_index = _index_findings(base)
     head_index = _index_findings(head)
@@ -383,8 +390,9 @@ def diff_findings(
         base_info, base_occurrences = base_index.get(identity, absent)
         head_info, head_occurrences = head_index.get(identity, absent)
         info = base_info if base_info is not None else head_info
-        if info is None:  # pragma: no cover - defensive; one side always has the identity
-            continue
+        if info is None:
+            msg = f'identity {identity!r} is absent from both base and head indexes'
+            raise DiffEngineError(msg)
         base_rest, head_rest = _remove_equal(base_occurrences, head_occurrences)
         line_pairs, base_rest, head_rest = _pair_same_line(base_rest, head_rest)
         cross_pairs, base_rest, head_rest = _align_across_lines(base_rest, head_rest)

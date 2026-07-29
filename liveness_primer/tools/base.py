@@ -159,7 +159,7 @@ class DetectorAdapter(Protocol):
         list[Finding]
             Normalized dead-code findings only (contract §4).
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
 
 def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settings: ToolSettings) -> list[str]:

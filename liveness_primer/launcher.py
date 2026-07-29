@@ -127,7 +127,7 @@ class SyncLauncher(Protocol):
         LaunchResult
             The captured outcome.
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
 
 class AsyncLauncher(Protocol):
@@ -160,7 +160,7 @@ class AsyncLauncher(Protocol):
         LaunchResult
             The captured outcome.
         """
-        ...  # pragma: no cover - protocol signature
+        ...
 
 
 def _spawn_failure(argv: tuple[str, ...], exc: OSError, start: float) -> LaunchResult:

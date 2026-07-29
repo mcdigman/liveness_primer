@@ -192,6 +192,23 @@ def test_diff_reference_side_follows_class() -> None:
     assert changed.reference_occurrence == occurrence_at(1)
 
 
+def test_diff_reference_side_rejects_invalidly_constructed_diff() -> None:
+    invalid = FindingDiff.model_construct(
+        diff_class=DiffClass.NEW,
+        identity=make_finding().identity,
+        tool='vulture',
+        project='demo',
+        path='pkg/mod.py',
+        symbol='unused_fn',
+        kind='function',
+        base_occurrence=None,
+        head_occurrence=None,
+        changed_fields=(),
+    )
+    with pytest.raises(ValueError, match='reference side is absent'):
+        _ = invalid.reference_occurrence
+
+
 def test_report_embeds_schema_version() -> None:
     report = Report(manifest=make_manifest(), projects=(), totals=DiffTotals(), truncated=False)
     assert report.schema_version == SCHEMA_VERSION

@@ -392,7 +392,7 @@ class FindingDiff(_FrozenModel):
             If the reference side is absent (impossible after validation).
         """
         occurrence = self.head_occurrence if self.diff_class is DiffClass.NEW else self.base_occurrence
-        if occurrence is None:  # pragma: no cover - unreachable after validation
+        if occurrence is None:
             msg = 'reference side is absent'
             raise ValueError(msg)
         return occurrence

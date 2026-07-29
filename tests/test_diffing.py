@@ -3,10 +3,12 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+from collections.abc import Iterable, Sequence
+
 import pytest
 
 from liveness_primer.diffing import DiffEngineError, diff_findings
-from liveness_primer.findings import ChangedField, DiffClass, DiffTotals, Finding
+from liveness_primer.findings import ChangedField, DiffClass, DiffTotals, Finding, FindingOccurrence
 
 
 def mk(
@@ -40,6 +42,30 @@ def test_identical_sides_yield_no_diffs() -> None:
     result = diff_findings(findings, findings, confidence_capable=False)
     assert result.diffs == ()
     assert result.totals == DiffTotals()
+
+
+def test_equal_pair_surviving_stage_one_raises_informative_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def retain_equal_pairs(
+        base: Sequence[FindingOccurrence],
+        head: Sequence[FindingOccurrence],
+    ) -> tuple[list[FindingOccurrence], list[FindingOccurrence]]:
+        return list(base), list(head)
+
+    monkeypatch.setattr('liveness_primer.diffing._remove_equal', retain_equal_pairs)
+    finding = mk(3)
+    with pytest.raises(DiffEngineError, match='no changed observable field survived stage 1'):
+        diff_findings([finding], [finding], confidence_capable=False)
+
+
+def test_identity_missing_from_both_indexes_raises_informative_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing_identity(
+        _findings: Iterable[Finding],
+    ) -> dict[str, tuple[None, list[FindingOccurrence]]]:
+        return {'missing': (None, [])}
+
+    monkeypatch.setattr('liveness_primer.diffing._index_findings', missing_identity)
+    with pytest.raises(DiffEngineError, match="identity 'missing' is absent from both base and head indexes"):
+        diff_findings([], [], confidence_capable=False)
 
 
 def test_multiset_semantics_keep_surplus_duplicates() -> None:
