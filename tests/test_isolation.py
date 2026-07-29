@@ -7,9 +7,12 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
+
+import pytest
 
 from liveness_primer.isolation import UNENFORCED, Isolation, detect_isolation
-from liveness_primer.launcher import LaunchResult, run_sync
+from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
 
 
 @dataclass
@@ -53,6 +56,11 @@ def test_non_linux_platforms_are_unenforced() -> None:
     assert isolation is UNENFORCED
     assert not isolation.enforced
     assert isolation.wrap(['detector', '.']) == ['detector', '.']
+
+
+def test_detect_isolation_rejects_async_launcher() -> None:
+    with pytest.raises(LauncherError, match='launcher must be synchronous'):
+        detect_isolation(platform_name='darwin', launcher=cast('SyncLauncher', run_async))
 
 
 def test_linux_prefers_the_mapped_unshare_variant() -> None:

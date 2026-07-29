@@ -12,7 +12,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from liveness_primer.launcher import SyncLauncher, run_sync
+from liveness_primer.launcher import SyncLauncher, run_sync, validate_sync_launcher
 
 _PROBE_TIMEOUT = 30.0
 
@@ -80,6 +80,7 @@ def detect_isolation(*, platform_name: str = sys.platform, launcher: SyncLaunche
     Isolation
         The first working strategy, or :data:`UNENFORCED`.
     """
+    validate_sync_launcher(launcher)
     if platform_name != 'linux':
         return UNENFORCED
     for description, prefix in _CANDIDATES:

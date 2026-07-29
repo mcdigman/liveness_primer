@@ -9,6 +9,7 @@ AST-walking test required by contract §15.
 """
 
 import asyncio
+import inspect
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -161,6 +162,24 @@ class AsyncLauncher(Protocol):
             The captured outcome.
         """
         ...
+
+
+def validate_sync_launcher(launcher: SyncLauncher) -> None:
+    """Reject an asynchronous callable at a synchronous injection boundary.
+
+    Parameters
+    ----------
+    launcher : SyncLauncher
+        Launcher to validate.
+
+    Raises
+    ------
+    LauncherError
+        If ``launcher`` is an asynchronous callable.
+    """
+    if inspect.iscoroutinefunction(launcher) or inspect.iscoroutinefunction(type(launcher).__call__):
+        msg = 'launcher must be synchronous'
+        raise LauncherError(msg)
 
 
 def _spawn_failure(argv: tuple[str, ...], exc: OSError, start: float) -> LaunchResult:

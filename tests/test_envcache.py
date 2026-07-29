@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import pytest
 from filelock import FileLock
@@ -30,7 +31,7 @@ from liveness_primer.envcache import (
 )
 from liveness_primer.findings import DependencyDelta
 from liveness_primer.isolation import UNENFORCED, Isolation
-from liveness_primer.launcher import LaunchResult, run_sync
+from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
 from liveness_primer.tools.vulture import VultureAdapter
 
 PYPROJECT = """
@@ -189,6 +190,16 @@ class RecordingLauncher:
 SANDBOX = Isolation(enforced=True, description='netns:test', prefix=('sandbox-wrap',))
 
 
+def test_pip_installer_rejects_async_launcher() -> None:
+    with pytest.raises(LauncherError, match='launcher must be synchronous'):
+        PipInstaller(launcher=cast('SyncLauncher', run_async))
+
+
+def test_uv_installer_rejects_async_launcher() -> None:
+    with pytest.raises(LauncherError, match='launcher must be synchronous'):
+        UvInstaller(launcher=cast('SyncLauncher', run_async))
+
+
 def test_pip_installer_argv_and_parsing(tmp_path: Path) -> None:
     launcher = RecordingLauncher(stdout='pip 26.1.2 from /site-packages/pip (python 3.14)')
     installer = PipInstaller(launcher=launcher)
@@ -239,6 +250,11 @@ def test_choose_installer_returns_installer(monkeypatch: pytest.MonkeyPatch) -> 
     assert isinstance(choose_installer(), Installer)
     monkeypatch.setattr(shutil, 'which', lambda _name: None)
     assert isinstance(choose_installer(), Installer)
+
+
+def test_choose_installer_rejects_async_launcher() -> None:
+    with pytest.raises(LauncherError, match='launcher must be synchronous'):
+        choose_installer(launcher=cast('SyncLauncher', run_async))
 
 
 def test_choose_installer_prefers_uv(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -323,6 +339,16 @@ class FakeInstaller:
         """
         del env_dir
         return self.freezes.popleft()
+
+
+def test_detector_environments_rejects_async_launcher(tmp_path: Path) -> None:
+    with pytest.raises(LauncherError, match='launcher must be synchronous'):
+        DetectorEnvironments(
+            CheckoutStore(tmp_path / 'cache'),
+            tmp_path / 'cache',
+            installer=FakeInstaller(freezes=deque()),
+            launcher=cast('SyncLauncher', run_async),
+        )
 
 
 @dataclass

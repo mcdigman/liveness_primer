@@ -6,13 +6,14 @@ Copyright (C) 2026 Matthew C. Digman
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import pytest
 from filelock import FileLock
 
 from liveness_primer.config import CorpusProject
 from liveness_primer.corpus import CheckoutError, CheckoutStore, cache_root
-from liveness_primer.launcher import LaunchResult, run_sync
+from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
 
 PIN_MISSING = 'd' * 40
 
@@ -67,6 +68,11 @@ def store(tmp_path: Path) -> CheckoutStore:
 
 def test_cache_root_is_a_platformdirs_path() -> None:
     assert 'liveness_primer' in str(cache_root())
+
+
+def test_checkout_store_rejects_async_launcher(tmp_path: Path) -> None:
+    with pytest.raises(LauncherError, match='launcher must be synchronous'):
+        CheckoutStore(tmp_path / 'cache', launcher=cast('SyncLauncher', run_async))
 
 
 def test_resolve_ref_passes_full_shas_through(store: CheckoutStore) -> None:

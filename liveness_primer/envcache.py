@@ -38,7 +38,7 @@ from liveness_primer.corpus import CheckoutStore
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import DependencyDelta, EnvironmentRecord, FetchRecord
 from liveness_primer.isolation import UNENFORCED, Isolation
-from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync
+from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
 from liveness_primer.tools.base import DetectorAdapter
 
 _DEFAULT_BUILD_REQUIRES: tuple[str, ...] = ('setuptools>=40.8.0', 'wheel')
@@ -342,6 +342,10 @@ class PipInstaller:
     python: str = sys.executable
     launcher: SyncLauncher = run_sync
 
+    def __post_init__(self) -> None:
+        """Validate the injected launcher."""
+        validate_sync_launcher(self.launcher)
+
     def identity(self) -> str:
         """Report the host pip name and version.
 
@@ -434,6 +438,10 @@ class UvInstaller:
     python: str = sys.executable
     launcher: SyncLauncher = run_sync
 
+    def __post_init__(self) -> None:
+        """Validate the injected launcher."""
+        validate_sync_launcher(self.launcher)
+
     def identity(self) -> str:
         """Report the uv name and version.
 
@@ -519,6 +527,7 @@ def choose_installer(*, launcher: SyncLauncher = run_sync) -> Installer:
     Installer
         The chosen installer.
     """
+    validate_sync_launcher(launcher)
     if shutil.which('uv') is not None:
         return UvInstaller(launcher=launcher)
     return PipInstaller(launcher=launcher)
@@ -758,6 +767,7 @@ class DetectorEnvironments:
         fresh: bool = False,
         lock_timeout: float = _INSTALL_TIMEOUT,
     ) -> None:
+        validate_sync_launcher(launcher)
         self._store = store
         self._cache_dir = cache_dir
         self._installer = installer

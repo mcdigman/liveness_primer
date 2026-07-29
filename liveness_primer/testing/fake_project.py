@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from liveness_primer.errors import LivenessPrimerError
-from liveness_primer.launcher import SyncLauncher, run_sync
+from liveness_primer.launcher import SyncLauncher, run_sync, validate_sync_launcher
 
 DEFAULT_FILES: Mapping[str, str] = {
     'pkg/__init__.py': '',
@@ -107,6 +107,7 @@ def create_fake_project(
     FakeProject
         The created project. Git failures raise :class:`FakeProjectError`.
     """
+    validate_sync_launcher(launcher)
     directory.mkdir(parents=True, exist_ok=True)
     contents = DEFAULT_FILES if files is None else files
     for relative, text in contents.items():

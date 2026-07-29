@@ -19,7 +19,7 @@ from filelock import FileLock, Timeout
 from liveness_primer.config import CorpusProject
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import CorpusPinRecord
-from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync
+from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
 
 _SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 
@@ -73,6 +73,7 @@ class CheckoutStore:
     """
 
     def __init__(self, root: Path, *, launcher: SyncLauncher = run_sync, git_timeout: float = 600.0) -> None:
+        validate_sync_launcher(launcher)
         self._root = root
         self._launcher = launcher
         self._git_timeout = git_timeout

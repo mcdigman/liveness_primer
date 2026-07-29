@@ -6,10 +6,11 @@ Copyright (C) 2026 Matthew C. Digman
 import json
 import time
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from liveness_primer.launcher import run_sync
+from liveness_primer.launcher import LauncherError, SyncLauncher, run_async, run_sync
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.testing.fake_detector import main
 from liveness_primer.testing.fake_project import DEFAULT_FILES, FakeProjectError
@@ -81,6 +82,11 @@ def test_create_fake_project_without_git(tmp_path: Path) -> None:
     assert project.url.startswith('file://')
     for relative in DEFAULT_FILES:
         assert (project.path / relative).exists()
+
+
+def test_create_fake_project_rejects_async_launcher(tmp_path: Path) -> None:
+    with pytest.raises(LauncherError, match='launcher must be synchronous'):
+        create_fake_project(tmp_path / 'proj', launcher=cast('SyncLauncher', run_async))
 
 
 def test_create_fake_project_with_custom_files(tmp_path: Path) -> None:
