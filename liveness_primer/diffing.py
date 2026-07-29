@@ -14,6 +14,7 @@ total start-line distance, ties broken toward earlier lines, as ``changed``;
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import (
@@ -301,7 +302,16 @@ def _changed_fields(
     return tuple(changed)
 
 
-def _diff_sort_key(diff: FindingDiff) -> tuple[str, str, str, str, int, tuple[int, int, str, int, int]]:
+class _DiffSortKey(NamedTuple):
+    path: str
+    symbol: str
+    kind: str
+    identity: str
+    class_rank: int
+    reference_occurrence: tuple[int, int, str, int, int]
+
+
+def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
     """Compute the deterministic report-order key of a diff (contract §8, §12).
 
     Parameters
@@ -311,17 +321,17 @@ def _diff_sort_key(diff: FindingDiff) -> tuple[str, str, str, str, int, tuple[in
 
     Returns
     -------
-    tuple[str, str, str, str, int, tuple[int, int, str, int, int]]
+    _DiffSortKey
         Sort key: path, symbol, kind, identity, class rank, then the
         reference-side canonical occurrence key that ``--occurrence`` indexes.
     """
-    return (
-        diff.path,
-        '' if diff.symbol is None else diff.symbol,
-        diff.kind,
-        diff.identity,
-        _CLASS_RANK[diff.diff_class],
-        canonical_occurrence_key(diff.reference_occurrence),
+    return _DiffSortKey(
+        path=diff.path,
+        symbol='' if diff.symbol is None else diff.symbol,
+        kind=diff.kind,
+        identity=diff.identity,
+        class_rank=_CLASS_RANK[diff.diff_class],
+        reference_occurrence=canonical_occurrence_key(diff.reference_occurrence),
     )
 
 
