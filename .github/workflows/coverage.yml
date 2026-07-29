@@ -56,9 +56,13 @@ jobs:
       # (the branch being merged into); pushes fall back to github.ref_name. main
       # requires 100%, every other target uses the dev threshold. Then print the
       # report and fail the job if total coverage drops below that gate.
+      # The ref is passed through env rather than interpolated into the script,
+      # so a branch name containing shell metacharacters is compared, not run.
       - name: Coverage report
+        env:
+          TARGET_REF: ${{ github.base_ref || github.ref_name }}
         run: |
-          target="${{ github.base_ref || github.ref_name }}"
+          target="${TARGET_REF}"
           if [ "$target" = "main" ]; then
             thresh="${MAIN_COVERAGE}"
           else

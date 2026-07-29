@@ -24,17 +24,20 @@ jobs:
     # Build the sdist + wheel once and hand them to whichever publish job runs,
     # so the artifacts uploaded to the index are exactly what was checked here.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
 
+      # The cache is deliberately off here, unlike the CI workflows: this job
+      # produces the artifacts that get published, and restoring mutable cache
+      # state into it would let a poisoned entry influence what ships.
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
-          enable-cache: true
+          enable-cache: false
           python-version: "3.14"
-          cache-dependency-glob: "**/pyproject.toml"
 
       - name: Build sdist and wheel
         run: uv build
@@ -78,6 +81,8 @@ jobs:
     needs: build
     if: github.event.release.prerelease
     runs-on: ubuntu-latest
+    # Bound the runtime of a job holding publish credentials.
+    timeout-minutes: 10
     environment:
       name: testpypi
       url: https://test.pypi.org/p/liveness_primer
@@ -100,6 +105,8 @@ jobs:
     needs: build
     if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
+    # Bound the runtime of a job holding publish credentials.
+    timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/p/liveness_primer
