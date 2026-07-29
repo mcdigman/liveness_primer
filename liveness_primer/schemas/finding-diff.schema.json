@@ -1,0 +1,156 @@
+{
+  "$defs": {
+    "ChangedField": {
+      "description": "Observable occurrence field that may differ within a ``changed`` diff (contract \u00a78).\n\nAttributes\n----------\nLINE_SPAN\n    The start/end line span moved.\nMESSAGE\n    The message text changed.\nCONFIDENCE\n    The confidence value changed (only for tools declaring the capability).",
+      "enum": [
+        "line-span",
+        "message",
+        "confidence"
+      ],
+      "title": "ChangedField",
+      "type": "string"
+    },
+    "DiffClass": {
+      "description": "Classification of one finding diff (contract \u00a78).\n\nAttributes\n----------\nNEW\n    Present on the head side only.\nDROPPED\n    Present on the base side only.\nCHANGED\n    Present on both sides with at least one observable field changed.",
+      "enum": [
+        "new",
+        "dropped",
+        "changed"
+      ],
+      "title": "DiffClass",
+      "type": "string"
+    },
+    "FindingOccurrence": {
+      "additionalProperties": false,
+      "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.",
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "end_line": {
+          "minimum": 1,
+          "title": "End Line",
+          "type": "integer"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "raw_excerpt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Excerpt"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_line",
+        "end_line",
+        "message"
+      ],
+      "title": "FindingOccurrence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One classified difference between the base and head reports (contract \u00a78).\n\nAttributes\n----------\ndiff_class : DiffClass\n    ``new``, ``dropped``, or ``changed``.\nidentity : str\n    Stable identity hash shared by the paired occurrences.\ntool : str\n    Adapter name of the reporting detector.\nproject : str\n    Corpus project name.\npath : str\n    Repo-relative POSIX path of the reported file.\nsymbol : str | None\n    Reported symbol, when the detector names one.\nkind : str\n    Normalized finding kind.\nbase_occurrence : FindingOccurrence | None\n    Base-side occurrence; absent for ``new``.\nhead_occurrence : FindingOccurrence | None\n    Head-side occurrence; absent for ``dropped``.\nchanged_fields : tuple[ChangedField, ...]\n    Fields differing within a ``changed`` pair; empty otherwise.",
+  "properties": {
+    "base_occurrence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FindingOccurrence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "changed_fields": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ChangedField"
+      },
+      "title": "Changed Fields",
+      "type": "array"
+    },
+    "diff_class": {
+      "$ref": "#/$defs/DiffClass"
+    },
+    "head_occurrence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FindingOccurrence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "identity": {
+      "title": "Identity",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "project": {
+      "title": "Project",
+      "type": "string"
+    },
+    "symbol": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Symbol"
+    },
+    "tool": {
+      "title": "Tool",
+      "type": "string"
+    }
+  },
+  "required": [
+    "diff_class",
+    "identity",
+    "tool",
+    "project",
+    "path",
+    "symbol",
+    "kind"
+  ],
+  "title": "FindingDiff",
+  "type": "object"
+}

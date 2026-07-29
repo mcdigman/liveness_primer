@@ -29,12 +29,18 @@ keywords = [
 ]
 
 dependencies = [
-    "pydantic>=2",
+    # Contract §17 pins pydantic>=2; the floor is 2.5 because it is the first
+    # release shipping pydantic-core wheels for Python 3.12, which the
+    # lowest-direct-resolution CI jobs install on 3.12.
+    "pydantic>=2.5",
     "platformdirs>=4",
     "filelock>=3.20.3",
     "packaging>=24",
 ]
 requires-python = ">=3.12"
+
+[project.scripts]
+liveness-primer = "liveness_primer.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mcdigman/liveness_primer"
@@ -56,6 +62,9 @@ dev = [
     "pyright",
     "pyrefly",
     "prek",
+    # license_check.py imports httpx (the [license] extra); the dev extra
+    # carries it so tests and the strict type checkers resolve it.
+    "httpx>=0.28,<1",
 ]
 # Sphinx HTML documentation build (docs/). Built locally with
 # `make -C docs html` and in CI by .github/workflows/docs.yml.
@@ -114,3 +123,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["liveness_primer*"]
+
+[tool.setuptools.package-data]
+liveness_primer = ["py.typed", "schemas/*.schema.json"]

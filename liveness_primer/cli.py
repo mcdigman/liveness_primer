@@ -1,0 +1,390 @@
+"""The command-line interface (contract §12).
+
+Copyright (C) 2026 Matthew C. Digman
+
+Commands: ``run``, ``corpus validate``, ``corpus license-check``, and
+``schema export``. Exit codes (contract §9): 0 for any successful run
+regardless of diff size, 1 for run or configuration failures, 2 for usage
+errors (argparse), and 3 for opt-in ``--fail-on`` gate failures.
+"""
+
+import argparse
+import os
+import shlex
+import sys
+from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as metadata_version
+from pathlib import Path
+
+from liveness_primer.config import CorpusProject, ad_hoc_project, load_corpus, select_projects
+from liveness_primer.corpus import CheckoutStore, cache_root
+from liveness_primer.envcache import DetectorEnvironments, choose_installer
+from liveness_primer.errors import LivenessPrimerError
+from liveness_primer.findings import SCHEMA_VERSION, Report
+from liveness_primer.isolation import detect_isolation
+from liveness_primer.license_check import check_licenses
+from liveness_primer.report import render_github, render_json, render_text
+from liveness_primer.runner import (
+    GATE_CHOICES,
+    PrimerRunner,
+    RunnerError,
+    RunOptions,
+    evaluate_gates,
+    report_has_failures,
+)
+from liveness_primer.schema_export import export_schemas
+from liveness_primer.tools.registry import adapter_names, get_adapter
+
+EXIT_OK = 0
+EXIT_FAILURE = 1
+EXIT_GATE = 3
+
+_RENDERERS = {'text': render_text, 'json': render_json, 'github': render_github}
+
+
+def _package_version() -> str:
+    """Report the installed package version.
+
+    Returns
+    -------
+    str
+        The distribution version, or ``unknown`` outside an install.
+    """
+    try:
+        return metadata_version('liveness_primer')
+    except PackageNotFoundError:
+        return 'unknown'
+
+
+def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentParser]') -> None:
+    """Add the ``run`` command (contract §12).
+
+    Parameters
+    ----------
+    subcommands : argparse._SubParsersAction[argparse.ArgumentParser]
+        The root subcommand registry.
+    """
+    run_parser = subcommands.add_parser('run', help='run a two-revision comparison')
+    run_parser.add_argument('--tool', required=True, help='detector adapter name')
+    run_parser.add_argument('--repo', help='detector repository URL')
+    run_parser.add_argument('--old', help='base detector ref')
+    run_parser.add_argument('--new', help='head detector ref')
+    run_parser.add_argument('--old-cmd', help='escape hatch: pre-built base detector command')
+    run_parser.add_argument('--new-cmd', help='escape hatch: pre-built head detector command')
+    run_parser.add_argument('-k', dest='keywords', action='append', default=[], help='select projects by substring')
+    run_parser.add_argument('--all', dest='select_all', action='store_true', help='select every applicable project')
+    run_parser.add_argument('--max-cost', type=float, help='greedy selection budget in CPU-seconds')
+    run_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
+    run_parser.add_argument('--project', dest='project_url', help='ad-hoc mode: single target repository URL')
+    run_parser.add_argument('--max-results', type=int, default=200, help='per-project cap on rendered diffs')
+    run_parser.add_argument('--excerpt-lines', type=int, default=5, help='cap on rendered excerpt lines')
+    run_parser.add_argument('--output', choices=sorted(_RENDERERS), default='text', help='report mode')
+    run_parser.add_argument(
+        '--fail-on',
+        action='append',
+        default=[],
+        choices=GATE_CHOICES,
+        help='opt-in gate; repeatable',
+    )
+    run_parser.add_argument('--jobs', type=int, default=2, help='concurrent detector subprocesses')
+    run_parser.add_argument('--timeout', type=float, default=300.0, help='default per-(project, tool) timeout')
+    run_parser.add_argument('--fresh', action='store_true', help='force same-run environment rebuilds')
+
+
+def _add_corpus_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentParser]') -> None:
+    """Add the ``corpus`` command group (contract §12).
+
+    Parameters
+    ----------
+    subcommands : argparse._SubParsersAction[argparse.ArgumentParser]
+        The root subcommand registry.
+    """
+    corpus_parser = subcommands.add_parser('corpus', help='corpus maintenance commands')
+    corpus_commands = corpus_parser.add_subparsers(dest='corpus_command', required=True)
+    validate_parser = corpus_commands.add_parser('validate', help='parse and validate the corpus TOML')
+    validate_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
+    license_parser = corpus_commands.add_parser('license-check', help='verify licenses via the GitHub API (§6)')
+    license_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
+
+
+def _add_schema_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentParser]') -> None:
+    """Add the ``schema`` command group (contract §12).
+
+    Parameters
+    ----------
+    subcommands : argparse._SubParsersAction[argparse.ArgumentParser]
+        The root subcommand registry.
+    """
+    schema_parser = subcommands.add_parser('schema', help='schema maintenance commands')
+    schema_commands = schema_parser.add_subparsers(dest='schema_command', required=True)
+    schema_commands.add_parser('export', help='regenerate liveness_primer/schemas/ (§7)')
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the argparse command tree (contract §12).
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The root parser; every command accepts ``-h``/``--help``.
+    """
+    parser = argparse.ArgumentParser(
+        prog='liveness-primer',
+        description='Run a Python dead-code detector at two revisions and report the blast radius.',
+    )
+    parser.add_argument(
+        '--version',
+        action='version',
+        version=f'%(prog)s {_package_version()} (schema {SCHEMA_VERSION})',
+    )
+    subcommands = parser.add_subparsers(dest='command', required=True)
+    _add_run_parser(subcommands)
+    _add_corpus_parser(subcommands)
+    _add_schema_parser(subcommands)
+    return parser
+
+
+def _check_run_mode(args: argparse.Namespace) -> bool:
+    """Validate the managed-vs-escape-hatch flag matrix (contract §3, §12).
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed ``run`` arguments.
+
+    Returns
+    -------
+    bool
+        True for an escape-hatch run.
+
+    Raises
+    ------
+    RunnerError
+        If the flags mix modes, are incomplete, or request gating for a
+        non-comparable run.
+    """
+    escape = args.old_cmd is not None or args.new_cmd is not None
+    if escape:
+        if args.old_cmd is None or args.new_cmd is None:
+            msg = '--old-cmd and --new-cmd must be given together'
+            raise RunnerError(msg)
+        if args.repo is not None or args.old is not None or args.new is not None:
+            msg = 'the escape hatch (--old-cmd/--new-cmd) replaces --repo/--old/--new'
+            raise RunnerError(msg)
+        if args.fail_on:
+            msg = '--fail-on refuses to act on a non-comparable (escape-hatch) run (§3)'
+            raise RunnerError(msg)
+    elif args.repo is None or args.old is None or args.new is None:
+        msg = 'a managed run requires --repo, --old, and --new (or use --old-cmd/--new-cmd)'
+        raise RunnerError(msg)
+    return escape
+
+
+def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
+    """Resolve the projects a ``run`` targets (contract §5).
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed ``run`` arguments.
+
+    Returns
+    -------
+    tuple[CorpusProject, ...]
+        Selected corpus projects, or the single ad-hoc project.
+
+    Raises
+    ------
+    RunnerError
+        If ad-hoc mode is mixed with corpus selectors.
+    """
+    if args.project_url is not None:
+        if args.keywords or args.select_all or args.max_cost is not None:
+            msg = '--project (ad-hoc mode) does not take -k/--all/--max-cost'
+            raise RunnerError(msg)
+        return (ad_hoc_project(args.project_url),)
+    corpus = load_corpus(args.corpus, known_tools=adapter_names())
+    return select_projects(
+        corpus,
+        tool=args.tool,
+        keywords=tuple(args.keywords),
+        select_all=args.select_all,
+        max_cost=args.max_cost,
+    )
+
+
+def _exit_code_for(report: Report, fail_on: tuple[str, ...]) -> int:
+    """Derive the process exit code from a finished run (contract §9).
+
+    Parameters
+    ----------
+    report : Report
+        The assembled report.
+    fail_on : tuple[str, ...]
+        Enabled gates.
+
+    Returns
+    -------
+    int
+        Distinct codes for run failure (1) and gate failure (3), else 0.
+    """
+    fired = evaluate_gates(report, fail_on)
+    if report_has_failures(report):
+        sys.stderr.write('run failure: one or more detector invocations failed; see the report\n')
+        return EXIT_FAILURE
+    if fired:
+        sys.stderr.write('gate failure: ' + '; '.join(fired) + '\n')
+        return EXIT_GATE
+    return EXIT_OK
+
+
+def _command_run(args: argparse.Namespace) -> int:
+    """Execute the ``run`` command (contract §12).
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed ``run`` arguments.
+
+    Returns
+    -------
+    int
+        0 on success, 1 on run failure, 3 on gate failure.
+    """
+    adapter = get_adapter(args.tool)
+    escape = _check_run_mode(args)
+    projects = _select_run_projects(args)
+    options = RunOptions(
+        jobs=args.jobs,
+        timeout=args.timeout,
+        max_results=args.max_results,
+        excerpt_lines=args.excerpt_lines,
+        fail_on=tuple(args.fail_on),
+        fresh=args.fresh,
+    )
+    store = CheckoutStore(cache_root())
+    isolation = detect_isolation()
+    runner = PrimerRunner(adapter=adapter, store=store, isolation=isolation, options=options)
+    if escape:
+        report = runner.run_escape_hatch(
+            projects,
+            base_cmd=shlex.split(args.old_cmd),
+            head_cmd=shlex.split(args.new_cmd),
+        )
+    else:
+        environments = DetectorEnvironments(
+            store,
+            cache_root(),
+            installer=choose_installer(),
+            isolation=isolation,
+            fresh=args.fresh,
+        )
+        report = runner.run_managed(
+            projects,
+            detector_repo=args.repo,
+            base_ref=args.old,
+            head_ref=args.new,
+            environments=environments,
+        )
+    sys.stdout.write(_RENDERERS[args.output](report))
+    return _exit_code_for(report, options.fail_on)
+
+
+def _command_validate(args: argparse.Namespace) -> int:
+    """Execute ``corpus validate`` (contract §12).
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments.
+
+    Returns
+    -------
+    int
+        0 when the corpus file is valid.
+    """
+    corpus = load_corpus(args.corpus, known_tools=adapter_names())
+    names = ', '.join(project.name for project in corpus.projects)
+    sys.stdout.write(f'corpus OK: {len(corpus.projects)} project(s): {names}\n')
+    return EXIT_OK
+
+
+def _command_license_check(args: argparse.Namespace) -> int:
+    """Execute ``corpus license-check`` (contract §6, §12).
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments.
+
+    Returns
+    -------
+    int
+        0 when every declared license is confirmed.
+    """
+    corpus = load_corpus(args.corpus, known_tools=adapter_names())
+    results = check_licenses(corpus.projects, token=os.environ.get('GITHUB_TOKEN'))
+    for result in results:
+        marker = 'ok  ' if result.ok else 'FAIL'
+        sys.stdout.write(f'{marker} {result.project}: {result.detail}\n')
+    if all(result.ok for result in results):
+        return EXIT_OK
+    return EXIT_FAILURE
+
+
+def _command_schema_export() -> int:
+    """Execute ``schema export`` (contract §7, §12).
+
+    Returns
+    -------
+    int
+        0 after regenerating the schema files.
+    """
+    for path in export_schemas():
+        sys.stdout.write(f'wrote {path}\n')
+    return EXIT_OK
+
+
+def _dispatch(args: argparse.Namespace) -> int:
+    """Route parsed arguments to their command.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments.
+
+    Returns
+    -------
+    int
+        The command's exit code.
+    """
+    if args.command == 'run':
+        return _command_run(args)
+    if args.command == 'corpus':
+        if args.corpus_command == 'validate':
+            return _command_validate(args)
+        return _command_license_check(args)
+    return _command_schema_export()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the CLI (contract §12).
+
+    Parameters
+    ----------
+    argv : Sequence[str] | None
+        Arguments without the program name; ``sys.argv[1:]`` by default.
+
+    Returns
+    -------
+    int
+        Process exit code (see the module docstring).
+    """
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return _dispatch(args)
+    except LivenessPrimerError as exc:
+        sys.stderr.write(f'error: {exc}\n')
+        return EXIT_FAILURE
