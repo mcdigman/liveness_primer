@@ -52,8 +52,55 @@ inline-quotes="single"
 author = "Matthew C. Digman"
 min-file-size = 1024
 
+[lint.flake8-tidy-imports.banned-api]
+# Contract §11 subprocess hygiene: every subprocess launch goes through the
+# audited launcher module, which accepts only typed argv lists and exposes no
+# shell parameter. The bandit S rules cannot enforce this on their own: S603
+# flags every subprocess call regardless of safety, and no S rule flags
+# asyncio.create_subprocess_shell.
+"subprocess.run".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.Popen".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.call".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.check_call".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.check_output".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.getoutput".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"subprocess.getstatusoutput".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.system".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.popen".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execl".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execle".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execlp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execlpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execv".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execve".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execvp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execvpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnl".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnle".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnlp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnlpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnv".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnve".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnvp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnvpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.posix_spawn".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.posix_spawnp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"pty.spawn".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"asyncio.create_subprocess_shell".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"asyncio.create_subprocess_exec".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+# NOTE: event-loop instance methods (loop.subprocess_exec/loop.subprocess_shell)
+# cannot be banned by qualified name; the AST test required by contract §15 is
+# the backstop for those.
+
 [lint.per-file-ignores]
 "tests/*" = ["S101", "D103"]
+# Sphinx's conf.py is executed by sphinx-build, not imported as part of a
+# package, so it is deliberately not in one (INP001). Its module-level settings
+# are fixed names dictated by Sphinx.
+"docs/conf.py" = ["INP001"]
+# The audited launcher (contract §11) is the sole module allowed to touch the
+# raw subprocess APIs. S603 fires on every subprocess call, safe or not.
+"liveness_primer/launcher.py" = ["TID251", "S603"]
 
 [lint.pydocstyle]
 convention = "numpy"
