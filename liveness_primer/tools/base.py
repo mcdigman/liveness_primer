@@ -9,6 +9,7 @@ commands: invocations are argv lists composed from typed, validated models.
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -161,21 +162,22 @@ class DetectorAdapter(Protocol):
         ...  # pragma: no cover - protocol signature
 
 
-def build_invocation(adapter: DetectorAdapter, executable: str, settings: ToolSettings) -> list[str]:
+def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settings: ToolSettings) -> list[str]:
     """Compose the analysis argv for one (project, tool) pair (contract §11).
 
     The per-tool corpus ``command`` override replaces the default program and
-    arguments, with the literal element ``{exe}`` substituted by the managed
-    executable; ``args`` appends; targets default to the checkout root.
-    Corpus *content* is never interpolated — every element originates from
-    typed, validated models.
+    arguments, with the literal element ``{exe}`` spliced with the detector
+    command; ``args`` appends; targets default to the checkout root. Corpus
+    *content* is never interpolated — every element originates from typed,
+    validated models.
 
     Parameters
     ----------
     adapter : DetectorAdapter
         The adapter providing defaults.
-    executable : str
-        Managed detector executable path.
+    executable : Sequence[str]
+        Detector command prefix: the managed console script, or an
+        escape-hatch command (contract §3).
     settings : ToolSettings
         Per-(project, tool) corpus table.
 
@@ -184,10 +186,15 @@ def build_invocation(adapter: DetectorAdapter, executable: str, settings: ToolSe
     list[str]
         The composed argv.
     """
+    base: list[str] = []
     if settings.command is not None:
-        base = [executable if element == '{exe}' else element for element in settings.command]
+        for element in settings.command:
+            if element == '{exe}':
+                base.extend(executable)
+            else:
+                base.append(element)
     else:
-        base = [executable, *adapter.default_args]
+        base.extend([*executable, *adapter.default_args])
     targets = list(settings.targets) if settings.targets else ['.']
     return [*base, *settings.args, *targets]
 

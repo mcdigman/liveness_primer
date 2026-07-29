@@ -55,25 +55,25 @@ def test_build_recipe_digest_is_stable_and_content_sensitive() -> None:
 
 
 def test_build_invocation_defaults() -> None:
-    argv = build_invocation(VultureAdapter(), '/envs/base/bin/vulture', ToolSettings())
+    argv = build_invocation(VultureAdapter(), ['/envs/base/bin/vulture'], ToolSettings())
     assert argv == ['/envs/base/bin/vulture', '.']
 
 
 def test_build_invocation_with_targets_and_args() -> None:
     settings = ToolSettings(args=('--min-confidence', '80'), targets=('src', 'tests'))
-    argv = build_invocation(VultureAdapter(), '/envs/base/bin/vulture', settings)
+    argv = build_invocation(VultureAdapter(), ['/envs/base/bin/vulture'], settings)
     assert argv == ['/envs/base/bin/vulture', '--min-confidence', '80', 'src', 'tests']
 
 
 def test_build_invocation_command_override_substitutes_exe() -> None:
     settings = ToolSettings(command=('{exe}', '--json'), targets=('pkg',))
-    argv = build_invocation(SkylosAdapter(), '/envs/head/bin/skylos', settings)
-    assert argv == ['/envs/head/bin/skylos', '--json', 'pkg']
+    argv = build_invocation(SkylosAdapter(), ['python', '-m', 'skylos'], settings)
+    assert argv == ['python', '-m', 'skylos', '--json', 'pkg']
 
 
 def test_build_invocation_command_override_without_placeholder() -> None:
     settings = ToolSettings(command=('/opt/wrapper', '--mode', 'scan'))
-    argv = build_invocation(SkylosAdapter(), '/ignored', settings)
+    argv = build_invocation(SkylosAdapter(), ['/ignored'], settings)
     assert argv == ['/opt/wrapper', '--mode', 'scan', '.']
 
 
