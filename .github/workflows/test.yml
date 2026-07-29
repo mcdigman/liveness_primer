@@ -75,10 +75,12 @@ jobs:
       # then add pytest separately so the test runner stays current instead of
       # being floored too: pytest is not a runtime dependency, so pinning it to
       # its own lower bound would test nothing useful.
+      # The [license] extra is included because the test suite exercises the
+      # httpx-based license check, so its floor is gated here too.
       - name: Install project (lowest-direct resolution)
         run: |
           uv venv --python 3.12
-          uv pip install --resolution lowest-direct .
+          uv pip install --resolution lowest-direct ".[license]"
           uv pip install pytest
 
       - name: Run tests
@@ -120,14 +122,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache-dependency-glob: "**/pyproject.toml"
 
-      # Install the package (and its numpy) at the matrix resolution, then
-      # add pytest separately so the test runner stays current instead of being
-      # floored too: pytest is not a runtime dependency, so pinning it to its own
-      # lower bound would test nothing useful.
+      # Install the package (with the [license] extra the test suite
+      # exercises) at the matrix resolution, then add pytest separately so the
+      # test runner stays current instead of being floored too: pytest is not
+      # a runtime dependency, so pinning it to its own lower bound would test
+      # nothing useful.
       - name: Install project (${{ matrix.resolution }} resolution)
         run: |
           uv venv --python ${{ matrix.python-version }}
-          uv pip install --resolution ${{ matrix.resolution }} .
+          uv pip install --resolution ${{ matrix.resolution }} ".[license]"
           uv pip install pytest
 
       - name: Run tests
