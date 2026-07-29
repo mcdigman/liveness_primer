@@ -7,6 +7,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -15,7 +16,7 @@ from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
 from liveness_primer.findings import DiffClass, DiffTotals, Report
 from liveness_primer.isolation import UNENFORCED, Isolation
-from liveness_primer.launcher import LaunchResult, run_async, run_sync
+from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async, run_sync
 from liveness_primer.runner import PrimerRunner, RunnerError, RunOptions, evaluate_gates, report_has_failures
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.tools.registry import get_adapter
@@ -41,6 +42,17 @@ def runner_for(tmp_path: Path, options: RunOptions = DEFAULT_OPTIONS) -> PrimerR
         isolation=UNENFORCED,
         options=options,
     )
+
+
+def test_runner_rejects_synchronous_async_launcher(tmp_path: Path) -> None:
+    with pytest.raises(RunnerError, match='async_launcher must be an asynchronous callable'):
+        PrimerRunner(
+            adapter=get_adapter('vulture'),
+            store=CheckoutStore(tmp_path / 'cache'),
+            isolation=UNENFORCED,
+            options=DEFAULT_OPTIONS,
+            async_launcher=cast('AsyncLauncher', run_sync),
+        )
 
 
 def escape_run(

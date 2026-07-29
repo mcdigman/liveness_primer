@@ -9,6 +9,7 @@ timeouts; analysis-step subprocesses run under the §11 network isolation.
 """
 
 import asyncio
+import inspect
 import platform
 import sysconfig
 from collections.abc import Sequence
@@ -207,6 +208,11 @@ class PrimerRunner:
         Effective run options.
     async_launcher : AsyncLauncher
         Audited launcher for detector invocations (contract §11).
+
+    Raises
+    ------
+    RunnerError
+        If ``async_launcher`` is not an asynchronous callable.
     """
 
     def __init__(
@@ -218,6 +224,11 @@ class PrimerRunner:
         options: RunOptions,
         async_launcher: AsyncLauncher = run_async,
     ) -> None:
+        if not inspect.iscoroutinefunction(async_launcher) and not inspect.iscoroutinefunction(
+            type(async_launcher).__call__
+        ):
+            msg = 'async_launcher must be an asynchronous callable'
+            raise RunnerError(msg)
         self._adapter = adapter
         self._store = store
         self._isolation = isolation
