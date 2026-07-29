@@ -33,8 +33,9 @@ point*: pre-triage, triage, or post-triage (§10).
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
 - Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
-  statically parsing PEP 621 `[project]` metadata — no build backend is invoked, so no code
-  from the detector refs executes; every fetch is recorded in the run manifest — URLs,
+  statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and
+  `[build-system].requires` — no build backend is invoked, so no code from the detector
+  refs executes; every fetch is recorded in the run manifest — URLs,
   resolved SHAs, installed versions), then a **build** step (networking disabled per §11;
   the detector installs from the local cache, e.g. `--no-index --find-links`, so
   build-backend hooks run sandboxed; Rust detectors prefetch crates during fetch and build
@@ -76,8 +77,11 @@ point*: pre-triage, triage, or post-triage (§10).
   capabilities (e.g. has-confidence, output format) and a **build recipe** — build backend
   plus toolchain prerequisites with minimum versions (e.g. Rust and maturin for `culler`
   and `mollify`) — which the runner verifies before building and CI provisions for gated
-  detectors. v1 build recipes require static PEP 621 metadata (§3); dynamic-metadata
-  detectors are unsupported. Adapters ingest only dead-code finding kinds: other report
+  detectors. v1 build recipes require statically declared dependencies and build
+  requirements — `dependencies`/`optional-dependencies` must not be listed in `dynamic`
+  (§3); other fields such as `version` may be dynamic and resolve during the sandboxed
+  build (vulture's `dynamic = ["version"]` is fine). Detectors with dynamic dependency
+  metadata are unsupported. Adapters ingest only dead-code finding kinds: other report
   categories (e.g. skylos's security, secrets, and quality findings) are filtered at the
   adapter. The interface is not Python-specific (paths plus optional symbol), leaving room
   for tools such as `knip`.
@@ -165,8 +169,9 @@ point*: pre-triage, triage, or post-triage (§10).
   quoting so downstream LLM consumers structurally see them as data. Sanitization is
   mandatory and not hook-removable.
 - Exit codes: 0 for any successful run regardless of diff size; opt-in
-  `--fail-on {new,dropped,any,corpus-integrity}` gating; distinct nonzero codes for run
-  failure vs. gate failure.
+  `--fail-on {new,dropped,changed,any,corpus-integrity}` gating (repeatable; `any` covers
+  the three diff classes, not `corpus-integrity`); distinct nonzero codes for run failure
+  vs. gate failure.
 
 ## 10. Hook system
 
