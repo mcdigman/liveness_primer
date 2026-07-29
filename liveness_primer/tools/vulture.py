@@ -1,0 +1,118 @@
+"""Adapter for the ``vulture`` dead-code detector (contract §4).
+
+Copyright (C) 2026 Matthew C. Digman
+
+Vulture prints one finding per stdout line as
+``path:line: message (NN% confidence)`` and exits 0 when clean, 3 when
+findings exist, 1 on invalid input, and 2 on invalid arguments.
+"""
+
+import re
+from pathlib import Path
+
+from liveness_primer.findings import Finding
+from liveness_primer.tools.base import (
+    AdapterCapabilities,
+    AdapterError,
+    BuildRecipe,
+    RawToolOutput,
+    normalize_finding_path,
+)
+
+_LINE_RE = re.compile(
+    r'^(?P<path>.+):(?P<line>\d+): (?P<message>.+) \((?P<confidence>\d{1,3})% confidence(?:, \d+ lines?)?\)$'
+)
+_UNUSED_RE = re.compile(r"^unused (?P<kind>attribute|class|function|import|method|property|variable) '(?P<symbol>.+)'$")
+
+
+class VultureAdapter:
+    """Adapter for vulture's text report (contract §4).
+
+    Attributes
+    ----------
+    name : str
+        Tool name: ``vulture``.
+    distribution : str
+        Distribution name: ``vulture``.
+    executable : str
+        Console script: ``vulture``.
+    default_args : tuple[str, ...]
+        No extra arguments; targets are positional.
+    success_exit_codes : frozenset[int]
+        0 (clean) and 3 (findings).
+    capabilities : AdapterCapabilities
+        Confidence-capable text output.
+    build_recipe : BuildRecipe
+        Generic Python source install; no toolchain prerequisites.
+    """
+
+    name: str = 'vulture'
+    distribution: str = 'vulture'
+    executable: str = 'vulture'
+    default_args: tuple[str, ...] = ()
+    success_exit_codes: frozenset[int] = frozenset({0, 3})
+    capabilities: AdapterCapabilities = AdapterCapabilities(has_confidence=True, output_format='text')
+    build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
+
+    @staticmethod
+    def parse(output: RawToolOutput, *, project: str, root: Path) -> list[Finding]:
+        """Parse vulture stdout lines into findings.
+
+        Reachability messages (``unreachable code after 'return'``,
+        ``unsatisfiable 'if' condition``, ...) normalize to the
+        ``unreachable_code`` kind with no symbol.
+
+        Parameters
+        ----------
+        output : RawToolOutput
+            Captured vulture output with a success exit code.
+        project : str
+            Corpus project name to stamp onto findings.
+        root : Path
+            Checkout directory vulture analyzed.
+
+        Returns
+        -------
+        list[Finding]
+            One finding per report line.
+
+        Raises
+        ------
+        AdapterError
+            If a non-empty stdout line does not match the report format.
+        """
+        findings: list[Finding] = []
+        unparsed: list[str] = []
+        for line in output.stdout.splitlines():
+            if not line.strip():
+                continue
+            match = _LINE_RE.match(line)
+            if match is None:
+                unparsed.append(line)
+                continue
+            message = match.group('message')
+            unused = _UNUSED_RE.match(message)
+            if unused is not None:
+                kind, symbol = unused.group('kind'), unused.group('symbol')
+            else:
+                kind, symbol = 'unreachable_code', None
+            start_line = int(match.group('line'))
+            findings.append(
+                Finding(
+                    tool=VultureAdapter.name,
+                    project=project,
+                    path=normalize_finding_path(match.group('path'), root),
+                    symbol=symbol,
+                    kind=kind,
+                    message=message,
+                    start_line=max(start_line, 1),
+                    end_line=max(start_line, 1),
+                    confidence=min(int(match.group('confidence')), 100),
+                    raw_excerpt=line,
+                )
+            )
+        if unparsed:
+            preview = ' | '.join(unparsed[:3])
+            msg = f'{len(unparsed)} unparseable vulture output line(s), e.g.: {preview}'
+            raise AdapterError(msg)
+        return findings

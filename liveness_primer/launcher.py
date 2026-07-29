@@ -163,6 +163,33 @@ class AsyncLauncher(Protocol):
         ...  # pragma: no cover - protocol signature
 
 
+def _spawn_failure(argv: tuple[str, ...], exc: OSError, start: float) -> LaunchResult:
+    """Build the result for a launch that failed to spawn at all.
+
+    Parameters
+    ----------
+    argv : tuple[str, ...]
+        The validated argv that failed to spawn.
+    exc : OSError
+        The spawn error (missing binary, permissions, ...).
+    start : float
+        Monotonic start time of the attempt.
+
+    Returns
+    -------
+    LaunchResult
+        A conventional command-not-found result (exit code 127).
+    """
+    return LaunchResult(
+        argv=argv,
+        returncode=127,
+        stdout='',
+        stderr=str(exc),
+        duration_seconds=time.monotonic() - start,
+        timed_out=False,
+    )
+
+
 def _decode(data: bytes) -> str:
     """Decode captured process output, tolerating untrusted bytes.
 
@@ -216,6 +243,8 @@ def run_sync(
             timeout=timeout,
             check=False,
         )
+    except OSError as exc:
+        return _spawn_failure(checked, exc, start)
     except subprocess.TimeoutExpired as exc:
         return LaunchResult(
             argv=checked,
@@ -269,14 +298,17 @@ async def run_async(
     """
     checked = _validated_argv(argv)
     start = time.monotonic()
-    process = await asyncio.create_subprocess_exec(
-        *checked,
-        cwd=cwd,
-        env=dict(env) if env is not None else None,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *checked,
+            cwd=cwd,
+            env=dict(env) if env is not None else None,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        return _spawn_failure(checked, exc, start)
     try:
         stdout_bytes, stderr_bytes = await process.communicate()
     except asyncio.CancelledError:

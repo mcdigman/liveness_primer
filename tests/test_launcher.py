@@ -110,6 +110,16 @@ def test_async_rejects_shell_string() -> None:
         asyncio.run(scenario())
 
 
+def test_async_missing_binary_yields_command_not_found() -> None:
+    async def scenario() -> LaunchResult:
+        return await run_async(['/definitely/not/a/real/binary'])
+
+    result = asyncio.run(scenario())
+    assert result.returncode == 127
+    assert not result.ok
+    assert result.stderr
+
+
 def test_async_cancellation_kills_child() -> None:
     async def scenario() -> None:
         async with asyncio.timeout(0.5):

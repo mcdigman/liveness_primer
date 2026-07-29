@@ -1,0 +1,112 @@
+{
+  "analysis_errors": [],
+  "analysis_summary": {
+    "analysis_error_count": 0,
+    "excluded_folders": [],
+    "languages": [
+      "python"
+    ],
+    "total_files": 3
+  },
+  "dead_code_abstentions": [],
+  "dead_code_evidence": [],
+  "dead_code_rescues": [],
+  "definitions": {
+    "pkg.mod.used": {
+      "references": 4
+    }
+  },
+  "suppressed": [],
+  "unused_classes": [
+    {
+      "basename": "shapes.py",
+      "confidence": 86,
+      "dead_code_classification": "likely_dead",
+      "dead_code_disposition": "reported",
+      "file": "pkg/shapes.py",
+      "full_name": "pkg.shapes.Hexagon",
+      "line": 12,
+      "name": "Hexagon",
+      "references": 0,
+      "simple_name": "Hexagon",
+      "type": "class"
+    }
+  ],
+  "unused_functions": [
+    {
+      "basename": "mod.py",
+      "confidence": 100,
+      "dead_code_classification": "dead",
+      "dead_code_disposition": "reported",
+      "file": "pkg/mod.py",
+      "full_name": "pkg.mod.orphan",
+      "line": 4,
+      "name": "orphan",
+      "references": 0,
+      "simple_name": "orphan",
+      "type": "function"
+    },
+    {
+      "basename": "mod.py",
+      "calls": [],
+      "confidence": 74,
+      "dead_code_classification": "likely_dead",
+      "dead_code_disposition": "reported",
+      "decorators": [],
+      "file": "pkg/mod.py",
+      "full_name": "pkg.mod.Greeter.farewell",
+      "line": 21,
+      "name": "Greeter.farewell",
+      "references": 0,
+      "simple_name": "farewell",
+      "type": "method"
+    }
+  ],
+  "unused_imports": [
+    {
+      "basename": "mod.py",
+      "conditional_import": false,
+      "confidence": 95,
+      "dead_code_classification": "dead",
+      "dead_code_disposition": "reported",
+      "file": "pkg/mod.py",
+      "full_name": "pkg.mod.os",
+      "line": 1,
+      "name": "os",
+      "references": 0,
+      "simple_name": "os",
+      "type": "import"
+    }
+  ],
+  "unused_parameters": [
+    {
+      "basename": "mod.py",
+      "confidence": 61,
+      "dead_code_classification": "uncertain_reported",
+      "dead_code_disposition": "reported",
+      "file": "pkg/mod.py",
+      "full_name": "pkg.mod.orphan.flag",
+      "line": 4,
+      "name": "flag",
+      "references": 0,
+      "simple_name": "flag",
+      "type": "parameter"
+    }
+  ],
+  "unused_variables": [
+    {
+      "basename": "consts.py",
+      "confidence": 68,
+      "dead_code_classification": "likely_dead",
+      "dead_code_disposition": "reported",
+      "file": "pkg/consts.py",
+      "full_name": "pkg.consts.LEGACY_LIMIT",
+      "line": 7,
+      "name": "LEGACY_LIMIT",
+      "references": 0,
+      "simple_name": "LEGACY_LIMIT",
+      "type": "constant"
+    }
+  ],
+  "whitelisted": []
+}
