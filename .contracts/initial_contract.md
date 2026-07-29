@@ -49,12 +49,12 @@ point*: pre-triage, triage, or post-triage (§10).
   Python version and ABI, platform tag, installer name and version) and guarded by
   `filelock`; checkout caches are keyed by (repository, SHA). The manifest records the
   resolved dependency freeze of both environments. A base/head pair is **comparable** iff
-  the non-detector dependency delta is empty or attributable to declared-requirement
-  differences between the two refs; a non-comparable pair triggers an automatic paired
-  same-run rebuild, after which any remaining delta is ref-attributable by construction and
-  reported as context. The manifest records a `comparable` flag; `--fail-on` gating and
-  `bisect` refuse to act on non-comparable runs. `--fresh` forces same-run rebuilds of both
-  environments.
+  the non-detector dependency delta is empty; any non-empty delta triggers an automatic
+  paired same-run rebuild, and only a delta that survives same-run paired resolution is
+  ref-attributable (reported as context). Attribution is temporal, never textual:
+  declared-requirement differences between the refs do not excuse a cached pair. The
+  manifest records a `comparable` flag; `--fail-on` gating and `bisect` refuse to act on
+  non-comparable runs. `--fresh` forces same-run rebuilds of both environments.
 - Concurrency: `asyncio` orchestrates per-project subprocesses with a configurable
   parallelism limit and a per-(project, tool) timeout.
 
@@ -118,15 +118,19 @@ point*: pre-triage, triage, or post-triage (§10).
 
 ## 8. Diff engine
 
-- Both revisions see identical files. Matching is deterministic and order-independent:
-  (1) full-field-equal occurrences are removed by multiset intersection; (2) remaining
-  occurrences sharing (identity, line) are paired in canonical sort order (message, then
-  confidence) as `changed`; (3) remaining occurrences sharing identity are paired across
-  lines in sorted-line order as `changed`; (4) leftovers classify as `new` or `dropped`.
-  `changed` carries a `changed_fields ⊆ {line-span, message, confidence}` set (confidence
-  only for tools declaring that capability). Every normalized observable field participates
-  in the comparison; no identity-stable behavior change may go silently unclassified, and
-  the canonical ordering makes reports reproducible.
+- Both revisions see identical files. Matching is deterministic and order-independent. The
+  **canonical occurrence key** is the complete normalized occurrence tuple in fixed field
+  order (start line, end line, message, confidence, plus any observable field added later);
+  it governs all sorting below and the report ordering that `--occurrence` indexes (§12).
+  Stages: (1) full-field-equal occurrences are removed by multiset intersection;
+  (2) remaining occurrences sharing (identity, start line) are paired in canonical-key
+  order as `changed`; (3) remaining occurrences sharing identity are paired across lines
+  in canonical-key order as `changed`; (4) leftovers classify as `new` or `dropped`. After
+  stage 1, canonical-key ties occur only between fully identical, interchangeable
+  occurrences. `changed` carries a `changed_fields ⊆ {line-span, message, confidence}` set
+  (confidence only for tools declaring that capability). Every normalized observable field
+  participates in the comparison; no identity-stable behavior change may go silently
+  unclassified.
 - Caps on maximum results and excerpt lines are configurable; the report always states
   totals before truncation (new/dropped/changed counts, with confidence changes broken out,
   per project and overall) and notes any truncation. Rendered reports cap message-only
@@ -204,12 +208,14 @@ printing the package version and `SCHEMA_VERSION`. Commands:
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF
   --bad REF [--repo URL] [--predicate P]` — binary search over detector commits. The prior
   report supplies the manifest (detector repository, corpus pins), so every step reproduces
-  the identical checkout; the finding locator resolves to a full base occurrence in the
-  report, and the affected project is the only project run. When several occurrences share
-  (identity, line), `--occurrence` indexes the report's canonical ordering (§8). Default
-  predicate by diff class: `new` → first commit where the occurrence is present; `dropped`
-  → first where absent; `changed` → first where the occurrence deviates from its base
-  value in any of the finding's `changed_fields`. `--predicate` overrides.
+  the identical checkout; the affected project is the only project run. The locator
+  resolves to a full occurrence on the diff class's **reference side** — head for `new`,
+  base for `dropped` and `changed` — and `--occurrence` indexes that side's canonical
+  ordering (§8) when several occurrences share (identity, line). Default predicate by diff
+  class: `new` → first commit where the head occurrence is present; `dropped` → first
+  where the base occurrence is absent; `changed` → first where the occurrence deviates
+  from its base-side values in any of the finding's `changed_fields`. `--predicate`
+  overrides.
 - `schema export` — regenerate `liveness_primer/schemas/`.
 
 ## 13. Internal corpus
