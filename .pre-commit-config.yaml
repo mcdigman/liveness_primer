@@ -60,8 +60,14 @@ repos:
   - id: pyrefly-check
     args: [--preset=strict]
     # The dedicated typecheck.yml workflow still runs mypy and pyright.
+    # These must cover every import in liveness_primer/ and tests/ so the
+    # isolated hook environment can resolve them.
     additional_dependencies:
-      - numpy>=1.22
+      - pydantic>=2
+      - platformdirs>=4
+      - filelock>=3
+      - packaging>=24
+      - httpx>=0.28,<1
       - pytest
 
 - repo: https://github.com/rhysd/actionlint

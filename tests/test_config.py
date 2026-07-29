@@ -1,0 +1,286 @@
+"""Tests for corpus models, license rules, and selection (contract §5, §6).
+
+Copyright (C) 2026 Matthew C. Digman
+"""
+
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from liveness_primer.config import (
+    Corpus,
+    CorpusConfigError,
+    CorpusProject,
+    LicenseStatus,
+    ToolSettings,
+    ad_hoc_project,
+    classify_license,
+    github_owner_repo,
+    load_corpus,
+    select_projects,
+)
+
+PIN_A = 'a' * 40
+PIN_B = 'b' * 40
+
+
+def project(name: str = 'demo', **overrides: object) -> CorpusProject:
+    fields: dict[str, object] = {
+        'name': name,
+        'repo': f'https://github.com/example/{name}',
+        'license': 'MIT',
+        'pin': PIN_A,
+    }
+    fields.update(overrides)
+    return CorpusProject.model_validate(fields)
+
+
+@pytest.mark.parametrize('spdx', ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'PSF-2.0'])
+def test_allowlisted_licenses(spdx: str) -> None:
+    assert classify_license(spdx) is LicenseStatus.ALLOWED
+
+
+@pytest.mark.parametrize(
+    'spdx',
+    [None, '', '  ', 'GPL-2.0-only', 'GPL-3.0-or-later', 'AGPL-3.0', 'LGPL-2.1', 'MPL-2.0', 'gpl-2.0'],
+)
+def test_copyleft_or_missing_licenses_are_forbidden(spdx: str | None) -> None:
+    assert classify_license(spdx) is LicenseStatus.FORBIDDEN
+
+
+@pytest.mark.parametrize('spdx', ['Unlicense', 'WTFPL', 'EPL-2.0'])
+def test_unknown_licenses_require_human_review(spdx: str) -> None:
+    assert classify_license(spdx) is LicenseStatus.UNRECOGNIZED
+
+
+@pytest.mark.parametrize(
+    ('url', 'expected'),
+    [
+        ('https://github.com/python-attrs/attrs', ('python-attrs', 'attrs')),
+        ('https://github.com/pallets/click.git', ('pallets', 'click')),
+        ('https://github.com/pallets/jinja/', ('pallets', 'jinja')),
+    ],
+)
+def test_github_owner_repo_parses_hosted_urls(url: str, expected: tuple[str, str]) -> None:
+    assert github_owner_repo(url) == expected
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        'https://gitlab.com/owner/repo',
+        'git@github.com:owner/repo.git',
+        'http://github.com/owner/repo',
+        'https://github.com/owner',
+        'https://github.com/owner/repo/tree/main',
+    ],
+)
+def test_github_owner_repo_rejects_other_hosts(url: str) -> None:
+    assert github_owner_repo(url) is None
+
+
+def test_tool_settings_bounds() -> None:
+    with pytest.raises(ValidationError):
+        ToolSettings.model_validate({'timeout': 0})
+    with pytest.raises(ValidationError):
+        ToolSettings.model_validate({'cost': -1})
+    settings = ToolSettings(command=('{exe}', '--flag'), args=('-v',), targets=('src',), timeout=5.0, cost=2.0)
+    assert settings.expected_clean is False
+
+
+def test_project_rejects_bad_name_and_short_pin() -> None:
+    with pytest.raises(ValidationError):
+        project(name='bad name')
+    with pytest.raises(ValidationError):
+        project(pin='abc123')
+    with pytest.raises(ValidationError):
+        project(pin=PIN_A.upper())
+
+
+def test_project_rejects_pin_and_branch_together() -> None:
+    with pytest.raises(ValidationError, match='both pin and branch'):
+        project(branch='main')
+
+
+def test_project_tool_participation() -> None:
+    entry = project(exclude_tools=('skylos',))
+    assert entry.supports_tool('vulture')
+    assert not entry.supports_tool('skylos')
+    included = project(include_tools=('vulture',))
+    assert included.supports_tool('vulture')
+    assert not included.supports_tool('skylos')
+    both = project(include_tools=('vulture',), exclude_tools=('vulture',))
+    assert not both.supports_tool('vulture')
+
+
+def test_project_tool_settings_default() -> None:
+    entry = project(tools={'vulture': {'cost': 3.5}})
+    assert entry.tool_settings('vulture').cost == 3.5
+    assert entry.tool_settings('skylos') == ToolSettings()
+
+
+def test_corpus_rejects_duplicate_names() -> None:
+    with pytest.raises(ValidationError, match='duplicate project name'):
+        Corpus(projects=(project(), project()))
+
+
+def test_corpus_requires_exactly_one_pinning_mode() -> None:
+    with pytest.raises(ValidationError, match='exactly one of pin or branch'):
+        Corpus(projects=(project(pin=None),))
+
+
+def test_corpus_rejects_forbidden_and_unrecognized_licenses() -> None:
+    with pytest.raises(ValidationError, match='copyleft or missing'):
+        Corpus(projects=(project(license='GPL-3.0-only'),))
+    with pytest.raises(ValidationError, match='human review'):
+        Corpus(projects=(project(license='WTFPL'),))
+    with pytest.raises(ValidationError, match='copyleft or missing'):
+        Corpus(projects=(project(license=None),))
+
+
+def test_corpus_rejects_non_github_hosts() -> None:
+    with pytest.raises(ValidationError, match='not GitHub-hosted'):
+        Corpus(projects=(project(repo='https://gitlab.com/example/demo'),))
+
+
+def test_corpus_accepts_valid_entries() -> None:
+    corpus = Corpus(projects=(project('one'), project('two', pin=None, branch='main')))
+    assert [entry.name for entry in corpus.projects] == ['one', 'two']
+
+
+VALID_TOML = f"""
+[[projects]]
+name = "one"
+repo = "https://github.com/example/one"
+license = "MIT"
+pin = "{PIN_A}"
+
+[projects.tools.vulture]
+targets = ["src"]
+cost = 3.0
+expected_clean = true
+
+[[projects]]
+name = "two"
+repo = "https://github.com/example/two"
+license = "Apache-2.0"
+branch = "main"
+exclude_tools = ["skylos"]
+"""
+
+
+def test_load_corpus_round_trip(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.write_text(VALID_TOML, encoding='utf-8')
+    corpus = load_corpus(corpus_file, known_tools=('vulture', 'skylos'))
+    assert corpus.projects[0].tool_settings('vulture').expected_clean is True
+    assert corpus.projects[1].branch == 'main'
+
+
+def test_load_corpus_rejects_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(CorpusConfigError, match='cannot read corpus file'):
+        load_corpus(tmp_path / 'absent.toml')
+
+
+def test_load_corpus_rejects_bad_toml(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.write_text('projects = [', encoding='utf-8')
+    with pytest.raises(CorpusConfigError, match='not valid TOML'):
+        load_corpus(corpus_file)
+
+
+def test_load_corpus_rejects_schema_violations(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.write_text(VALID_TOML.replace('name = "two"', 'name = "two"\nsurprise = 1'), encoding='utf-8')
+    with pytest.raises(CorpusConfigError, match='invalid'):
+        load_corpus(corpus_file)
+
+
+def test_load_corpus_rejects_unknown_tool_references(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.write_text(VALID_TOML, encoding='utf-8')
+    with pytest.raises(CorpusConfigError, match="unknown tool 'skylos'"):
+        load_corpus(corpus_file, known_tools=('vulture',))
+
+
+def test_load_corpus_without_known_tools_skips_reference_check(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.write_text(VALID_TOML, encoding='utf-8')
+    corpus = load_corpus(corpus_file)
+    assert len(corpus.projects) == 2
+
+
+def test_ad_hoc_project_derives_name() -> None:
+    entry = ad_hoc_project('https://example.com/group/target.git')
+    assert entry.name == 'target'
+    assert entry.pin is None
+    assert entry.branch is None
+    assert entry.license is None
+
+
+def test_ad_hoc_project_rejects_underivable_names() -> None:
+    with pytest.raises(CorpusConfigError, match='cannot derive'):
+        ad_hoc_project('https://example.com/group/%20bad')
+
+
+def corpus_for_selection() -> Corpus:
+    return Corpus(
+        projects=(
+            project('cheap', tools={'vulture': {'cost': 1.0}}),
+            project('mid', tools={'vulture': {'cost': 5.0}}),
+            project('pricey', tools={'vulture': {'cost': 30.0}}),
+            project('uncosted'),
+            project('excluded', exclude_tools=('vulture',), tools={'vulture': {'cost': 1.0}}),
+        )
+    )
+
+
+def test_select_requires_exactly_one_selector() -> None:
+    corpus = corpus_for_selection()
+    with pytest.raises(CorpusConfigError, match='exactly one'):
+        select_projects(corpus, tool='vulture')
+    with pytest.raises(CorpusConfigError, match='exactly one'):
+        select_projects(corpus, tool='vulture', select_all=True, max_cost=10.0)
+
+
+def test_select_all_filters_tool_support() -> None:
+    names = [entry.name for entry in select_projects(corpus_for_selection(), tool='vulture', select_all=True)]
+    assert names == ['cheap', 'mid', 'pricey', 'uncosted']
+
+
+def test_select_by_keyword_substring_union() -> None:
+    names = [entry.name for entry in select_projects(corpus_for_selection(), tool='vulture', keywords=('chea', 'cost'))]
+    assert names == ['cheap', 'uncosted']
+
+
+def test_select_by_keyword_no_match_raises() -> None:
+    with pytest.raises(CorpusConfigError, match='no corpus project matches'):
+        select_projects(corpus_for_selection(), tool='vulture', keywords=('nomatch',))
+
+
+def test_select_by_cost_greedy_under_budget() -> None:
+    names = [entry.name for entry in select_projects(corpus_for_selection(), tool='vulture', max_cost=7.0)]
+    assert names == ['cheap', 'mid']
+
+
+def test_select_by_cost_skips_undeclared_and_keeps_file_order() -> None:
+    corpus = Corpus(
+        projects=(
+            project('later', tools={'vulture': {'cost': 5.0}}),
+            project('earlier', tools={'vulture': {'cost': 1.0}}),
+        )
+    )
+    names = [entry.name for entry in select_projects(corpus, tool='vulture', max_cost=6.0)]
+    assert names == ['later', 'earlier']
+
+
+def test_select_by_cost_ties_break_by_name() -> None:
+    corpus = Corpus(
+        projects=(
+            project('zeta', tools={'vulture': {'cost': 4.0}}),
+            project('alpha', tools={'vulture': {'cost': 4.0}}),
+        )
+    )
+    names = [entry.name for entry in select_projects(corpus, tool='vulture', max_cost=4.0)]
+    assert names == ['alpha']
