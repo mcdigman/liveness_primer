@@ -94,6 +94,10 @@ min-file-size = 1024
 
 [lint.per-file-ignores]
 "tests/*" = ["S101", "D103"]
+# Sphinx's conf.py is executed by sphinx-build, not imported as part of a
+# package, so it is deliberately not in one (INP001). Its module-level settings
+# are fixed names dictated by Sphinx.
+"docs/conf.py" = ["INP001"]
 # The audited launcher (contract §11) is the sole module allowed to touch the
 # raw subprocess APIs. S603 fires on every subprocess call, safe or not.
 "liveness_primer/launcher.py" = ["TID251", "S603"]

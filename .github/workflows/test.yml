@@ -126,7 +126,7 @@ jobs:
       # lower bound would test nothing useful.
       - name: Install project (${{ matrix.resolution }} resolution)
         run: |
-          uv vpython ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }}
           uv pip install --resolution ${{ matrix.resolution }} .
           uv pip install pytest
 
