@@ -802,7 +802,7 @@ class DetectorEnvironments:
 
     def _build(
         self,
-        env_dir: Path,
+        fingerprint: str,
         checkout: Path,
         metadata: DetectorMetadata,
     ) -> tuple[str, ...]:
@@ -810,8 +810,8 @@ class DetectorEnvironments:
 
         Parameters
         ----------
-        env_dir : Path
-            Environment directory (replaced if present).
+        fingerprint : str
+            full environment fingerprint from environment_fingerprint
         checkout : Path
             Detector checkout to install.
         metadata : DetectorMetadata
@@ -822,6 +822,7 @@ class DetectorEnvironments:
         tuple[str, ...]
             The freeze of the built environment.
         """
+        env_dir = self._cache_dir / 'envs' / Path(fingerprint).name
         wheelhouse = self._prefetch([*metadata.dependencies, *metadata.build_requires])
         if env_dir.exists():
             shutil.rmtree(env_dir)
@@ -869,7 +870,7 @@ class DetectorEnvironments:
         fingerprint = environment_fingerprint(repo, sha, adapter, installer_identity)
         envs = self._cache_dir / 'envs'
         envs.mkdir(parents=True, exist_ok=True)
-        env_dir = envs / fingerprint
+        env_dir = envs / Path(fingerprint).name
         env_manifest = env_dir / 'liveness-primer-env.json'
         lock = FileLock(str(env_dir) + '.lock')
         try:
@@ -891,7 +892,7 @@ class DetectorEnvironments:
             else:
                 checkout = self._store.materialize(repo, sha)
                 metadata = parse_static_metadata(checkout)
-                freeze = self._build(env_dir, checkout, metadata)
+                freeze = self._build(fingerprint, checkout, metadata)
                 env_manifest.write_text(json.dumps({'fingerprint': fingerprint, 'freeze': list(freeze)}), 'utf-8')
                 record = EnvironmentRecord(
                     ref=ref,

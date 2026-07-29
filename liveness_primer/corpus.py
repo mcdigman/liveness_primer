@@ -245,7 +245,7 @@ class CheckoutStore:
             raise CheckoutError(msg)
         checkouts = self._root / 'checkouts'
         checkouts.mkdir(parents=True, exist_ok=True)
-        dest = checkouts / f'{_slug(repo)}-{sha}'
+        dest = checkouts / Path(f'{_slug(repo)}-{sha}').name
         lock = FileLock(str(dest) + '.lock')
         try:
             lock.acquire(timeout=self._git_timeout)
