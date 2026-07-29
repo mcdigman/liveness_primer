@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "One normalized detector report item (contract \u00a77).\n\nAttributes\n----------\ntool : str\n    Adapter name of the reporting detector.\nproject : str\n    Corpus project name.\npath : str\n    Repo-relative POSIX path of the reported file.\nsymbol : str | None\n    Reported symbol, when the detector names one.\nkind : str\n    Normalized finding kind (e.g. ``function``, ``import``).\nmessage : str\n    Normalized message text.\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nraw_excerpt : str | None\n    Untrusted raw detector output for this finding; sanitized on render.",
+  "description": "One normalized detector report item (contract \u00a77).\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\ntool : str\n    Adapter name of the reporting detector.\nproject : str\n    Corpus project name.\npath : str\n    Repo-relative POSIX path of the reported file.\nsymbol : str | None\n    Reported symbol, when the detector names one.\nkind : str\n    Normalized finding kind (e.g. ``function``, ``import``).\nmessage : str\n    Normalized message text.\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nraw_excerpt : str | None\n    Untrusted raw detector output for this finding; sanitized on render.",
   "properties": {
     "confidence": {
       "anyOf": [
@@ -48,6 +48,12 @@
       ],
       "default": null,
       "title": "Raw Excerpt"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
     },
     "start_line": {
       "minimum": 1,

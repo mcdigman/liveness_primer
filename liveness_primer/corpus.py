@@ -23,7 +23,9 @@ from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, valid
 
 _SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 
-_COMPLETE_MARKER = '.liveness-primer-complete'
+# Suffix of the sibling completion-marker file: kept *next to* the checkout,
+# never inside it, so the analyzed tree is exactly the pristine repo tree.
+_COMPLETE_SUFFIX = '.complete'
 
 
 class CheckoutError(LivenessPrimerError):
@@ -254,9 +256,10 @@ class CheckoutStore:
             msg = f'timed out waiting for the checkout lock of {dest.name}'
             raise CheckoutError(msg) from exc
         try:
-            marker = dest / _COMPLETE_MARKER
-            if marker.exists():
+            marker = dest.with_name(dest.name + _COMPLETE_SUFFIX)
+            if marker.exists() and dest.is_dir():
                 return dest
+            marker.unlink(missing_ok=True)
             if dest.exists():
                 shutil.rmtree(dest)
             self._git(['init', '--quiet', str(dest)])

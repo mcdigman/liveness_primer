@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.",
+  "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.",
   "properties": {
     "confidence": {
       "anyOf": [
@@ -36,6 +36,12 @@
       ],
       "default": null,
       "title": "Raw Excerpt"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
     },
     "start_line": {
       "minimum": 1,

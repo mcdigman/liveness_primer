@@ -80,6 +80,32 @@ def test_github_owner_repo_rejects_other_hosts(url: str) -> None:
     assert github_owner_repo(url) is None
 
 
+@pytest.mark.parametrize(
+    'url',
+    [
+        # HTTP clients normalize dot segments, silently retargeting the
+        # request path, so bare `.`/`..` never count as owner or repo.
+        'https://github.com/../..',
+        'https://github.com/owner/..',
+        'https://github.com/owner/.',
+        'https://github.com/owner/../',
+        'https://github.com/owner/..git',
+        'https://github.com/./repo',
+        # GitHub owners are alphanumerics and inner hyphens only.
+        'https://github.com/own.er/repo',
+        'https://github.com/own_er/repo',
+        'https://github.com/-owner/repo',
+    ],
+)
+def test_github_owner_repo_rejects_dot_segments_and_bad_owners(url: str) -> None:
+    assert github_owner_repo(url) is None
+
+
+def test_github_owner_repo_accepts_dotted_repository_names() -> None:
+    assert github_owner_repo('https://github.com/owner/.github') == ('owner', '.github')
+    assert github_owner_repo('https://github.com/owner/repo.js.git') == ('owner', 'repo.js')
+
+
 def test_tool_settings_bounds() -> None:
     with pytest.raises(ValidationError):
         ToolSettings.model_validate({'timeout': 0})
@@ -87,6 +113,13 @@ def test_tool_settings_bounds() -> None:
         ToolSettings.model_validate({'cost': -1})
     settings = ToolSettings(command=('{exe}', '--flag'), args=('-v',), targets=('src',), timeout=5.0, cost=2.0)
     assert settings.expected_clean is False
+
+
+def test_tool_settings_command_requires_the_exe_placeholder() -> None:
+    # Without {exe} both revisions would run the identical override and
+    # silently compare a detector against itself.
+    with pytest.raises(ValidationError, match=r'\{exe\}'):
+        ToolSettings(command=('/opt/wrapper', '--mode', 'scan'))
 
 
 def test_project_rejects_bad_name_and_short_pin() -> None:

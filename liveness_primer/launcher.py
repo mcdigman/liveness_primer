@@ -46,18 +46,23 @@ def _validated_argv(argv: Sequence[str]) -> tuple[str, ...]:
     if isinstance(argv, str):
         msg = 'argv must be a sequence of arguments, not a shell string'
         raise LauncherError(msg)
-    checked = tuple(argv)
-    if not checked:
+    # Widen to object before the isinstance guard: the annotation promises
+    # str elements, but this is the audited trust boundary and unchecked
+    # callers exist at runtime.
+    unchecked: tuple[object, ...] = tuple(argv)
+    if not unchecked:
         msg = 'argv must not be empty'
         raise LauncherError(msg)
-    for element in checked:
-        if not isinstance(element, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+    checked: list[str] = []
+    for element in unchecked:
+        if not isinstance(element, str):
             msg = f'argv elements must be str, got {type(element).__name__}'
             raise LauncherError(msg)
+        checked.append(element)
     if not checked[0]:
         msg = 'argv[0] must not be empty'
         raise LauncherError(msg)
-    return checked
+    return tuple(checked)
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,15 +7,48 @@ Pydantic models are the source of truth (contract §7); JSON Schema files under
 """
 
 import hashlib
+import json
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 # Package-wide semver embedded in every serialized payload (contract §7).
 # Minor versions are additive-only; breaking changes require a major bump.
 SCHEMA_VERSION = '1.0.0'
+
+
+def _validated_schema_version(value: str) -> str:
+    """Constrain a payload's schema version to the supported one (contract §7).
+
+    Parameters
+    ----------
+    value : str
+        Declared schema version of the payload.
+
+    Returns
+    -------
+    str
+        The validated version.
+
+    Raises
+    ------
+    ValueError
+        If the version is not the package-wide :data:`SCHEMA_VERSION`.
+    """
+    if value != SCHEMA_VERSION:
+        msg = f'schema_version {value!r} is not the supported {SCHEMA_VERSION!r}'
+        raise ValueError(msg)
+    return value
+
+
+# Every independently exported payload carries this constrained field.
+SchemaVersion = Annotated[
+    str,
+    AfterValidator(_validated_schema_version),
+    Field(json_schema_extra={'const': SCHEMA_VERSION}),
+]
 
 
 class DiffClass(StrEnum):
@@ -144,7 +177,10 @@ def finding_identity(tool: str, project: str, path: str, symbol: str | None, kin
     str
         Hex SHA-256 digest of the canonical identity tuple.
     """
-    material = '\x1f'.join((tool, project, path, '\x00' if symbol is None else 's' + symbol, kind))
+    # Canonical JSON keeps distinct tuples distinct: delimiters occurring
+    # inside attacker-controlled fields are escaped, and a null symbol is
+    # structurally different from any string.
+    material = json.dumps([tool, project, path, symbol, kind], ensure_ascii=False, separators=(',', ':'))
     return hashlib.sha256(material.encode('utf-8')).hexdigest()
 
 
@@ -156,6 +192,8 @@ class FindingOccurrence(_FrozenModel):
 
     Attributes
     ----------
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
     start_line : int
         First line of the reported span (1-based).
     end_line : int
@@ -168,6 +206,7 @@ class FindingOccurrence(_FrozenModel):
         Untrusted raw detector output for this occurrence; sanitized on render.
     """
 
+    schema_version: SchemaVersion = SCHEMA_VERSION
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     message: str
@@ -224,6 +263,8 @@ class Finding(_FrozenModel):
 
     Attributes
     ----------
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
     tool : str
         Adapter name of the reporting detector.
     project : str
@@ -246,6 +287,7 @@ class Finding(_FrozenModel):
         Untrusted raw detector output for this finding; sanitized on render.
     """
 
+    schema_version: SchemaVersion = SCHEMA_VERSION
     tool: str
     project: str
     path: str
@@ -309,6 +351,8 @@ class FindingDiff(_FrozenModel):
 
     Attributes
     ----------
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
     diff_class : DiffClass
         ``new``, ``dropped``, or ``changed``.
     identity : str
@@ -331,6 +375,7 @@ class FindingDiff(_FrozenModel):
         Fields differing within a ``changed`` pair; empty otherwise.
     """
 
+    schema_version: SchemaVersion = SCHEMA_VERSION
     diff_class: DiffClass
     identity: str
     tool: str
@@ -517,8 +562,8 @@ class RunManifest(_FrozenModel):
 
     Attributes
     ----------
-    schema_version : str
-        Package-wide schema semver.
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
     created_at : datetime
         UTC timestamp of manifest assembly.
     tool : str
@@ -553,7 +598,7 @@ class RunManifest(_FrozenModel):
         Effective run settings.
     """
 
-    schema_version: str = SCHEMA_VERSION
+    schema_version: SchemaVersion = SCHEMA_VERSION
     created_at: datetime
     tool: str
     detector_repo: str | None
@@ -673,8 +718,8 @@ class Report(_FrozenModel):
 
     Attributes
     ----------
-    schema_version : str
-        Package-wide schema semver.
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
     manifest : RunManifest
         Run manifest for reproducibility.
     projects : tuple[ProjectReport, ...]
@@ -685,7 +730,7 @@ class Report(_FrozenModel):
         Whether any project's diffs were truncated.
     """
 
-    schema_version: str = SCHEMA_VERSION
+    schema_version: SchemaVersion = SCHEMA_VERSION
     manifest: RunManifest
     projects: tuple[ProjectReport, ...]
     totals: DiffTotals
@@ -697,15 +742,15 @@ class HookEnvelope(_FrozenModel):
 
     Attributes
     ----------
-    schema_version : str
-        Package-wide schema semver.
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
     binding_point : BindingPoint
         Hook binding point the payload targets.
     report : Report
         The report payload under transformation.
     """
 
-    schema_version: str = SCHEMA_VERSION
+    schema_version: SchemaVersion = SCHEMA_VERSION
     binding_point: BindingPoint
     report: Report
 
@@ -751,8 +796,8 @@ class Annotation(_FrozenModel):
 
     Attributes
     ----------
-    schema_version : str
-        Package-wide schema semver.
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
     target : AnnotationTarget
         Annotated path/symbol/line.
     verdict : Verdict
@@ -765,7 +810,7 @@ class Annotation(_FrozenModel):
         Repo-relative path of a runner file demonstrating the evidence.
     """
 
-    schema_version: str = SCHEMA_VERSION
+    schema_version: SchemaVersion = SCHEMA_VERSION
     target: AnnotationTarget
     verdict: Verdict
     evidence: EvidenceKind

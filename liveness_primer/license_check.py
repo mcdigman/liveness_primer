@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from liveness_primer.config import classify_license, github_owner_repo
+from liveness_primer.config import LicenseStatus, classify_license, github_owner_repo
 from liveness_primer.errors import LivenessPrimerError
 
 if TYPE_CHECKING:
@@ -150,6 +150,20 @@ def _compare(project: CorpusProject, detected: str | None) -> LicenseCheckResult
             detail=f'declared {project.license!r} but GitHub detects {detected!r}',
         )
     status = classify_license(detected)
+    if status is LicenseStatus.FORBIDDEN:
+        return _result(
+            project,
+            detected=detected,
+            ok=False,
+            detail=f'GitHub confirms {detected}, which is copyleft or otherwise forbidden (§6)',
+        )
+    if status is LicenseStatus.UNRECOGNIZED:
+        return _result(
+            project,
+            detected=detected,
+            ok=False,
+            detail=f'GitHub confirms {detected}, which is not on the allowlist; human review required (§6)',
+        )
     return _result(
         project,
         detected=detected,

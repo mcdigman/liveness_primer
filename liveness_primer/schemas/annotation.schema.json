@@ -90,7 +90,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One internal-corpus annotation with sidecar evidence (contract \u00a713).\n\nAttributes\n----------\nschema_version : str\n    Package-wide schema semver.\ntarget : AnnotationTarget\n    Annotated path/symbol/line.\nverdict : Verdict\n    ``live``, ``dead``, ``no-coverage``, or ``unknown``.\nevidence : EvidenceKind\n    Kind of evidence backing the verdict.\nprovenance : AnnotationProvenance\n    Source project, commit, and extraction date.\nrunner : str | None\n    Repo-relative path of a runner file demonstrating the evidence.",
+  "description": "One internal-corpus annotation with sidecar evidence (contract \u00a713).\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\ntarget : AnnotationTarget\n    Annotated path/symbol/line.\nverdict : Verdict\n    ``live``, ``dead``, ``no-coverage``, or ``unknown``.\nevidence : EvidenceKind\n    Kind of evidence backing the verdict.\nprovenance : AnnotationProvenance\n    Source project, commit, and extraction date.\nrunner : str | None\n    Repo-relative path of a runner file demonstrating the evidence.",
   "properties": {
     "evidence": {
       "$ref": "#/$defs/EvidenceKind"
@@ -111,6 +111,7 @@
       "title": "Runner"
     },
     "schema_version": {
+      "const": "1.0.0",
       "default": "1.0.0",
       "title": "Schema Version",
       "type": "string"

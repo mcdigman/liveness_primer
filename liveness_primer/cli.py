@@ -9,6 +9,7 @@ errors (argparse), and 3 for opt-in ``--fail-on`` gate failures.
 """
 
 import argparse
+import math
 import os
 import shlex
 import sys
@@ -22,7 +23,7 @@ from liveness_primer.corpus import CheckoutStore, cache_root
 from liveness_primer.envcache import DetectorEnvironments, choose_installer
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import SCHEMA_VERSION, Report
-from liveness_primer.isolation import detect_isolation
+from liveness_primer.isolation import detect_isolation, require_isolation
 from liveness_primer.license_check import check_licenses
 from liveness_primer.report import render_github, render_json, render_text
 from liveness_primer.runner import (
@@ -41,6 +42,93 @@ EXIT_FAILURE = 1
 EXIT_GATE = 3
 
 _RENDERERS = {'text': render_text, 'json': render_json, 'github': render_github}
+
+
+def _positive_int(text: str) -> int:
+    """Parse a strictly positive integer CLI value (contract §12).
+
+    Parameters
+    ----------
+    text : str
+        Raw argument text.
+
+    Returns
+    -------
+    int
+        The parsed value.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        If the value is not an integer of at least 1.
+    """
+    try:
+        value = int(text)
+    except ValueError as exc:
+        msg = f'{text!r} is not an integer'
+        raise argparse.ArgumentTypeError(msg) from exc
+    if value < 1:
+        msg = f'must be at least 1, got {value}'
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _nonnegative_int(text: str) -> int:
+    """Parse a non-negative integer CLI value (contract §12).
+
+    Parameters
+    ----------
+    text : str
+        Raw argument text.
+
+    Returns
+    -------
+    int
+        The parsed value.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        If the value is not an integer of at least 0.
+    """
+    try:
+        value = int(text)
+    except ValueError as exc:
+        msg = f'{text!r} is not an integer'
+        raise argparse.ArgumentTypeError(msg) from exc
+    if value < 0:
+        msg = f'must not be negative, got {value}'
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _positive_float(text: str) -> float:
+    """Parse a strictly positive, finite float CLI value (contract §12).
+
+    Parameters
+    ----------
+    text : str
+        Raw argument text.
+
+    Returns
+    -------
+    float
+        The parsed value.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        If the value is not a finite number greater than zero.
+    """
+    try:
+        value = float(text)
+    except ValueError as exc:
+        msg = f'{text!r} is not a number'
+        raise argparse.ArgumentTypeError(msg) from exc
+    if not math.isfinite(value) or value <= 0:
+        msg = f'must be a positive finite number, got {text}'
+        raise argparse.ArgumentTypeError(msg)
+    return value
 
 
 def _package_version() -> str:
@@ -74,11 +162,11 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     run_parser.add_argument('--new-cmd', help='escape hatch: pre-built head detector command')
     run_parser.add_argument('-k', dest='keywords', action='append', default=[], help='select projects by substring')
     run_parser.add_argument('--all', dest='select_all', action='store_true', help='select every applicable project')
-    run_parser.add_argument('--max-cost', type=float, help='greedy selection budget in CPU-seconds')
+    run_parser.add_argument('--max-cost', type=_positive_float, help='greedy selection budget in CPU-seconds')
     run_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
     run_parser.add_argument('--project', dest='project_url', help='ad-hoc mode: single target repository URL')
-    run_parser.add_argument('--max-results', type=int, default=200, help='per-project cap on rendered diffs')
-    run_parser.add_argument('--excerpt-lines', type=int, default=5, help='cap on rendered excerpt lines')
+    run_parser.add_argument('--max-results', type=_positive_int, default=200, help='per-project cap on rendered diffs')
+    run_parser.add_argument('--excerpt-lines', type=_nonnegative_int, default=5, help='cap on rendered excerpt lines')
     run_parser.add_argument('--output', choices=sorted(_RENDERERS), default='text', help='report mode')
     run_parser.add_argument(
         '--fail-on',
@@ -87,8 +175,10 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
         choices=GATE_CHOICES,
         help='opt-in gate; repeatable',
     )
-    run_parser.add_argument('--jobs', type=int, default=2, help='concurrent detector subprocesses')
-    run_parser.add_argument('--timeout', type=float, default=300.0, help='default per-(project, tool) timeout')
+    run_parser.add_argument('--jobs', type=_positive_int, default=2, help='concurrent detector subprocesses')
+    run_parser.add_argument(
+        '--timeout', type=_positive_float, default=300.0, help='default per-(project, tool) timeout'
+    )
     run_parser.add_argument('--fresh', action='store_true', help='force same-run environment rebuilds')
 
 
@@ -264,7 +354,10 @@ def _command_run(args: argparse.Namespace) -> int:
         fresh=args.fresh,
     )
     store = CheckoutStore(cache_root())
-    isolation = detect_isolation()
+    # Managed runs execute untrusted detector refs and fail closed on Linux
+    # without an enforced sandbox; escape-hatch commands are trusted user
+    # code, so unenforced isolation is recorded and flagged instead (§11).
+    isolation = detect_isolation() if escape else require_isolation()
     runner = PrimerRunner(adapter=adapter, store=store, isolation=isolation, options=options)
     if escape:
         report = runner.run_escape_hatch(

@@ -80,6 +80,27 @@ def test_noassertion_requires_human_review() -> None:
     assert 'human review' in result.detail
 
 
+def test_confirmed_but_unrecognized_license_fails() -> None:
+    # A declared-and-detected license that is off the §6 allowlist must not
+    # pass just because the declaration matched.
+    (result,) = check_licenses(
+        [project(spdx='Zlib')],
+        transport=transport_returning(200, spdx_payload('Zlib')),
+    )
+    assert not result.ok
+    assert 'not on the allowlist' in result.detail
+    assert 'human review' in result.detail
+
+
+def test_confirmed_but_copyleft_license_fails() -> None:
+    (result,) = check_licenses(
+        [project(spdx='GPL-3.0-only')],
+        transport=transport_returning(200, spdx_payload('GPL-3.0-only')),
+    )
+    assert not result.ok
+    assert 'copyleft' in result.detail
+
+
 def test_missing_license_is_a_hard_fail() -> None:
     (result,) = check_licenses([project()], transport=transport_returning(404, {'message': 'Not Found'}))
     assert not result.ok

@@ -3,6 +3,7 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,15 +173,30 @@ def test_materialize_reuses_completed_checkouts(tmp_path: Path, origin: RepoFixt
     assert len(counting.calls) == calls_after_first
 
 
+def test_materialize_keeps_the_checkout_tree_pristine(store: CheckoutStore, origin: RepoFixture) -> None:
+    # The completion marker lives *next to* the checkout, so the analyzed
+    # tree is exactly the pristine repo tree (contract §3).
+    checkout = store.materialize(origin.url, origin.first_sha)
+    assert checkout.with_name(checkout.name + '.complete').exists()
+    assert sorted(entry.name for entry in checkout.iterdir()) == ['.git', 'module.py']
+
+
 def test_materialize_rebuilds_interrupted_checkouts(store: CheckoutStore, origin: RepoFixture) -> None:
     checkout = store.materialize(origin.url, origin.first_sha)
-    marker = checkout / '.liveness-primer-complete'
+    marker = checkout.with_name(checkout.name + '.complete')
     marker.unlink()
     (checkout / 'stray.txt').write_text('leftover', encoding='utf-8')
     rebuilt = store.materialize(origin.url, origin.first_sha)
     assert rebuilt == checkout
     assert not (rebuilt / 'stray.txt').exists()
     assert (rebuilt / 'module.py').read_text(encoding='utf-8') == 'FIRST = 1\n'
+
+
+def test_materialize_rebuilds_when_the_tree_vanished(store: CheckoutStore, origin: RepoFixture) -> None:
+    checkout = store.materialize(origin.url, origin.first_sha)
+    shutil.rmtree(checkout)
+    rebuilt = store.materialize(origin.url, origin.first_sha)
+    assert (rebuilt / 'module.py').exists()
 
 
 def test_materialize_rejects_partial_shas(store: CheckoutStore, origin: RepoFixture) -> None:

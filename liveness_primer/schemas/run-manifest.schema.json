@@ -197,7 +197,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Record of resolved refs, versions, environments, and settings for one run (contract \u00a72).\n\nAttributes\n----------\nschema_version : str\n    Package-wide schema semver.\ncreated_at : datetime\n    UTC timestamp of manifest assembly.\ntool : str\n    Adapter name of the detector under test.\ndetector_repo : str | None\n    Detector repository URL; absent for escape-hatch runs.\nbase : EnvironmentRecord | None\n    Base-side environment; absent for escape-hatch runs.\nhead : EnvironmentRecord | None\n    Head-side environment; absent for escape-hatch runs.\nbase_cmd : tuple[str, ...] | None\n    Escape-hatch base command (``--old-cmd``), if used.\nhead_cmd : tuple[str, ...] | None\n    Escape-hatch head command (``--new-cmd``), if used.\ncomparable : bool\n    False only for unmanaged escape-hatch runs (contract \u00a73).\nenvironment_delta : tuple[DependencyDelta, ...]\n    Non-detector dependency differences surviving paired resolution.\nisolation_enforced : bool\n    Whether build/analysis sandboxing was enforced (contract \u00a711).\nplatform : str\n    Platform tag of the run host.\npython_version : str\n    Python version running the detectors.\ninstaller : str | None\n    Installer name and version used to build environments.\nfetches : tuple[FetchRecord, ...]\n    Every fetch performed during the fetch step.\ncorpus_pins : tuple[CorpusPinRecord, ...]\n    Resolved corpus pins for the run.\nsettings : RunSettings\n    Effective run settings.",
+  "description": "Record of resolved refs, versions, environments, and settings for one run (contract \u00a72).\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\ncreated_at : datetime\n    UTC timestamp of manifest assembly.\ntool : str\n    Adapter name of the detector under test.\ndetector_repo : str | None\n    Detector repository URL; absent for escape-hatch runs.\nbase : EnvironmentRecord | None\n    Base-side environment; absent for escape-hatch runs.\nhead : EnvironmentRecord | None\n    Head-side environment; absent for escape-hatch runs.\nbase_cmd : tuple[str, ...] | None\n    Escape-hatch base command (``--old-cmd``), if used.\nhead_cmd : tuple[str, ...] | None\n    Escape-hatch head command (``--new-cmd``), if used.\ncomparable : bool\n    False only for unmanaged escape-hatch runs (contract \u00a73).\nenvironment_delta : tuple[DependencyDelta, ...]\n    Non-detector dependency differences surviving paired resolution.\nisolation_enforced : bool\n    Whether build/analysis sandboxing was enforced (contract \u00a711).\nplatform : str\n    Platform tag of the run host.\npython_version : str\n    Python version running the detectors.\ninstaller : str | None\n    Installer name and version used to build environments.\nfetches : tuple[FetchRecord, ...]\n    Every fetch performed during the fetch step.\ncorpus_pins : tuple[CorpusPinRecord, ...]\n    Resolved corpus pins for the run.\nsettings : RunSettings\n    Effective run settings.",
   "properties": {
     "base": {
       "anyOf": [
@@ -312,6 +312,7 @@
       "type": "string"
     },
     "schema_version": {
+      "const": "1.0.0",
       "default": "1.0.0",
       "title": "Schema Version",
       "type": "string"

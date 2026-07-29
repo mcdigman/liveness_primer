@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import (
@@ -63,6 +63,24 @@ def test_metadata_full_document(tmp_path: Path) -> None:
 
 def test_missing_pyproject_is_unsupported(tmp_path: Path) -> None:
     with pytest.raises(UnsupportedDetectorError, match='v1 requires statically declared metadata'):
+        parse_static_metadata(tmp_path)
+
+
+def test_symlinked_pyproject_is_rejected(tmp_path: Path) -> None:
+    # git clones materialize committed symlinks as symlinks; following one
+    # would read outside the untrusted checkout (contract §11).
+    outside = tmp_path / 'outside.toml'
+    outside.write_text('[project]\nname = "d"\nversion = "1"\n', encoding='utf-8')
+    checkout = tmp_path / 'checkout'
+    checkout.mkdir()
+    (checkout / 'pyproject.toml').symlink_to(outside)
+    with pytest.raises(EnvCacheError, match='symlink'):
+        parse_static_metadata(checkout)
+
+
+def test_oversized_pyproject_is_rejected(tmp_path: Path) -> None:
+    write_pyproject(tmp_path, '#' * 1_048_577)
+    with pytest.raises(EnvCacheError, match='exceeds'):
         parse_static_metadata(tmp_path)
 
 
@@ -159,6 +177,7 @@ class RecordingLauncher:
     returncode: int = 0
     timed_out: bool = False
     calls: list[tuple[str, ...]] = field(default_factory=list)
+    envs: list[Mapping[str, str] | None] = field(default_factory=list)
 
     def __call__(
         self,
@@ -168,15 +187,16 @@ class RecordingLauncher:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> LaunchResult:
-        """Record the argv and return the scripted outcome.
+        """Record the argv and environment, returning the scripted outcome.
 
         Returns
         -------
         LaunchResult
             The scripted outcome.
         """
-        del cwd, env, timeout
+        del cwd, timeout
         self.calls.append(tuple(argv))
+        self.envs.append(env)
         return LaunchResult(
             argv=tuple(argv),
             returncode=None if self.timed_out else self.returncode,
@@ -188,6 +208,8 @@ class RecordingLauncher:
 
 
 SANDBOX = Isolation(enforced=True, description='netns:test', prefix=('sandbox-wrap',))
+
+SCRUBBED = {'PATH': '/usr/bin', 'HOME': '/scratch-home'}
 
 
 def test_pip_installer_rejects_async_launcher() -> None:
@@ -206,18 +228,38 @@ def test_pip_installer_argv_and_parsing(tmp_path: Path) -> None:
     assert installer.name == 'pip'
     assert installer.identity() == 'pip 26.1.2'
     env_dir = tmp_path / 'env'
-    installer.create_venv(env_dir)
-    assert launcher.calls[-1] == (sys.executable, '-m', 'venv', str(env_dir))
-    installer.install_offline(env_dir, tmp_path / 'wheels', tmp_path / 'src', SANDBOX)
+    installer.create_venv(env_dir, isolation=SANDBOX, env=SCRUBBED)
+    assert launcher.calls[-1] == ('sandbox-wrap', sys.executable, '-m', 'venv', str(env_dir))
+    assert launcher.envs[-1] == SCRUBBED
+    installer.install_offline(env_dir, tmp_path / 'wheels', tmp_path / 'src', isolation=SANDBOX, env=SCRUBBED)
     install_argv = launcher.calls[-1]
     assert install_argv[0] == 'sandbox-wrap'
     assert install_argv[1] == str(env_dir / 'bin' / 'python')
     assert '--no-index' in install_argv
     assert install_argv[-1] == str(tmp_path / 'src')
     assert install_argv[install_argv.index('--find-links') + 1] == str(tmp_path / 'wheels')
+    assert launcher.envs[-1] == SCRUBBED
     freeze_launcher = RecordingLauncher(stdout='alpha==1.0\n\nbeta==2.0\n')
     assert PipInstaller(launcher=freeze_launcher).freeze(env_dir) == ('alpha==1.0', 'beta==2.0')
     assert freeze_launcher.calls[-1] == (str(env_dir / 'bin' / 'python'), '-m', 'pip', 'freeze')
+
+
+def test_pip_installer_prefetch_uses_the_host_pip(tmp_path: Path) -> None:
+    launcher = RecordingLauncher()
+    PipInstaller(launcher=launcher).prefetch(('tomli>=2', 'rich>=13'), tmp_path / 'wheels')
+    (argv,) = launcher.calls
+    assert argv == (
+        sys.executable,
+        '-m',
+        'pip',
+        'download',
+        '--quiet',
+        '--dest',
+        str(tmp_path / 'wheels'),
+        '--prefer-binary',
+        'tomli>=2',
+        'rich>=13',
+    )
 
 
 def test_uv_installer_argv_and_parsing(tmp_path: Path) -> None:
@@ -226,20 +268,36 @@ def test_uv_installer_argv_and_parsing(tmp_path: Path) -> None:
     assert installer.name == 'uv'
     assert installer.identity() == 'uv 0.9.2'
     env_dir = tmp_path / 'env'
-    installer.create_venv(env_dir)
-    assert launcher.calls[-1] == ('uv', 'venv', '--python', sys.executable, str(env_dir))
-    installer.install_offline(env_dir, tmp_path / 'wheels', tmp_path / 'src', UNENFORCED)
+    installer.create_venv(env_dir, isolation=SANDBOX, env=SCRUBBED)
+    assert launcher.calls[-1] == ('sandbox-wrap', 'uv', 'venv', '--python', sys.executable, str(env_dir))
+    assert launcher.envs[-1] == SCRUBBED
+    installer.install_offline(env_dir, tmp_path / 'wheels', tmp_path / 'src', isolation=UNENFORCED)
     install_argv = launcher.calls[-1]
     assert install_argv[:3] == ('uv', 'pip', 'install')
     assert '--no-index' in install_argv
     installer.freeze(env_dir)
-    assert launcher.calls[-1] == ('uv', 'pip', 'freeze', '--python', str(env_dir / 'bin' / 'python'))
+    freeze_argv: tuple[str, ...] = launcher.calls[-1]
+    assert freeze_argv == ('uv', 'pip', 'freeze', '--python', str(env_dir / 'bin' / 'python'))
+
+
+def test_uv_installer_prefetch_seeds_a_scratch_pip(tmp_path: Path) -> None:
+    # uv has no `pip download`; the prefetch bootstraps a throwaway seeded
+    # venv and downloads with its pip.
+    launcher = RecordingLauncher()
+    UvInstaller(launcher=launcher).prefetch(('tomli>=2',), tmp_path / 'wheels')
+    seed_argv, download_argv = launcher.calls
+    assert seed_argv[:4] == ('uv', 'venv', '--seed', '--python')
+    helper = Path(seed_argv[-1])
+    assert helper.name == 'seed-venv'
+    assert download_argv[0] == str(helper / 'bin' / 'python')
+    assert download_argv[1:5] == ('-m', 'pip', 'download', '--quiet')
+    assert download_argv[-1] == 'tomli>=2'
 
 
 def test_installer_failure_raises_env_cache_error(tmp_path: Path) -> None:
     failing = PipInstaller(launcher=RecordingLauncher(returncode=1))
     with pytest.raises(EnvCacheError, match='venv creation failed: boom'):
-        failing.create_venv(tmp_path / 'env')
+        failing.create_venv(tmp_path / 'env', isolation=UNENFORCED)
     timing_out = PipInstaller(launcher=RecordingLauncher(timed_out=True))
     with pytest.raises(EnvCacheError, match='pip freeze failed: timed out'):
         timing_out.freeze(tmp_path / 'env')
@@ -305,9 +363,13 @@ class FakeInstaller:
     """Scripted installer that fabricates environments without pip."""
 
     freezes: deque[tuple[str, ...]]
+    wheel_names: tuple[str, ...] = ('tomli-2.4.0-py3-none-any.whl', 'legacy-1.0.tar.gz', 'not-a-wheel.whl')
     name: str = 'fake'
+    events: list[str] = field(default_factory=list)
+    prefetches: list[tuple[str, ...]] = field(default_factory=list)
     created: list[Path] = field(default_factory=list)
     installs: list[tuple[Path, Path, Path, str]] = field(default_factory=list)
+    build_envs: list[Mapping[str, str] | None] = field(default_factory=list)
 
     @staticmethod
     def identity() -> str:
@@ -320,13 +382,32 @@ class FakeInstaller:
         """
         return 'fake 1.0'
 
-    def create_venv(self, env_dir: Path) -> None:
+    def prefetch(self, requirements: Sequence[str], wheelhouse: Path) -> None:
+        """Record the request and materialize scripted wheel files."""
+        self.events.append('prefetch')
+        self.prefetches.append(tuple(requirements))
+        for wheel in self.wheel_names:
+            (wheelhouse / wheel).write_bytes(b'payload-' + wheel.encode('utf-8'))
+
+    def create_venv(self, env_dir: Path, *, isolation: Isolation, env: Mapping[str, str] | None = None) -> None:
         """Create the environment directory like a real venv would."""
+        del isolation
+        self.events.append('create')
         env_dir.mkdir(parents=True)
         self.created.append(env_dir)
+        self.build_envs.append(env)
 
-    def install_offline(self, env_dir: Path, wheelhouse: Path, target: Path, isolation: Isolation) -> None:
+    def install_offline(
+        self,
+        env_dir: Path,
+        wheelhouse: Path,
+        target: Path,
+        *,
+        isolation: Isolation,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         """Record the install request."""
+        del env
         self.installs.append((env_dir, wheelhouse, target, isolation.description))
 
     def freeze(self, env_dir: Path) -> tuple[str, ...]:
@@ -341,51 +422,9 @@ class FakeInstaller:
         return self.freezes.popleft()
 
 
-def test_detector_environments_rejects_async_launcher(tmp_path: Path) -> None:
-    with pytest.raises(LauncherError, match='launcher must be synchronous'):
-        DetectorEnvironments(
-            CheckoutStore(tmp_path / 'cache'),
-            tmp_path / 'cache',
-            installer=FakeInstaller(freezes=deque()),
-            launcher=cast('SyncLauncher', run_async),
-        )
-
-
-@dataclass
-class PrefetchLauncher:
-    """Launcher stub that materializes wheel files for pip download calls."""
-
-    wheel_names: tuple[str, ...] = ('tomli-2.4.0-py3-none-any.whl', 'legacy-1.0.tar.gz', 'not-a-wheel.whl')
-    downloads: list[tuple[str, ...]] = field(default_factory=list)
-
-    def __call__(
-        self,
-        argv: Sequence[str],
-        *,
-        cwd: Path | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> LaunchResult:
-        """Simulate pip download by writing scripted files into --dest.
-
-        Returns
-        -------
-        LaunchResult
-            A success result.
-        """
-        del cwd, env, timeout
-        assert list(argv[:4]) == [sys.executable, '-m', 'pip', 'download'], argv
-        self.downloads.append(tuple(argv))
-        dest = Path(argv[argv.index('--dest') + 1])
-        for name in self.wheel_names:
-            (dest / name).write_bytes(b'payload-' + name.encode('utf-8'))
-        return LaunchResult(argv=tuple(argv), returncode=0, stdout='', stderr='', duration_seconds=0.0, timed_out=False)
-
-
 def environments(
     tmp_path: Path,
     installer: FakeInstaller,
-    launcher: PrefetchLauncher,
     *,
     fresh: bool = False,
     lock_timeout: float | None = None,
@@ -396,7 +435,6 @@ def environments(
         store,
         tmp_path / 'cache',
         installer=installer,
-        launcher=launcher,
         isolation=SANDBOX,
         fresh=fresh,
         **extra,
@@ -410,10 +448,10 @@ FREEZE_BUMPED = ('vulture @ file:///y', 'tomli==2.5.0')
 
 def test_cold_cache_builds_both_and_records_fetches(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     installer = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
-    launcher = PrefetchLauncher()
-    pair = environments(tmp_path, installer, launcher).prepare_pair(
+    with environments(tmp_path, installer).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as pair:
+        pass
     assert pair.installer_identity == 'fake 1.0'
     assert pair.base.record.rebuilt
     assert not pair.base.record.from_cache
@@ -431,40 +469,93 @@ def test_cold_cache_builds_both_and_records_fetches(tmp_path: Path, detector_rep
     assert all(record.digest for record in wheel_fetches.values())
     assert len(installer.installs) == 2
     assert installer.installs[0][3] == 'netns:test'
-    assert len(launcher.downloads) == 2
+
+
+def test_pair_prefetch_is_a_single_union_before_any_build(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    # Both refs' dependencies, optional dependencies, and build requirements
+    # are prefetched together before either side builds, so paired
+    # resolution sees identical inputs (contract §3).
+    installer = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
+    with environments(tmp_path, installer).prepare_pair(
+        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
+    ):
+        pass
+    assert installer.prefetches == [('tomli>=2', 'rich>=13', 'setuptools>=61', 'tomli>=2.1')]
+    assert installer.events[0] == 'prefetch'
+    assert installer.events.count('prefetch') == 1
+    assert installer.events.count('create') == 2
+
+
+def test_builds_use_a_scrubbed_credential_free_environment(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('LP_PLANTED_SECRET', 'boom')
+    installer = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
+    with environments(tmp_path, installer).prepare_pair(
+        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
+    ):
+        pass
+    assert len(installer.build_envs) == 2
+    for env in installer.build_envs:
+        assert env is not None
+        assert 'LP_PLANTED_SECRET' not in env
+        assert 'liveness-primer-build-home-' in env['HOME']
+
+
+def test_environment_locks_are_held_while_the_pair_is_in_use(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+) -> None:
+    # Contract §3: a concurrent run (e.g. with --fresh) must not be able to
+    # delete an environment while this run still executes from it.
+    installer = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
+    with environments(tmp_path, installer).prepare_pair(
+        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
+    ) as pair:
+        contender = FileLock(str(pair.base.env_dir) + '.lock')
+        with pytest.raises(Timeout):
+            contender.acquire(timeout=0.1)
+    released = FileLock(str(pair.base.env_dir) + '.lock')
+    released.acquire(timeout=0.1)
+    released.release()
 
 
 def test_warm_cache_reuses_pair_without_building(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     first = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
-    environments(tmp_path, first, PrefetchLauncher()).prepare_pair(
-        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    with environments(tmp_path, first).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()):
+        pass
     second = FakeInstaller(freezes=deque())
-    pair = environments(tmp_path, second, PrefetchLauncher()).prepare_pair(
+    with environments(tmp_path, second).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as pair:
+        pass
     assert pair.base.record.from_cache
     assert not pair.base.record.rebuilt
     assert pair.head.record.from_cache
     assert not pair.head.record.rebuilt
     assert pair.base.record.freeze == FREEZE_A
     assert second.created == []
+    assert second.prefetches == []
     assert pair.environment_delta == ()
 
 
 def test_cached_delta_triggers_paired_rebuild_and_can_dissolve(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     # Prime the cache with a pair whose freezes differ (a temporal artifact).
     first = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_BUMPED]))
-    primed = environments(tmp_path, first, PrefetchLauncher()).prepare_pair(
+    with environments(tmp_path, first).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as primed:
+        pass
     # Both sides were built in the same run, so the delta is ref-attributable.
     assert primed.environment_delta == (DependencyDelta(package='tomli', base_version='2.4.0', head_version='2.5.0'),)
     # A warm run sees the cached delta, rebuilds the pair, and the delta dissolves.
     second = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
-    pair = environments(tmp_path, second, PrefetchLauncher()).prepare_pair(
+    with environments(tmp_path, second).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as pair:
+        pass
     assert pair.base.record.rebuilt
     assert pair.head.record.rebuilt
     assert pair.environment_delta == ()
@@ -473,25 +564,25 @@ def test_cached_delta_triggers_paired_rebuild_and_can_dissolve(tmp_path: Path, d
 
 def test_surviving_delta_is_recorded_after_paired_rebuild(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     first = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_BUMPED]))
-    environments(tmp_path, first, PrefetchLauncher()).prepare_pair(
-        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    with environments(tmp_path, first).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()):
+        pass
     second = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_BUMPED]))
-    pair = environments(tmp_path, second, PrefetchLauncher()).prepare_pair(
+    with environments(tmp_path, second).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as pair:
+        pass
     assert pair.environment_delta == (DependencyDelta(package='tomli', base_version='2.4.0', head_version='2.5.0'),)
 
 
 def test_fresh_forces_rebuild_of_cached_pair(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     first = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
-    environments(tmp_path, first, PrefetchLauncher()).prepare_pair(
-        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    with environments(tmp_path, first).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()):
+        pass
     second = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
-    pair = environments(tmp_path, second, PrefetchLauncher(), fresh=True).prepare_pair(
+    with environments(tmp_path, second, fresh=True).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as pair:
+        pass
     assert pair.base.record.rebuilt
     assert pair.head.record.rebuilt
     assert len(second.created) == 2
@@ -499,26 +590,28 @@ def test_fresh_forces_rebuild_of_cached_pair(tmp_path: Path, detector_repo: Dete
 
 def test_corrupt_env_manifest_triggers_rebuild(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     first = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
-    primed = environments(tmp_path, first, PrefetchLauncher()).prepare_pair(
+    with environments(tmp_path, first).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as primed:
+        pass
     manifest = primed.base.env_dir / 'liveness-primer-env.json'
     for corrupt in ('not json', '[1]', '{"other": 1}', '{"freeze": "nope"}', '{"freeze": [1]}'):
         manifest.write_text(corrupt, encoding='utf-8')
         again = FakeInstaller(freezes=deque([FREEZE_A]))
-        pair = environments(tmp_path, again, PrefetchLauncher()).prepare_pair(
+        with environments(tmp_path, again).prepare_pair(
             detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-        )
+        ) as pair:
+            pass
         assert pair.base.record.rebuilt
         assert pair.head.record.from_cache
 
 
 def test_same_ref_on_both_sides_records_one_git_fetch(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     installer = FakeInstaller(freezes=deque([FREEZE_A]))
-    launcher = PrefetchLauncher()
-    pair = environments(tmp_path, installer, launcher).prepare_pair(
+    with environments(tmp_path, installer).prepare_pair(
         detector_repo.url, 'base-branch', 'base-branch', VultureAdapter()
-    )
+    ) as pair:
+        pass
     git_fetches = [record for record in pair.fetches if record.kind == 'git']
     assert len(git_fetches) == 1
     assert pair.base.record.fingerprint == pair.head.record.fingerprint
@@ -533,24 +626,28 @@ def test_empty_requirements_skip_the_prefetch(tmp_path: Path, detector_repo: Det
     git('add', 'pyproject.toml', cwd=detector_repo.path)
     git('commit', '--quiet', '-m', 'minimal', cwd=detector_repo.path)
     installer = FakeInstaller(freezes=deque([FREEZE_A]))
-    launcher = PrefetchLauncher()
-    pair = environments(tmp_path, installer, launcher).prepare_pair(
+    with environments(tmp_path, installer).prepare_pair(
         detector_repo.url, 'minimal', 'minimal', VultureAdapter()
-    )
-    assert launcher.downloads == []
+    ) as pair:
+        pass
+    assert installer.prefetches == []
     assert [record.kind for record in pair.fetches] == ['git']
 
 
 def test_env_lock_timeout_raises(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     installer = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
-    primed = environments(tmp_path, installer, PrefetchLauncher()).prepare_pair(
+    with environments(tmp_path, installer).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
-    )
+    ) as primed:
+        pass
     held = FileLock(str(primed.base.env_dir) + '.lock')
     held.acquire()
     try:
-        impatient = environments(tmp_path, FakeInstaller(freezes=deque()), PrefetchLauncher(), lock_timeout=0.2)
-        with pytest.raises(EnvCacheError, match='timed out waiting for the environment lock'):
-            impatient.prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter())
+        impatient = environments(tmp_path, FakeInstaller(freezes=deque()), lock_timeout=0.2)
+        with (
+            pytest.raises(EnvCacheError, match='timed out waiting for the environment lock'),
+            impatient.prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+        ):
+            pass
     finally:
         held.release()

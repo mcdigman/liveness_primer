@@ -3,6 +3,7 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -316,15 +317,28 @@ class ScriptedEnvInstaller:
         """
         return 'fake 1.0'
 
-    def create_venv(self, env_dir: Path) -> None:
+    @staticmethod
+    def prefetch(requirements: Sequence[str], wheelhouse: Path) -> None:
+        """Accept the prefetch request without downloading anything."""
+        del requirements, wheelhouse
+
+    def create_venv(self, env_dir: Path, *, isolation: Isolation, env: Mapping[str, str] | None = None) -> None:
         """Create the environment directory."""
+        del isolation, env
         env_dir.mkdir(parents=True)
         self.created.append(env_dir)
 
     @staticmethod
-    def install_offline(env_dir: Path, wheelhouse: Path, target: Path, isolation: Isolation) -> None:
+    def install_offline(
+        env_dir: Path,
+        wheelhouse: Path,
+        target: Path,
+        *,
+        isolation: Isolation,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         """Install the detector by wiring its per-ref script to a wrapper."""
-        del wheelhouse, isolation
+        del wheelhouse, isolation, env
         script = env_dir / 'script.json'
         script.write_text((target / 'script.json').read_text(encoding='utf-8'), encoding='utf-8')
         bin_dir = env_dir / 'bin'
@@ -380,6 +394,100 @@ def fake_detector_repo(tmp_path: Path) -> str:
     detector_git(repo_dir, 'add', '--all')
     detector_git(repo_dir, 'commit', '--quiet', '-m', 'head detector')
     return repo_dir.as_uri()
+
+
+def test_run_options_reject_unusable_limits() -> None:
+    with pytest.raises(RunnerError, match='jobs must be at least 1'):
+        RunOptions(jobs=0)
+    with pytest.raises(RunnerError, match='timeout must be positive'):
+        RunOptions(timeout=0.0)
+    with pytest.raises(RunnerError, match='timeout must be positive'):
+        RunOptions(timeout=float('nan'))
+    with pytest.raises(RunnerError, match='max_results must be at least 1'):
+        RunOptions(max_results=0)
+    with pytest.raises(RunnerError, match='excerpt_lines must not be negative'):
+        RunOptions(excerpt_lines=-1)
+    both = re.escape('jobs must be at least 1, got -1; timeout must be positive, got -2.0')
+    with pytest.raises(RunnerError, match=both):
+        RunOptions(jobs=-1, timeout=-2.0)
+
+
+def spying_runner(tmp_path: Path, launcher: AsyncLauncher) -> PrimerRunner:
+    return PrimerRunner(
+        adapter=get_adapter('vulture'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+        async_launcher=launcher,
+    )
+
+
+def test_each_side_analyzes_its_own_disposable_copy(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    # Contract §3: both revisions see byte-identical trees, but neither may
+    # share a writable working tree with the other or with the cache.
+    seen_cwds: list[Path | None] = []
+
+    async def spying_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        seen_cwds.append(cwd)
+        return await run_async(list(argv), cwd=cwd, env=env)
+
+    base_cmd = write_fake_detector_script(tmp_path / 'base.json', [BASE_FINDING])
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [BASE_FINDING])
+    report = spying_runner(tmp_path, spying_launcher).run_escape_hatch(
+        [corpus_project], base_cmd=base_cmd, head_cmd=head_cmd
+    )
+    assert not report_has_failures(report)
+    first, second = seen_cwds
+    assert first is not None
+    assert second is not None
+    assert first != second
+    for side_cwd in (first, second):
+        assert side_cwd.name == 'checkout'
+        assert 'liveness-primer-side-' in side_cwd.parent.name
+        assert not str(side_cwd).startswith(str(tmp_path / 'cache'))
+        assert not side_cwd.exists()  # workspaces are disposed after use
+    # The cached checkout keeps its .git and is untouched by the run.
+    cached = [path for path in (tmp_path / 'cache' / 'checkouts').iterdir() if path.is_dir()]
+    (checkout,) = cached
+    assert (checkout / 'pkg' / 'mod.py').exists()
+    assert (checkout / '.git').exists()
+
+
+def test_analysis_runs_with_a_scrubbed_environment(
+    tmp_path: Path,
+    corpus_project: CorpusProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Contract §3 trust model: untrusted analysis subprocesses get no
+    # credentials — allowlisted variables only, HOME in the workspace.
+    monkeypatch.setenv('LP_PLANTED_SECRET', 'boom')
+    captured: list[Mapping[str, str] | None] = []
+
+    async def spying_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        captured.append(env)
+        return await run_async(list(argv), cwd=cwd, env=env)
+
+    base_cmd = write_fake_detector_script(tmp_path / 'base.json', [])
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [])
+    report = spying_runner(tmp_path, spying_launcher).run_escape_hatch(
+        [corpus_project], base_cmd=base_cmd, head_cmd=head_cmd
+    )
+    assert not report_has_failures(report)
+    assert len(captured) == 2
+    for env in captured:
+        assert env is not None
+        assert 'LP_PLANTED_SECRET' not in env
+        assert 'liveness-primer-side-' in env['HOME']
 
 
 def test_managed_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, fake_detector_repo: str) -> None:

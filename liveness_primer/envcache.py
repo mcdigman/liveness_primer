@@ -11,6 +11,7 @@ by the full fingerprint and guarded by ``filelock``; attribution of
 dependency deltas is temporal, never textual.
 """
 
+import contextlib
 import hashlib
 import json
 import os
@@ -18,13 +19,14 @@ import platform
 import shutil
 import sys
 import sysconfig
+import tempfile
 import tomllib
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from filelock import FileLock, Timeout
+from filelock import BaseFileLock, FileLock, Timeout
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import (
     InvalidSdistFilename,
@@ -37,13 +39,17 @@ from packaging.utils import (
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import DependencyDelta, EnvironmentRecord, FetchRecord
-from liveness_primer.isolation import UNENFORCED, Isolation
+from liveness_primer.isolation import UNENFORCED, Isolation, scrubbed_environment
 from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
 from liveness_primer.tools.base import DetectorAdapter
 
 _DEFAULT_BUILD_REQUIRES: tuple[str, ...] = ('setuptools>=40.8.0', 'wheel')
 
 _INSTALL_TIMEOUT = 1800.0
+
+# Upper bound for the statically parsed pyproject.toml: real files are a few
+# KiB; anything larger is hostile or broken (contract §11 untrusted content).
+_MAX_PYPROJECT_BYTES = 1_048_576
 
 
 class EnvCacheError(LivenessPrimerError):
@@ -122,6 +128,46 @@ def _check_requirements(requirements: Iterable[str], *, where: str) -> None:
             raise EnvCacheError(msg) from exc
 
 
+def _read_pyproject_text(pyproject: Path) -> str:
+    """Read an untrusted ``pyproject.toml`` defensively (contract §11).
+
+    The checkout is untrusted and this read happens during the fetch step,
+    before any sandbox exists: symlinks are refused (git happily
+    materializes one pointing anywhere) and the read size is capped.
+
+    Parameters
+    ----------
+    pyproject : Path
+        The ``pyproject.toml`` location inside the checkout.
+
+    Returns
+    -------
+    str
+        The file contents.
+
+    Raises
+    ------
+    UnsupportedDetectorError
+        If the file is missing.
+    EnvCacheError
+        If the file is a symlink, oversized, or unreadable.
+    """
+    if pyproject.is_symlink():
+        msg = 'detector pyproject.toml is a symlink; refusing to follow it out of the checkout (§11)'
+        raise EnvCacheError(msg)
+    if pyproject.exists() and pyproject.stat().st_size > _MAX_PYPROJECT_BYTES:
+        msg = f'detector pyproject.toml exceeds {_MAX_PYPROJECT_BYTES} bytes'
+        raise EnvCacheError(msg)
+    try:
+        return pyproject.read_text(encoding='utf-8')
+    except FileNotFoundError as exc:
+        msg = 'detector has no pyproject.toml; v1 requires statically declared metadata (§4)'
+        raise UnsupportedDetectorError(msg) from exc
+    except OSError as exc:
+        msg = f'cannot read {pyproject}: {exc}'
+        raise EnvCacheError(msg) from exc
+
+
 def parse_static_metadata(checkout: Path) -> DetectorMetadata:
     """Parse detector dependencies statically — no build backend runs (contract §3).
 
@@ -146,17 +192,10 @@ def parse_static_metadata(checkout: Path) -> DetectorMetadata:
         If ``pyproject.toml`` or ``[project]`` is missing, or dependency
         metadata is dynamic.
     EnvCacheError
-        If the file is unreadable, not valid TOML, or malformed.
+        If the file is a symlink, oversized, unreadable, not valid TOML,
+        or malformed.
     """
-    pyproject = checkout / 'pyproject.toml'
-    try:
-        text = pyproject.read_text(encoding='utf-8')
-    except FileNotFoundError as exc:
-        msg = 'detector has no pyproject.toml; v1 requires statically declared metadata (§4)'
-        raise UnsupportedDetectorError(msg) from exc
-    except OSError as exc:
-        msg = f'cannot read {pyproject}: {exc}'
-        raise EnvCacheError(msg) from exc
+    text = _read_pyproject_text(checkout / 'pyproject.toml')
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -217,17 +256,41 @@ class Installer(Protocol):
         """
         ...
 
-    def create_venv(self, env_dir: Path) -> None:
-        """Create a fresh virtualenv.
+    def prefetch(self, requirements: Sequence[str], wheelhouse: Path) -> None:
+        """Download distributions into the local wheel cache (fetch step, §3).
+
+        Parameters
+        ----------
+        requirements : Sequence[str]
+            Requirement strings to download, wheels preferred.
+        wheelhouse : Path
+            Destination wheel cache directory.
+        """
+        ...
+
+    def create_venv(self, env_dir: Path, *, isolation: Isolation, env: Mapping[str, str] | None = None) -> None:
+        """Create a fresh virtualenv (build step, sandboxed, §3).
 
         Parameters
         ----------
         env_dir : Path
             Directory the virtualenv is created in.
+        isolation : Isolation
+            Network isolation wrapped around the creation (contract §11).
+        env : Mapping[str, str] | None
+            Scrubbed environment for the subprocess (contract §3).
         """
         ...
 
-    def install_offline(self, env_dir: Path, wheelhouse: Path, target: Path, isolation: Isolation) -> None:
+    def install_offline(
+        self,
+        env_dir: Path,
+        wheelhouse: Path,
+        target: Path,
+        *,
+        isolation: Isolation,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         """Install a project into the virtualenv from the local wheel cache only.
 
         Parameters
@@ -240,6 +303,8 @@ class Installer(Protocol):
             Project directory to build and install (sandboxed).
         isolation : Isolation
             Network isolation wrapped around the build (contract §11).
+        env : Mapping[str, str] | None
+            Scrubbed environment for the subprocess (contract §3).
         """
         ...
 
@@ -360,20 +425,56 @@ class PipInstaller:
         )
         return ' '.join(result.stdout.split()[:2])
 
-    def create_venv(self, env_dir: Path) -> None:
-        """Create a virtualenv with bundled pip.
+    def prefetch(self, requirements: Sequence[str], wheelhouse: Path) -> None:
+        """Download distributions with the host pip (fetch step, §3).
+
+        Parameters
+        ----------
+        requirements : Sequence[str]
+            Requirement strings to download, wheels preferred.
+        wheelhouse : Path
+            Destination wheel cache directory.
+        """
+        argv = [
+            self.python,
+            '-m',
+            'pip',
+            'download',
+            '--quiet',
+            '--dest',
+            str(wheelhouse),
+            '--prefer-binary',
+            *requirements,
+        ]
+        _checked(self.launcher(argv, timeout=_INSTALL_TIMEOUT), action='dependency prefetch (pip download)')
+
+    def create_venv(self, env_dir: Path, *, isolation: Isolation, env: Mapping[str, str] | None = None) -> None:
+        """Create a virtualenv with bundled pip (sandboxed, §3).
 
         Parameters
         ----------
         env_dir : Path
             Directory the virtualenv is created in.
+        isolation : Isolation
+            Network isolation wrapped around the creation (contract §11).
+        env : Mapping[str, str] | None
+            Scrubbed environment for the subprocess (contract §3).
         """
+        argv = [self.python, '-m', 'venv', str(env_dir)]
         _checked(
-            self.launcher([self.python, '-m', 'venv', str(env_dir)], timeout=_INSTALL_TIMEOUT),
+            self.launcher(isolation.wrap(argv), env=env, timeout=_INSTALL_TIMEOUT),
             action='venv creation',
         )
 
-    def install_offline(self, env_dir: Path, wheelhouse: Path, target: Path, isolation: Isolation) -> None:
+    def install_offline(
+        self,
+        env_dir: Path,
+        wheelhouse: Path,
+        target: Path,
+        *,
+        isolation: Isolation,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         """Install the detector offline with the virtualenv's own pip.
 
         Parameters
@@ -386,6 +487,8 @@ class PipInstaller:
             Project directory to build and install (sandboxed).
         isolation : Isolation
             Network isolation wrapped around the build (contract §11).
+        env : Mapping[str, str] | None
+            Scrubbed environment for the subprocess (contract §3).
         """
         argv = [
             _env_python(env_dir),
@@ -398,7 +501,7 @@ class PipInstaller:
             str(wheelhouse),
             str(target),
         ]
-        _checked(self.launcher(isolation.wrap(argv), timeout=_INSTALL_TIMEOUT), action='pip install')
+        _checked(self.launcher(isolation.wrap(argv), env=env, timeout=_INSTALL_TIMEOUT), action='pip install')
 
     def freeze(self, env_dir: Path) -> tuple[str, ...]:
         """Capture the freeze with the virtualenv's own pip.
@@ -453,20 +556,66 @@ class UvInstaller:
         result = _checked(self.launcher(['uv', '--version'], timeout=_INSTALL_TIMEOUT), action='uv --version')
         return ' '.join(result.stdout.split()[:2])
 
-    def create_venv(self, env_dir: Path) -> None:
-        """Create a virtualenv with uv.
+    def prefetch(self, requirements: Sequence[str], wheelhouse: Path) -> None:
+        """Download distributions via a seeded scratch venv (fetch step, §3).
+
+        ``uv`` has no ``pip download`` equivalent, so a throwaway
+        ``uv venv --seed`` environment supplies the pip that fills the
+        wheelhouse.
+
+        Parameters
+        ----------
+        requirements : Sequence[str]
+            Requirement strings to download, wheels preferred.
+        wheelhouse : Path
+            Destination wheel cache directory.
+        """
+        with tempfile.TemporaryDirectory(prefix='liveness-primer-uv-seed-') as scratch:
+            helper = Path(scratch) / 'seed-venv'
+            _checked(
+                self.launcher(['uv', 'venv', '--seed', '--python', self.python, str(helper)], timeout=_INSTALL_TIMEOUT),
+                action='uv venv --seed',
+            )
+            argv = [
+                _env_python(helper),
+                '-m',
+                'pip',
+                'download',
+                '--quiet',
+                '--dest',
+                str(wheelhouse),
+                '--prefer-binary',
+                *requirements,
+            ]
+            _checked(self.launcher(argv, timeout=_INSTALL_TIMEOUT), action='dependency prefetch (pip download)')
+
+    def create_venv(self, env_dir: Path, *, isolation: Isolation, env: Mapping[str, str] | None = None) -> None:
+        """Create a virtualenv with uv (sandboxed, §3).
 
         Parameters
         ----------
         env_dir : Path
             Directory the virtualenv is created in.
+        isolation : Isolation
+            Network isolation wrapped around the creation (contract §11).
+        env : Mapping[str, str] | None
+            Scrubbed environment for the subprocess (contract §3).
         """
+        argv = ['uv', 'venv', '--python', self.python, str(env_dir)]
         _checked(
-            self.launcher(['uv', 'venv', '--python', self.python, str(env_dir)], timeout=_INSTALL_TIMEOUT),
+            self.launcher(isolation.wrap(argv), env=env, timeout=_INSTALL_TIMEOUT),
             action='uv venv',
         )
 
-    def install_offline(self, env_dir: Path, wheelhouse: Path, target: Path, isolation: Isolation) -> None:
+    def install_offline(
+        self,
+        env_dir: Path,
+        wheelhouse: Path,
+        target: Path,
+        *,
+        isolation: Isolation,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         """Install the detector offline with ``uv pip``.
 
         Parameters
@@ -479,6 +628,8 @@ class UvInstaller:
             Project directory to build and install (sandboxed).
         isolation : Isolation
             Network isolation wrapped around the build (contract §11).
+        env : Mapping[str, str] | None
+            Scrubbed environment for the subprocess (contract §3).
         """
         argv = [
             'uv',
@@ -492,7 +643,7 @@ class UvInstaller:
             str(wheelhouse),
             str(target),
         ]
-        _checked(self.launcher(isolation.wrap(argv), timeout=_INSTALL_TIMEOUT), action='uv pip install')
+        _checked(self.launcher(isolation.wrap(argv), env=env, timeout=_INSTALL_TIMEOUT), action='uv pip install')
 
     def freeze(self, env_dir: Path) -> tuple[str, ...]:
         """Capture the freeze with ``uv pip``.
@@ -745,9 +896,8 @@ class DetectorEnvironments:
     cache_dir : Path
         Cache directory holding environments and the wheelhouse.
     installer : Installer
-        Environment installer (uv or pip).
-    launcher : SyncLauncher
-        Audited launcher for the dependency prefetch.
+        Environment installer (uv or pip); also performs the dependency
+        prefetch.
     isolation : Isolation
         Network isolation for build-step subprocesses (contract §11).
     fresh : bool
@@ -762,28 +912,25 @@ class DetectorEnvironments:
         cache_dir: Path,
         *,
         installer: Installer,
-        launcher: SyncLauncher = run_sync,
         isolation: Isolation = UNENFORCED,
         fresh: bool = False,
         lock_timeout: float = _INSTALL_TIMEOUT,
     ) -> None:
-        validate_sync_launcher(launcher)
         self._store = store
         self._cache_dir = cache_dir
         self._installer = installer
-        self._launcher = launcher
         self._isolation = isolation
         self._fresh = fresh
         self._lock_timeout = lock_timeout
         self._fetches: list[FetchRecord] = []
 
     def _prefetch(self, requirements: Sequence[str]) -> Path:
-        """Prefetch wheels for one ref into the local wheel cache (fetch step, §3).
+        """Prefetch wheels into the local wheel cache via the installer (fetch step, §3).
 
         Parameters
         ----------
         requirements : Sequence[str]
-            Runtime plus build requirements of the ref.
+            Requirement strings, duplicates allowed.
 
         Returns
         -------
@@ -792,53 +939,68 @@ class DetectorEnvironments:
         """
         wheelhouse = self._cache_dir / 'wheelhouse'
         wheelhouse.mkdir(parents=True, exist_ok=True)
-        if not requirements:
+        deduped = tuple(dict.fromkeys(requirements))
+        if not deduped:
             return wheelhouse
         before = {entry.name for entry in wheelhouse.iterdir()}
-        argv = [
-            sys.executable,
-            '-m',
-            'pip',
-            'download',
-            '--quiet',
-            '--dest',
-            str(wheelhouse),
-            '--prefer-binary',
-            *requirements,
-        ]
-        _checked(self._launcher(argv, timeout=_INSTALL_TIMEOUT), action='dependency prefetch (pip download)')
+        self._installer.prefetch(deduped, wheelhouse)
         added = {entry.name for entry in wheelhouse.iterdir()} - before
         self._fetches.extend(_fetch_records_for(wheelhouse, added))
         return wheelhouse
 
-    def _build(
-        self,
-        fingerprint: str,
-        checkout: Path,
-        metadata: DetectorMetadata,
-    ) -> tuple[str, ...]:
-        """Build one environment: venv, offline sandboxed install, freeze.
+    def _pair_wheelhouse(self, repo: str, shas: Sequence[str]) -> Path:
+        """Prefetch the union of every ref's requirements before any build (§3).
+
+        Both sides build against identical resolution inputs, keeping delta
+        attribution temporal, never textual.
 
         Parameters
         ----------
-        fingerprint : str
-            full environment fingerprint from environment_fingerprint
+        repo : str
+            Detector repository URL.
+        shas : Sequence[str]
+            Resolved commit SHAs of the refs being prepared.
+
+        Returns
+        -------
+        Path
+            The wheelhouse directory.
+        """
+        requirements: list[str] = []
+        for sha in dict.fromkeys(shas):
+            checkout = self._store.materialize(repo, sha)
+            metadata = parse_static_metadata(checkout)
+            requirements.extend(metadata.dependencies)
+            requirements.extend(metadata.optional_dependencies)
+            requirements.extend(metadata.build_requires)
+        return self._prefetch(requirements)
+
+    def _build(self, env_dir: Path, checkout: Path, wheelhouse: Path) -> tuple[str, ...]:
+        """Build one environment: venv, offline sandboxed install, freeze.
+
+        Every build-step subprocess runs under the §11 sandbox with a
+        scrubbed, credential-free environment (contract §3).
+
+        Parameters
+        ----------
+        env_dir : Path
+            The environment directory to (re)build.
         checkout : Path
             Detector checkout to install.
-        metadata : DetectorMetadata
-            Statically parsed dependencies to prefetch.
+        wheelhouse : Path
+            Prefetched wheel cache both sides install from.
 
         Returns
         -------
         tuple[str, ...]
             The freeze of the built environment.
         """
-        env_dir = self._cache_dir / 'envs' / Path(fingerprint).name
-        wheelhouse = self._prefetch([*metadata.dependencies, *metadata.build_requires])
         if env_dir.exists():
             shutil.rmtree(env_dir)
-        self._installer.create_venv(env_dir)
-        self._installer.install_offline(env_dir, wheelhouse, checkout, self._isolation)
+        with tempfile.TemporaryDirectory(prefix='liveness-primer-build-home-') as scratch_home:
+            env = scrubbed_environment(home=Path(scratch_home))
+            self._installer.create_venv(env_dir, isolation=self._isolation, env=env)
+            self._installer.install_offline(env_dir, wheelhouse, checkout, isolation=self._isolation, env=env)
         return self._installer.freeze(env_dir)
 
     def _ensure(
@@ -848,10 +1010,11 @@ class DetectorEnvironments:
         ref: str,
         sha: str,
         adapter: DetectorAdapter,
-        installer_identity: str,
+        fingerprint: str,
+        wheelhouse: Callable[[], Path],
         force_rebuild: bool,
     ) -> EnvHandle:
-        """Return a cached environment or build it, under the cache lock.
+        """Return a cached environment or build it; the caller holds its lock.
 
         Parameters
         ----------
@@ -863,8 +1026,10 @@ class DetectorEnvironments:
             Resolved commit SHA.
         adapter : DetectorAdapter
             Adapter for recipe, distribution, and executable names.
-        installer_identity : str
-            Installer name and version.
+        fingerprint : str
+            Full environment fingerprint of this ref.
+        wheelhouse : Callable[[], Path]
+            Lazy provider of the pair's prefetched wheelhouse.
         force_rebuild : bool
             Skip cache reuse and rebuild.
 
@@ -872,62 +1037,74 @@ class DetectorEnvironments:
         -------
         EnvHandle
             The ready environment.
-
-        Raises
-        ------
-        EnvCacheError
-            If the cache lock cannot be acquired in time.
         """
-        fingerprint = environment_fingerprint(repo, sha, adapter, installer_identity)
-        envs = self._cache_dir / 'envs'
-        envs.mkdir(parents=True, exist_ok=True)
-        env_dir = envs / Path(fingerprint).name
+        env_dir = self._cache_dir / 'envs' / Path(fingerprint).name
         env_manifest = env_dir / 'liveness-primer-env.json'
-        lock = FileLock(str(env_dir) + '.lock')
-        try:
-            lock.acquire(timeout=self._lock_timeout)
-        except Timeout as exc:
-            msg = f'timed out waiting for the environment lock of {fingerprint}'
-            raise EnvCacheError(msg) from exc
-        try:
-            cached_freeze = None if force_rebuild else _read_env_manifest(env_manifest)
-            if cached_freeze is not None:
-                record = EnvironmentRecord(
-                    ref=ref,
-                    sha=sha,
-                    fingerprint=fingerprint,
-                    freeze=cached_freeze,
-                    from_cache=True,
-                    rebuilt=False,
-                )
-            else:
-                checkout = self._store.materialize(repo, sha)
-                metadata = parse_static_metadata(checkout)
-                freeze = self._build(fingerprint, checkout, metadata)
-                env_manifest.write_text(json.dumps({'fingerprint': fingerprint, 'freeze': list(freeze)}), 'utf-8')
-                record = EnvironmentRecord(
-                    ref=ref,
-                    sha=sha,
-                    fingerprint=fingerprint,
-                    freeze=freeze,
-                    from_cache=False,
-                    rebuilt=True,
-                )
-        finally:
-            lock.release()
+        cached_freeze = None if force_rebuild else _read_env_manifest(env_manifest)
+        if cached_freeze is not None:
+            record = EnvironmentRecord(
+                ref=ref,
+                sha=sha,
+                fingerprint=fingerprint,
+                freeze=cached_freeze,
+                from_cache=True,
+                rebuilt=False,
+            )
+        else:
+            house = wheelhouse()
+            checkout = self._store.materialize(repo, sha)
+            freeze = self._build(env_dir, checkout, house)
+            env_manifest.write_text(json.dumps({'fingerprint': fingerprint, 'freeze': list(freeze)}), 'utf-8')
+            record = EnvironmentRecord(
+                ref=ref,
+                sha=sha,
+                fingerprint=fingerprint,
+                freeze=freeze,
+                from_cache=False,
+                rebuilt=True,
+            )
         return EnvHandle(
             record=record,
             env_dir=env_dir,
             executable=env_executable(env_dir, adapter.executable),
         )
 
-    def prepare_pair(self, repo: str, base_ref: str, head_ref: str, adapter: DetectorAdapter) -> PreparedPair:
+    def _acquire_locks(self, stack: contextlib.ExitStack, fingerprints: Iterable[str]) -> None:
+        """Acquire the per-fingerprint cache locks in deterministic order.
+
+        Parameters
+        ----------
+        stack : contextlib.ExitStack
+            Stack that releases every acquired lock on exit.
+        fingerprints : Iterable[str]
+            Fingerprints to lock; duplicates collapse to one lock.
+
+        Raises
+        ------
+        EnvCacheError
+            If a lock cannot be acquired in time.
+        """
+        envs = self._cache_dir / 'envs'
+        for fingerprint in sorted(set(fingerprints)):
+            lock: BaseFileLock = FileLock(str(envs / Path(fingerprint).name) + '.lock')
+            try:
+                lock.acquire(timeout=self._lock_timeout)
+            except Timeout as exc:
+                msg = f'timed out waiting for the environment lock of {fingerprint}'
+                raise EnvCacheError(msg) from exc
+            stack.callback(lock.release)
+
+    @contextlib.contextmanager
+    def prepare_pair(self, repo: str, base_ref: str, head_ref: str, adapter: DetectorAdapter) -> Iterator[PreparedPair]:
         """Prepare the base/head environment pair with paired delta resolution (contract §3).
 
         Cached pairs with an empty non-detector dependency delta are used
         directly; any non-empty delta triggers an automatic paired same-run
         rebuild. Only a delta that survives that rebuild is ref-attributable
-        and recorded. ``fresh`` forces the rebuild unconditionally.
+        and recorded. ``fresh`` forces the rebuild unconditionally. The
+        pair's cache locks are held until the context exits, so a concurrent
+        ``--fresh`` rebuild cannot delete an environment out from under an
+        in-flight analysis.
 
         Parameters
         ----------
@@ -940,8 +1117,8 @@ class DetectorEnvironments:
         adapter : DetectorAdapter
             Adapter of the tool under test.
 
-        Returns
-        -------
+        Yields
+        ------
         PreparedPair
             The two environments, surviving delta, and fetch records.
         """
@@ -951,55 +1128,79 @@ class DetectorEnvironments:
         if head_sha != base_sha:
             self._fetches.append(FetchRecord(kind='git', name=repo, resolved=head_sha))
         installer_identity = self._installer.identity()
-        base = self._ensure(
-            repo=repo,
-            ref=base_ref,
-            sha=base_sha,
-            adapter=adapter,
-            installer_identity=installer_identity,
-            force_rebuild=self._fresh,
-        )
-        head = self._ensure(
-            repo=repo,
-            ref=head_ref,
-            sha=head_sha,
-            adapter=adapter,
-            installer_identity=installer_identity,
-            force_rebuild=self._fresh,
-        )
-        delta = dependency_delta(
-            base.record.freeze,
-            head.record.freeze,
-            detector_distribution=adapter.distribution,
-        )
-        if delta and not (base.record.rebuilt and head.record.rebuilt):
-            # Attribution is temporal, never textual: rebuild both sides in
-            # this run before attributing the delta to the refs (§3).
+        base_fingerprint = environment_fingerprint(repo, base_sha, adapter, installer_identity)
+        head_fingerprint = environment_fingerprint(repo, head_sha, adapter, installer_identity)
+        (self._cache_dir / 'envs').mkdir(parents=True, exist_ok=True)
+        wheelhouse: Path | None = None
+
+        def pair_wheelhouse() -> Path:
+            """Prefetch the pair's union wheelhouse once, on first build.
+
+            Returns
+            -------
+            Path
+                The wheelhouse directory.
+            """
+            nonlocal wheelhouse
+            if wheelhouse is None:
+                wheelhouse = self._pair_wheelhouse(repo, (base_sha, head_sha))
+            return wheelhouse
+
+        with contextlib.ExitStack() as stack:
+            self._acquire_locks(stack, (base_fingerprint, head_fingerprint))
             base = self._ensure(
                 repo=repo,
                 ref=base_ref,
                 sha=base_sha,
                 adapter=adapter,
-                installer_identity=installer_identity,
-                force_rebuild=True,
+                fingerprint=base_fingerprint,
+                wheelhouse=pair_wheelhouse,
+                force_rebuild=self._fresh,
             )
             head = self._ensure(
                 repo=repo,
                 ref=head_ref,
                 sha=head_sha,
                 adapter=adapter,
-                installer_identity=installer_identity,
-                force_rebuild=True,
+                fingerprint=head_fingerprint,
+                wheelhouse=pair_wheelhouse,
+                force_rebuild=self._fresh,
             )
             delta = dependency_delta(
                 base.record.freeze,
                 head.record.freeze,
                 detector_distribution=adapter.distribution,
             )
-        return PreparedPair(
-            base=base,
-            head=head,
-            environment_delta=delta,
-            fetches=tuple(self._fetches),
-            installer_identity=installer_identity,
-        )
+            if delta and not (base.record.rebuilt and head.record.rebuilt):
+                # Attribution is temporal, never textual: rebuild both sides
+                # in this run before attributing the delta to the refs (§3).
+                base = self._ensure(
+                    repo=repo,
+                    ref=base_ref,
+                    sha=base_sha,
+                    adapter=adapter,
+                    fingerprint=base_fingerprint,
+                    wheelhouse=pair_wheelhouse,
+                    force_rebuild=True,
+                )
+                head = self._ensure(
+                    repo=repo,
+                    ref=head_ref,
+                    sha=head_sha,
+                    adapter=adapter,
+                    fingerprint=head_fingerprint,
+                    wheelhouse=pair_wheelhouse,
+                    force_rebuild=True,
+                )
+                delta = dependency_delta(
+                    base.record.freeze,
+                    head.record.freeze,
+                    detector_distribution=adapter.distribution,
+                )
+            yield PreparedPair(
+                base=base,
+                head=head,
+                environment_delta=delta,
+                fetches=tuple(self._fetches),
+                installer_identity=installer_identity,
+            )

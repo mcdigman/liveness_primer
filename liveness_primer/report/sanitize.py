@@ -38,6 +38,8 @@ def sanitize_inline(text: str, *, max_length: int = DEFAULT_INLINE_CAP) -> str:
     """
     cleaned = ''.join(ch if ch.isprintable() else ' ' for ch in text)
     if len(cleaned) > max_length:
+        if max_length <= len(_ELLIPSIS):
+            return cleaned[: max(0, max_length)]
         return cleaned[: max_length - len(_ELLIPSIS)] + _ELLIPSIS
     return cleaned
 
@@ -67,7 +69,11 @@ def sanitize_excerpt(text: str, *, max_lines: int, max_line_length: int = DEFAUL
 
 
 def sanitize_cell(text: str, *, max_length: int = DEFAULT_LINE_CAP) -> str:
-    """Sanitize untrusted text for a markdown table cell.
+    """Sanitize untrusted text for markdown rendering (contract §9).
+
+    Escapes every markdown metacharacter through which untrusted text
+    could stop being data: table separators, code and formatting markers,
+    raw HTML openers, and link/image syntax.
 
     Parameters
     ----------
@@ -79,11 +85,13 @@ def sanitize_cell(text: str, *, max_length: int = DEFAULT_LINE_CAP) -> str:
     Returns
     -------
     str
-        Inline-sanitized text with table and formatting metacharacters
-        escaped.
+        Inline-sanitized text with markdown metacharacters escaped.
     """
     inline = sanitize_inline(text, max_length=max_length)
-    return inline.replace('\\', '\\\\').replace('|', '\\|').replace('`', '\\`')
+    escaped = inline.replace('\\', '\\\\')
+    for metacharacter in ('|', '`', '<', '[', '*', '_'):
+        escaped = escaped.replace(metacharacter, '\\' + metacharacter)
+    return escaped
 
 
 def fenced_block(lines: Sequence[str]) -> str:

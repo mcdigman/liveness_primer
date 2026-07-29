@@ -103,6 +103,14 @@ def test_identity_distinguishes_no_symbol_from_empty_like_symbol() -> None:
     assert finding_identity('t', 'p', 'f.py', None, 'k') != finding_identity('t', 'p', 'f.py', '', 'k')
 
 
+def test_identity_serialization_is_unambiguous_across_field_boundaries() -> None:
+    # Regression: delimiter characters inside attacker-controlled fields
+    # must never make distinct (path, symbol) pairs collide.
+    assert finding_identity('t', 'p', 'a\x1fsb', 'c', 'k') != finding_identity('t', 'p', 'a', 'b\x1fsc', 'k')
+    assert finding_identity('t', 'p', 'a"b', 'c', 'k') != finding_identity('t', 'p', 'a', 'b"c', 'k')
+    assert finding_identity('t', 'p\x1f', 'a', None, 'k') != finding_identity('t', 'p', '\x1fa', None, 'k')
+
+
 def test_finding_rejects_inverted_span() -> None:
     with pytest.raises(ValidationError, match='precedes'):
         make_finding(start_line=5, end_line=4)
@@ -215,6 +223,36 @@ def test_report_embeds_schema_version() -> None:
     assert report.manifest.schema_version == SCHEMA_VERSION
     payload = report.model_dump_json()
     assert SCHEMA_VERSION in payload
+
+
+def test_every_standalone_payload_embeds_schema_version() -> None:
+    # Contract §7: the package-wide version appears in every independently
+    # exported payload, including findings, occurrences, and diffs.
+    finding = make_finding()
+    occurrence = finding.occurrence()
+    diff = FindingDiff(
+        diff_class=DiffClass.NEW,
+        identity=finding.identity,
+        tool=finding.tool,
+        project=finding.project,
+        path=finding.path,
+        symbol=finding.symbol,
+        kind=finding.kind,
+        head_occurrence=occurrence,
+    )
+    for payload in (finding, occurrence, diff):
+        assert payload.schema_version == SCHEMA_VERSION
+        assert f'"schema_version":"{SCHEMA_VERSION}"' in payload.model_dump_json()
+
+
+def test_schema_version_is_constrained_to_the_supported_version() -> None:
+    with pytest.raises(ValidationError, match='is not the supported'):
+        make_finding(schema_version='0.9.0')
+    with pytest.raises(ValidationError, match='is not the supported'):
+        FindingOccurrence(schema_version='2.0.0', start_line=1, end_line=1, message='m')
+    manifest = make_manifest()
+    with pytest.raises(ValidationError, match='is not the supported'):
+        Report(schema_version='1.0.1', manifest=manifest, projects=(), totals=DiffTotals(), truncated=False)
 
 
 def test_annotation_coverage_rule() -> None:

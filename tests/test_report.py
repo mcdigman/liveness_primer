@@ -10,6 +10,8 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from liveness_primer.findings import (
     ChangedField,
     CorpusIntegrityWarning,
@@ -288,6 +290,13 @@ def test_sanitize_inline_strips_and_caps() -> None:
     assert sanitize_inline('short') == 'short'
 
 
+@pytest.mark.parametrize(('cap', 'expected'), [(0, ''), (2, 'xx'), (3, 'xxx'), (4, 'x...')])
+def test_sanitize_inline_never_exceeds_tiny_caps(cap: int, expected: str) -> None:
+    # Regression: caps below the ellipsis length used to slice from the
+    # end and return text longer than the cap.
+    assert sanitize_inline('x' * 50, max_length=cap) == expected
+
+
 def test_sanitize_excerpt_caps_lines_and_notes_omissions() -> None:
     lines = sanitize_excerpt('one\ntwo\nthree\nfour', max_lines=2)
     assert lines[:2] == ('one', 'two')
@@ -297,6 +306,27 @@ def test_sanitize_excerpt_caps_lines_and_notes_omissions() -> None:
 
 def test_sanitize_cell_escapes_table_metacharacters() -> None:
     assert sanitize_cell('a|b`c\\d') == 'a\\|b\\`c\\\\d'
+
+
+def test_sanitize_cell_escapes_html_and_link_metacharacters() -> None:
+    # Contract §9: untrusted text is structurally data — raw HTML openers,
+    # links, and emphasis must not survive into markdown.
+    assert sanitize_cell('<img src=x>') == '\\<img src=x>'
+    assert sanitize_cell('[x](javascript:1)') == '\\[x](javascript:1)'
+    assert sanitize_cell('*bold* _em_') == '\\*bold\\* \\_em\\_'
+
+
+def test_github_report_escapes_untrusted_error_details() -> None:
+    report = build_report()
+    hostile_error = ToolError(side='base', exit_code=2, detail='<script>alert(1)</script> [link](https://evil.invalid)')
+    project = report.projects[0].model_copy(update={'errors': (hostile_error,)})
+    hostile = report.model_copy(update={'projects': (project, *report.projects[1:])})
+    markdown = render_github(hostile)
+    # Every HTML opener and link bracket arrives backslash-escaped: none
+    # survives in a form markdown would interpret.
+    assert markdown.count('<script>') == markdown.count('\\<script>') > 0
+    assert markdown.count('</script>') == markdown.count('\\</script>') > 0
+    assert markdown.count('[link]') == markdown.count('\\[link]') > 0
 
 
 def test_fenced_block_outruns_content_backticks() -> None:

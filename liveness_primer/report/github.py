@@ -69,7 +69,8 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
         for delta in manifest.environment_delta:
             base = delta.base_version if delta.base_version is not None else 'absent'
             head = delta.head_version if delta.head_version is not None else 'absent'
-            lines.append(f'| {delta.package} | {base} | {head} |')
+            # Freeze-derived text originates in the untrusted environments.
+            lines.append(f'| {sanitize_cell(delta.package)} | {sanitize_cell(base)} | {sanitize_cell(head)} |')
     return lines
 
 
@@ -99,9 +100,11 @@ def _project_lines(project: ProjectReport, *, excerpt_lines: int) -> list[str]:
             f'{totals_text(project.totals)}; cost {cost}'
         ),
     ]
-    lines.extend(f'- **error[{error.side}]**: {sanitize_inline(error.detail)}' for error in project.errors)
+    # Error details quote detector stderr — attacker-influenced text that
+    # must not reach markdown unescaped (contract §9).
+    lines.extend(f'- **error[{error.side}]**: {sanitize_cell(error.detail)}' for error in project.errors)
     lines.extend(
-        f'- **warning[corpus-integrity]**: {sanitize_inline(warning.detail)}' for warning in project.integrity_warnings
+        f'- **warning[corpus-integrity]**: {sanitize_cell(warning.detail)}' for warning in project.integrity_warnings
     )
     if project.truncated:
         lines.append('- note: diffs below are truncated by `--max-results`; totals reflect the full comparison')

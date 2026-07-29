@@ -11,7 +11,9 @@ timeouts; analysis-step subprocesses run under the §11 network isolation.
 import asyncio
 import inspect
 import platform
+import shutil
 import sysconfig
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -35,8 +37,8 @@ from liveness_primer.findings import (
     RunSettings,
     ToolError,
 )
-from liveness_primer.isolation import Isolation
-from liveness_primer.launcher import AsyncLauncher, run_async
+from liveness_primer.isolation import Isolation, scrubbed_environment
+from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
 from liveness_primer.tools.base import AdapterError, DetectorAdapter, RawToolOutput, build_invocation
 
 GATE_CHOICES = ('new', 'dropped', 'changed', 'any', 'corpus-integrity')
@@ -74,6 +76,26 @@ class RunOptions:
     excerpt_lines: int = 5
     fail_on: tuple[str, ...] = ()
     fresh: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject unusable resource limits at the typed boundary (contract §12).
+
+        Raises
+        ------
+        RunnerError
+            If a limit is zero, negative, or otherwise unusable.
+        """
+        problems: list[str] = []
+        if self.jobs < 1:
+            problems.append(f'jobs must be at least 1, got {self.jobs}')
+        if not self.timeout > 0:
+            problems.append(f'timeout must be positive, got {self.timeout}')
+        if self.max_results < 1:
+            problems.append(f'max_results must be at least 1, got {self.max_results}')
+        if self.excerpt_lines < 0:
+            problems.append(f'excerpt_lines must not be negative, got {self.excerpt_lines}')
+        if problems:
+            raise RunnerError('; '.join(problems))
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +215,53 @@ def _assemble_report(manifest: RunManifest, project_reports: Sequence[ProjectRep
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _SideWorkspace:
+    """Disposable per-invocation workspace (contract §3, §11).
+
+    Attributes
+    ----------
+    root : Path
+        Workspace directory removed after the invocation.
+    checkout : Path
+        This side's own copy of the pinned checkout.
+    home : Path
+        Scratch ``HOME`` exposed to the detector.
+    """
+
+    root: Path
+    checkout: Path
+    home: Path
+
+
+def _materialize_side(checkout: Path) -> _SideWorkspace:
+    """Give one detector invocation its own disposable checkout copy.
+
+    Both sides derive from the same pinned cache entry, so the copies are
+    byte-identical (contract §3) — but neither side can influence the other
+    (or a later run) through writes to a shared working tree, and the
+    detector's scratch ``HOME`` lives and dies with the workspace.
+
+    Parameters
+    ----------
+    checkout : Path
+        Pinned cached checkout to copy.
+
+    Returns
+    -------
+    _SideWorkspace
+        The materialized workspace.
+    """
+    root = Path(tempfile.mkdtemp(prefix='liveness-primer-side-'))
+    side_checkout = root / 'checkout'
+    # Symlinks are copied as symlinks: following them could pull content
+    # from outside the pinned tree into the analyzed copy.
+    shutil.copytree(checkout, side_checkout, symlinks=True, ignore=shutil.ignore_patterns('.git'))
+    home = root / 'home'
+    home.mkdir()
+    return _SideWorkspace(root=root, checkout=side_checkout, home=home)
+
+
 class PrimerRunner:
     """Runs one two-revision comparison over selected corpus projects.
 
@@ -266,6 +335,59 @@ class PrimerRunner:
             )
         return work, tuple(fetches.values())
 
+    def _parse_outcome(self, item: _ProjectWork, *, side: str, result: LaunchResult, root: Path) -> _SideOutcome:
+        """Turn one captured detector invocation into a side outcome.
+
+        Parameters
+        ----------
+        item : _ProjectWork
+            The project inputs.
+        side : str
+            ``base`` or ``head``.
+        result : LaunchResult
+            The captured launch.
+        root : Path
+            Checkout copy the detector analyzed, for path normalization.
+
+        Returns
+        -------
+        _SideOutcome
+            The parsed outcome.
+        """
+        if result.returncode not in self._adapter.success_exit_codes:
+            detail = f'exit code {result.returncode}: {result.stderr.strip()[-_STDERR_SNIPPET:]}'
+            error = ToolError(side=side, exit_code=result.returncode, detail=detail)
+            return _SideOutcome(
+                side=side,
+                findings=None,
+                error=error,
+                duration_seconds=result.duration_seconds,
+                returncode=result.returncode,
+            )
+        raw = RawToolOutput(
+            returncode=result.returncode if result.returncode is not None else 0,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        try:
+            findings = self._adapter.parse(raw, project=item.project.name, root=root)
+        except AdapterError as exc:
+            error = ToolError(side=side, exit_code=result.returncode, detail=str(exc))
+            return _SideOutcome(
+                side=side,
+                findings=None,
+                error=error,
+                duration_seconds=result.duration_seconds,
+                returncode=result.returncode,
+            )
+        return _SideOutcome(
+            side=side,
+            findings=tuple(findings),
+            error=None,
+            duration_seconds=result.duration_seconds,
+            returncode=result.returncode,
+        )
+
     async def _invoke(
         self,
         item: _ProjectWork,
@@ -295,45 +417,31 @@ class PrimerRunner:
         argv = build_invocation(self._adapter, command, item.settings)
         timeout = item.settings.timeout if item.settings.timeout is not None else self._options.timeout
         async with semaphore:
+            # Each side analyzes its own disposable copy of the pinned
+            # checkout under a scrubbed, credential-free environment
+            # (contract §3, §11).
+            workspace = await asyncio.to_thread(_materialize_side, item.checkout)
             try:
-                async with asyncio.timeout(timeout):
-                    result = await self._async_launcher(self._isolation.wrap(argv), cwd=item.checkout)
-            except TimeoutError:
-                error = ToolError(side=side, exit_code=None, detail=f'timed out after {timeout:g}s')
-                return _SideOutcome(side=side, findings=None, error=error, duration_seconds=timeout, returncode=None)
-        if result.returncode not in self._adapter.success_exit_codes:
-            detail = f'exit code {result.returncode}: {result.stderr.strip()[-_STDERR_SNIPPET:]}'
-            error = ToolError(side=side, exit_code=result.returncode, detail=detail)
-            return _SideOutcome(
-                side=side,
-                findings=None,
-                error=error,
-                duration_seconds=result.duration_seconds,
-                returncode=result.returncode,
-            )
-        raw = RawToolOutput(
-            returncode=result.returncode if result.returncode is not None else 0,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
-        try:
-            findings = self._adapter.parse(raw, project=item.project.name, root=item.checkout)
-        except AdapterError as exc:
-            error = ToolError(side=side, exit_code=result.returncode, detail=str(exc))
-            return _SideOutcome(
-                side=side,
-                findings=None,
-                error=error,
-                duration_seconds=result.duration_seconds,
-                returncode=result.returncode,
-            )
-        return _SideOutcome(
-            side=side,
-            findings=tuple(findings),
-            error=None,
-            duration_seconds=result.duration_seconds,
-            returncode=result.returncode,
-        )
+                environment = scrubbed_environment(home=workspace.home)
+                try:
+                    async with asyncio.timeout(timeout):
+                        result = await self._async_launcher(
+                            self._isolation.wrap(argv),
+                            cwd=workspace.checkout,
+                            env=environment,
+                        )
+                except TimeoutError:
+                    error = ToolError(side=side, exit_code=None, detail=f'timed out after {timeout:g}s')
+                    return _SideOutcome(
+                        side=side,
+                        findings=None,
+                        error=error,
+                        duration_seconds=timeout,
+                        returncode=None,
+                    )
+                return self._parse_outcome(item, side=side, result=result, root=workspace.checkout)
+            finally:
+                await asyncio.to_thread(shutil.rmtree, workspace.root, ignore_errors=True)
 
     def _project_report(self, item: _ProjectWork, base: _SideOutcome, head: _SideOutcome) -> ProjectReport:
         """Assemble one project report from both side outcomes.
@@ -540,11 +648,14 @@ class PrimerRunner:
         Report
             The blast radius.
         """
-        pair = environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter)
-        work, corpus_fetches = self._fetch_corpus(projects)
-        project_reports = asyncio.run(
-            self._analyze_all(work, base_command=(pair.base.executable,), head_command=(pair.head.executable,))
-        )
+        # The pair's environment locks stay held until analysis completes,
+        # so a concurrent --fresh rebuild cannot delete an environment in
+        # use (contract §3).
+        with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
+            work, corpus_fetches = self._fetch_corpus(projects)
+            project_reports = asyncio.run(
+                self._analyze_all(work, base_command=(pair.base.executable,), head_command=(pair.head.executable,))
+            )
         manifest = self._manifest(
             detector_repo=detector_repo,
             pair=pair,

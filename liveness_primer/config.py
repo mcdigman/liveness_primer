@@ -22,8 +22,17 @@ LICENSE_ALLOWLIST = frozenset({'MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Claus
 
 _COPYLEFT_PREFIXES = ('GPL-', 'AGPL-', 'LGPL-', 'MPL-')
 
-_NAME_PATTERN = re.compile(r'^[A-Za-z0-9._-]+$')
-_GITHUB_PATTERN = re.compile(r'^https://github\.com/(?P<owner>[A-Za-z0-9._-]+)/(?P<repo>[A-Za-z0-9._-]+?)(\.git)?/?$')
+# Bare `.`/`..` segments are excluded everywhere: HTTP clients normalize
+# dot segments away, silently retargeting the request path.
+_NAME_PATTERN = re.compile(r'^(?!\.\.?$)[A-Za-z0-9._-]+$')
+# GitHub owners are alphanumerics and inner hyphens; repository names also
+# allow dots and underscores but never consist of dots alone.
+_GITHUB_PATTERN = re.compile(
+    r'^https://github\.com/'
+    r'(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/'
+    r'(?P<repo>(?!\.\.?(?:\.git)?/?$)[A-Za-z0-9._-]+?)'
+    r'(\.git)?/?$'
+)
 
 
 class CorpusConfigError(LivenessPrimerError):
@@ -122,6 +131,28 @@ class ToolSettings(_ConfigModel):
     expected_clean: bool = False
     timeout: float | None = Field(default=None, gt=0)
     cost: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode='after')
+    def _check_command_placeholder(self) -> Self:
+        """Require the ``{exe}`` placeholder in command overrides.
+
+        Without it, both revisions would silently run the identical
+        override and compare a detector against itself.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If ``command`` is set but contains no ``{exe}`` element.
+        """
+        if self.command is not None and '{exe}' not in self.command:
+            msg = "a command override must contain the '{exe}' placeholder; without it both sides run the same binary"
+            raise ValueError(msg)
+        return self
 
 
 class CorpusProject(_ConfigModel):

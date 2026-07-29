@@ -71,17 +71,44 @@ def test_build_invocation_command_override_substitutes_exe() -> None:
     assert argv == ['python', '-m', 'skylos', '--json', 'pkg']
 
 
-def test_build_invocation_command_override_without_placeholder() -> None:
-    settings = ToolSettings(command=('/opt/wrapper', '--mode', 'scan'))
-    argv = build_invocation(SkylosAdapter(), ['/ignored'], settings)
-    assert argv == ['/opt/wrapper', '--mode', 'scan', '.']
-
-
 def test_normalize_finding_path_relative_and_absolute() -> None:
     assert normalize_finding_path('pkg/mod.py', ROOT) == 'pkg/mod.py'
     assert normalize_finding_path('./pkg/mod.py', ROOT) == 'pkg/mod.py'
     assert normalize_finding_path('/checkout/pkg/mod.py', ROOT) == 'pkg/mod.py'
-    assert normalize_finding_path('/elsewhere/mod.py', ROOT) == '/elsewhere/mod.py'
+    assert normalize_finding_path('pkg/../mod.py', ROOT) == 'mod.py'
+
+
+def test_normalize_finding_path_resolves_symlinked_roots(tmp_path: Path) -> None:
+    # e.g. macOS /tmp -> /private/tmp: detectors may print the resolved
+    # absolute prefix while the runner holds the unresolved one.
+    real_root = tmp_path / 'real'
+    real_root.mkdir()
+    link_root = tmp_path / 'link'
+    link_root.symlink_to(real_root)
+    assert normalize_finding_path(str(real_root / 'pkg' / 'mod.py'), link_root) == 'pkg/mod.py'
+
+
+@pytest.mark.parametrize(
+    'hostile',
+    [
+        '/etc/passwd',
+        '/elsewhere/mod.py',
+        '../secret.py',
+        'pkg/../../secret.py',
+        '..',
+    ],
+)
+def test_normalize_finding_path_rejects_escapes(hostile: str) -> None:
+    # Contract §7: Finding.path is repo-relative; out-of-root detector
+    # output is malformed, never preserved (contract §11).
+    with pytest.raises(AdapterError, match='outside the checkout'):
+        normalize_finding_path(hostile, ROOT)
+
+
+@pytest.mark.parametrize('empty', ['', '.', 'pkg/..'])
+def test_normalize_finding_path_rejects_non_files(empty: str) -> None:
+    with pytest.raises(AdapterError, match='naming no file'):
+        normalize_finding_path(empty, ROOT)
 
 
 def test_vulture_parses_recorded_fixture() -> None:

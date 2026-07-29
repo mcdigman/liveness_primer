@@ -12,6 +12,7 @@ import pytest
 import liveness_primer.cli
 from liveness_primer.cli import EXIT_FAILURE, EXIT_GATE, EXIT_OK, main
 from liveness_primer.findings import Report
+from liveness_primer.isolation import UNENFORCED, Isolation, IsolationError
 from liveness_primer.license_check import LicenseCheckResult
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from tests.test_runner import ScriptedEnvInstaller, fake_detector_repo
@@ -62,7 +63,8 @@ def test_run_escape_hatch_text_output(
     project_url: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    code = main(escape_argv(tmp_path, project_url, [BASE], [MOVED, NEW]))
+    limits = ('--jobs', '2', '--timeout', '30', '--max-results', '50', '--excerpt-lines', '3')
+    code = main(escape_argv(tmp_path, project_url, [BASE], [MOVED, NEW], *limits))
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert 'liveness primer report - tool: vulture' in captured.out
@@ -170,6 +172,63 @@ def test_usage_errors_exit_two() -> None:
     with pytest.raises(SystemExit) as excinfo:
         main(['no-such-command'])
     assert excinfo.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ('flag', 'value'),
+    [
+        ('--jobs', '0'),
+        ('--jobs', '-1'),
+        ('--jobs', 'many'),
+        ('--timeout', '0'),
+        ('--timeout', '-5'),
+        ('--timeout', 'nan'),
+        ('--timeout', 'inf'),
+        ('--timeout', 'soon'),
+        ('--max-results', '0'),
+        ('--max-results', '-3'),
+        ('--excerpt-lines', '-1'),
+        ('--excerpt-lines', 'x'),
+        ('--max-cost', '0'),
+    ],
+)
+def test_unusable_resource_limits_are_usage_errors(flag: str, value: str) -> None:
+    # Contract §12: `--jobs 0` must not hang and `--jobs -1` must not
+    # escape as a raw traceback; both are rejected at the parser.
+    with pytest.raises(SystemExit) as excinfo:
+        main(['run', '--tool', 'vulture', '--repo', 'r', '--old', 'a', '--new', 'b', flag, value])
+    assert excinfo.value.code == 2
+
+
+def test_managed_run_refuses_to_start_without_required_isolation(
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Contract §11/§19.1: managed runs execute untrusted detector refs and
+    # fail closed when enforced isolation is unavailable.
+    def refuse() -> Isolation:
+        msg = 'network isolation is required on Linux'
+        raise IsolationError(msg)
+
+    monkeypatch.setattr(liveness_primer.cli, 'require_isolation', refuse)
+    code = main(
+        [
+            'run',
+            '--tool',
+            'vulture',
+            '--project',
+            project_url,
+            '--repo',
+            'https://example.invalid/detector',
+            '--old',
+            'a',
+            '--new',
+            'b',
+        ]
+    )
+    assert code == EXIT_FAILURE
+    assert 'network isolation is required' in capsys.readouterr().err
 
 
 def test_version_prints_package_and_schema_versions(
@@ -332,6 +391,7 @@ def test_managed_run_fires_gates_with_exit_three(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(liveness_primer.cli, 'choose_installer', ScriptedEnvInstaller)
+    monkeypatch.setattr(liveness_primer.cli, 'require_isolation', lambda: UNENFORCED)
     code = main(
         [
             'run',
@@ -365,6 +425,7 @@ def test_managed_run_without_firing_gates_exits_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(liveness_primer.cli, 'choose_installer', ScriptedEnvInstaller)
+    monkeypatch.setattr(liveness_primer.cli, 'require_isolation', lambda: UNENFORCED)
     code = main(
         [
             'run',

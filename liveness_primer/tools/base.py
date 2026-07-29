@@ -11,7 +11,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol, runtime_checkable
 
 from liveness_primer.config import ToolSettings
@@ -166,7 +166,7 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
     """Compose the analysis argv for one (project, tool) pair (contract §11).
 
     The per-tool corpus ``command`` override replaces the default program and
-    arguments, with the literal element ``{exe}`` spliced with the detector
+    arguments, with its mandatory ``{exe}`` element spliced with the detector
     command; ``args`` appends; targets default to the checkout root. Corpus
     *content* is never interpolated — every element originates from typed,
     validated models.
@@ -188,6 +188,8 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
     """
     base: list[str] = []
     if settings.command is not None:
+        # ToolSettings guarantees the placeholder is present, so both sides
+        # always run their own executables.
         for element in settings.command:
             if element == '{exe}':
                 base.extend(executable)
@@ -199,8 +201,35 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
     return [*base, *settings.args, *targets]
 
 
+def _relative_to_root(path: Path, root: Path) -> Path | None:
+    """Express an absolute reported path relative to the checkout root.
+
+    Parameters
+    ----------
+    path : Path
+        Absolute path as reported.
+    root : Path
+        Checkout directory the detector analyzed.
+
+    Returns
+    -------
+    Path | None
+        The relative path, or ``None`` when outside the root.
+    """
+    for candidate_root in (root, root.resolve()):
+        try:
+            return path.relative_to(candidate_root)
+        except ValueError:
+            continue
+    return None
+
+
 def normalize_finding_path(raw: str, root: Path) -> str:
     """Normalize a detector-reported path to repo-relative POSIX form (contract §7).
+
+    Detector output is untrusted: paths resolving outside the analyzed
+    checkout are rejected as malformed adapter output rather than
+    preserved (contract §11).
 
     Parameters
     ----------
@@ -212,14 +241,34 @@ def normalize_finding_path(raw: str, root: Path) -> str:
     Returns
     -------
     str
-        The path relative to ``root`` when possible, without a leading
-        ``./``, in POSIX notation.
+        The path relative to ``root``, without a leading ``./``, in POSIX
+        notation.
+
+    Raises
+    ------
+    AdapterError
+        If the path escapes the checkout root or names no file.
     """
     path = Path(raw)
     if path.is_absolute():
-        try:
-            path = path.relative_to(root)
-        except ValueError:
-            return path.as_posix()
-    posix = path.as_posix()
-    return posix.removeprefix('./')
+        relative = _relative_to_root(path, root)
+        if relative is None:
+            msg = f'detector reported a path outside the checkout: {raw!r}'
+            raise AdapterError(msg)
+        path = relative
+    # Lexically normalize the untrusted relative path (pathlib already
+    # collapses `.` segments); `..` escaping the checkout root is malformed
+    # adapter output (contract §7, §11).
+    parts: list[str] = []
+    for part in path.parts:
+        if part == '..':
+            if not parts:
+                msg = f'detector reported a path outside the checkout: {raw!r}'
+                raise AdapterError(msg)
+            parts.pop()
+        else:
+            parts.append(part)
+    if not parts:
+        msg = f'detector reported a path naming no file: {raw!r}'
+        raise AdapterError(msg)
+    return PurePosixPath(*parts).as_posix()
