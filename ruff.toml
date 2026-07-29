@@ -67,8 +67,30 @@ min-file-size = 1024
 "subprocess.getstatusoutput".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
 "os.system".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
 "os.popen".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execl".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execle".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execlp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execlpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execv".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execve".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execvp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.execvpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnl".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnle".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnlp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnlpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnv".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnve".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnvp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.spawnvpe".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.posix_spawn".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"os.posix_spawnp".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+"pty.spawn".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
 "asyncio.create_subprocess_shell".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
 "asyncio.create_subprocess_exec".msg = "Launch subprocesses only via the audited launcher module (contract §11)."
+# NOTE: event-loop instance methods (loop.subprocess_exec/loop.subprocess_shell)
+# cannot be banned by qualified name; the AST test required by contract §15 is
+# the backstop for those.
 
 [lint.per-file-ignores]
 "tests/*" = ["S101", "D103"]

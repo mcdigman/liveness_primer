@@ -32,43 +32,55 @@ point*: pre-triage, triage, or post-triage (§10).
   into two isolated cached virtualenvs (`uv pip` when on `PATH`, stdlib `venv` + `pip`
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
 - Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
-  into a local wheel cache, wheels preferred; no code from the detector refs executes;
-  every fetch is recorded in the run manifest — URLs, resolved SHAs, installed versions),
-  then a **build** step (networking disabled; the detector installs from the local cache,
-  e.g. `--no-index --find-links`, so build-backend hooks run sandboxed; Rust detectors
-  prefetch crates during fetch and build `--offline`), then an **analysis** step
-  (networking disabled, §11). Corpus refs are resolved once per run and then pinned
-  (including latest-on-branch mode); both detector revisions analyze byte-identical
-  checkouts.
+  into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
+  statically parsing PEP 621 `[project]` metadata — no build backend is invoked, so no code
+  from the detector refs executes; every fetch is recorded in the run manifest — URLs,
+  resolved SHAs, installed versions), then a **build** step (networking disabled per §11;
+  the detector installs from the local cache, e.g. `--no-index --find-links`, so
+  build-backend hooks run sandboxed; Rust detectors prefetch crates during fetch and build
+  `--offline`), then an **analysis** step (networking disabled per §11). Corpus refs are
+  resolved once per run and then pinned (including latest-on-branch mode); both detector
+  revisions analyze byte-identical checkouts.
 - Trust model: detector refs and corpus content are untrusted and execute only with
-  networking disabled and no credentials; third-party dependencies fetched from package
-  indexes are supply-chain-trusted like any development dependency. As in all CI, running a
-  primer on a PR executes that PR's code — the guarantee is isolation, not avoidance.
+  networking disabled (where enforced — §11, §16) and no credentials; third-party
+  dependencies fetched from package indexes are supply-chain-trusted like any development
+  dependency. As in all CI, running a primer on a PR executes that PR's code — the
+  guarantee is isolation, not avoidance.
 - Environment integrity: virtualenv cache entries under the `platformdirs` cache directory
   are keyed by the full fingerprint (repository, resolved SHA, adapter build-recipe hash,
   Python version and ABI, platform tag, installer name and version) and guarded by
   `filelock`; checkout caches are keyed by (repository, SHA). The manifest records the
-  resolved dependency freeze of both environments. A base/head pair is **comparable** iff
-  the non-detector dependency delta is empty; any non-empty delta triggers an automatic
-  paired same-run rebuild, and only a delta that survives same-run paired resolution is
-  ref-attributable (reported as context). Attribution is temporal, never textual:
-  declared-requirement differences between the refs do not excuse a cached pair. The
-  manifest records a `comparable` flag; `--fail-on` gating and `bisect` refuse to act on
+  resolved dependency freeze of both environments. Cached pairs with an empty non-detector
+  dependency delta are used directly; any non-empty delta triggers an automatic paired
+  same-run rebuild. Attribution is temporal, never textual: declared-requirement
+  differences between the refs do not excuse a cached pair, and only a delta that survives
+  same-run paired resolution is ref-attributable. A run whose environments matched exactly
+  from cache or went through paired same-run resolution is **comparable**; a surviving
+  delta is recorded in the manifest and rendered prominently in the report as
+  environment-delta context — a large blast radius from a dependency bump is itself a
+  useful finding. The `comparable` flag is false only for unmanaged escape-hatch runs
+  (`--old-cmd`/`--new-cmd`); `--fail-on` gating and `bisect` refuse to act on
   non-comparable runs. `--fresh` forces same-run rebuilds of both environments.
-- Concurrency: `asyncio` orchestrates per-project subprocesses with a configurable
-  parallelism limit and a per-(project, tool) timeout.
+- Concurrency: `asyncio` orchestrates per-project subprocesses; parallelism is set by
+  `--jobs N` and the default per-(project, tool) timeout by `--timeout S` (§12), with
+  per-(project, tool) `timeout` overrides in the corpus TOML (§5).
 
 ## 4. Supported detectors
 
-- v1 adapters: `vulture` and `skylos` (pure Python, generic source-install path) in
-  Phase 1; `culler` and `mollify` (Rust/maturin builds requiring a declared toolchain) in
-  Phase 2. All four are permissively licensed, uv-installable, and actively developed.
+- v1 adapters: `vulture` and `skylos` (generic source-install path: their own builds are
+  pure Python; compiled dependencies, such as skylos's tree-sitter grammars and libcst,
+  arrive as prefetched wheels) in Phase 1; `culler` and `mollify` (Rust/maturin builds
+  requiring a declared toolchain) in Phase 2. All four are permissively licensed,
+  uv-installable, and actively developed.
 - Adapters implement a typed `Protocol`: raw invocation output → `list[Finding]`, declaring
   capabilities (e.g. has-confidence, output format) and a **build recipe** — build backend
   plus toolchain prerequisites with minimum versions (e.g. Rust and maturin for `culler`
   and `mollify`) — which the runner verifies before building and CI provisions for gated
-  detectors. The interface is not Python-specific (paths plus optional symbol), leaving
-  room for tools such as `knip`.
+  detectors. v1 build recipes require static PEP 621 metadata (§3); dynamic-metadata
+  detectors are unsupported. Adapters ingest only dead-code finding kinds: other report
+  categories (e.g. skylos's security, secrets, and quality findings) are filtered at the
+  adapter. The interface is not Python-specific (paths plus optional symbol), leaving room
+  for tools such as `knip`.
 - Future candidates (non-normative): `pydeadcode`, `dangle`, `deadpy`, `uncalled`, and
   subset-capability tools (ruff, mypy, pyright, CodeQL).
 - Licensing rule: GPL/AGPL detectors (e.g. `deadcode` AGPL-3.0, pylint GPL-2.0) may only
@@ -82,9 +94,12 @@ point*: pre-triage, triage, or post-triage (§10).
 - Per-project fields: `name` (unique key; the same repository may appear under distinct
   names to allow multiple pins), `repo` URL, `license` (SPDX ID), exactly one of `pin`
   (commit SHA) or `branch` (latest-on-branch), and per-tool tables with command/argument
-  overrides, target paths, `expected_clean: bool`, declared `cost` in CPU-seconds
-  (approximate, reference runner; measured actuals are recorded in the report), and
-  include/exclude tool lists.
+  overrides, target paths, `expected_clean: bool`, `timeout` overrides (§3), declared
+  `cost` in CPU-seconds (approximate, reference runner; measured actuals are recorded in
+  the report), and include/exclude tool lists.
+- `expected_clean` semantics: findings or a nonzero tool exit on the base side of an
+  expected-clean (project, tool) pair are reported as **corpus-integrity warnings** (the
+  comparison still runs); `--fail-on corpus-integrity` opts into gating on them.
 - Ad-hoc mode: a single target repository given on the CLI with default settings.
 - Selection: by name (`-k`), `--all`, or `--max-cost SECONDS` (greedy under declared cost
   for the chosen tool).
@@ -99,6 +114,9 @@ point*: pre-triage, triage, or post-triage (§10).
   compares against the declared SPDX ID; mismatches fail the check. Detection is
   advisory-strength (licensee is imperfect) but the check is binding in CI. Implemented with
   `httpx` (the `[license]` extra) and runnable locally via `corpus license-check`.
+- v1 corpus repositories must be GitHub-hosted; `corpus validate` rejects other hosts. The
+  API reports the default-branch license, which can differ from the tree at a pinned SHA;
+  the check remains advisory-strength, with PR review as the backstop.
 
 ## 7. Schemas and finding identity
 
@@ -125,7 +143,9 @@ point*: pre-triage, triage, or post-triage (§10).
   Stages: (1) full-field-equal occurrences are removed by multiset intersection;
   (2) remaining occurrences sharing (identity, start line) are paired in canonical-key
   order as `changed`; (3) remaining occurrences sharing identity are paired across lines
-  in canonical-key order as `changed`; (4) leftovers classify as `new` or `dropped`. After
+  by a deterministic order-preserving alignment (both sides in canonical-key order, gaps
+  allowed) minimizing total start-line distance, ties broken toward earlier lines, as
+  `changed`; (4) leftovers classify as `new` or `dropped`. After
   stage 1, canonical-key ties occur only between fully identical, interchangeable
   occurrences. `changed` carries a `changed_fields ⊆ {line-span, message, confidence}` set
   (confidence only for tools declaring that capability). Every normalized observable field
@@ -145,8 +165,8 @@ point*: pre-triage, triage, or post-triage (§10).
   quoting so downstream LLM consumers structurally see them as data. Sanitization is
   mandatory and not hook-removable.
 - Exit codes: 0 for any successful run regardless of diff size; opt-in
-  `--fail-on {new,dropped,any}` gating; distinct nonzero codes for run failure vs. gate
-  failure.
+  `--fail-on {new,dropped,any,corpus-integrity}` gating; distinct nonzero codes for run
+  failure vs. gate failure.
 
 ## 10. Hook system
 
@@ -182,11 +202,13 @@ point*: pre-triage, triage, or post-triage (§10).
   passes a `shell` keyword. (The bandit S rules alone are insufficient: S603 flags every
   `subprocess` call, safe or not, and no S rule flags `asyncio.create_subprocess_shell`.)
   This guards against accident; in-repo code is trusted (§11 trust boundary).
-- Network isolation: analysis-phase subprocesses run with networking disabled (Linux network
-  namespaces or a container with `--network=none`), enforced on the Linux reference platform
-  and in CI, best-effort elsewhere. The manifest records whether isolation was enforced, and
-  reports flag unenforced runs. This also limits the blast radius of a malicious corpus
-  repository exploiting a detector parser bug.
+- Network isolation: build- and analysis-step subprocesses run with networking disabled
+  (Linux network namespaces or a container with `--network=none`), enforced on the Linux
+  reference platform and in CI, best-effort elsewhere. `--no-index` alone is not isolation
+  — build-backend hooks can open arbitrary sockets; the sandbox is the guarantee. The
+  manifest records whether isolation was enforced, and reports flag unenforced runs. This
+  also limits the blast radius of a malicious corpus repository exploiting a detector
+  parser bug.
 - Corpus code execution: the core (Phases 1–2) never executes corpus code — detectors only
   parse it. Any workflow that executes corpus code (coverage evidence, runner files,
   distillation; Phases 3–4) runs only inside an isolated container: no network, read-only
@@ -202,7 +224,7 @@ printing the package version and `SCHEMA_VERSION`. Commands:
 
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
   [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
-  [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]`
+  [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]`
 - `corpus validate` — parse and validate the corpus TOML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF
@@ -215,7 +237,9 @@ printing the package version and `SCHEMA_VERSION`. Commands:
   class: `new` → first commit where the head occurrence is present; `dropped` → first
   where the base occurrence is absent; `changed` → first where the occurrence deviates
   from its base-side values in any of the finding's `changed_fields`. `--predicate`
-  overrides.
+  overrides. Bisect assumes the predicate is monotonic between `--good` and `--bad`; for
+  oscillating findings (§14 expects these to exist) it reports *a* transition commit, not
+  necessarily the unique cause.
 - `schema export` — regenerate `liveness_primer/schemas/`.
 
 ## 13. Internal corpus
@@ -226,6 +250,10 @@ printing the package version and `SCHEMA_VERSION`. Commands:
   extraction date), and an optional runner link — a repo-relative path to a runner file
   (e.g. `corpus_runners/<name>.py`) that executably demonstrates the evidence in ambiguous
   cases. Runner files execute only under the §11 container-isolation rules.
+- Verdict semantics: `no-coverage` means an expected-meaningful coverage run reported no
+  coverage of the target; `unknown` means coverage has not been run, is not runnable, or
+  structurally cannot produce a meaningful result for that code (e.g. certain runtime
+  decorators).
 - Rule: coverage evidence can only support `live`; absence of coverage yields `no-coverage`,
   never `dead`.
 
@@ -250,7 +278,9 @@ subject to the §11 container-isolation rule.
   against golden files; hooks as pure functions.
 - An AST-walking test enforces the §11 launcher rule: no call anywhere in the package
   passes a `shell` keyword, and no module outside the launcher reaches the raw subprocess
-  APIs (backstopping the `TID251` ban in `ruff.toml`).
+  APIs — including event-loop instance methods (`loop.subprocess_exec`/
+  `loop.subprocess_shell`), which qualified-name banning cannot see (backstopping the
+  `TID251` ban in `ruff.toml`).
 - All repository QA rules in AGENTS.md apply: full branch and line coverage with non-vacuous
   tests, enforced by the existing coverage.py CI gate.
 
