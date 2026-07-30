@@ -88,10 +88,9 @@ test('error counts and paths are bounded; deep nesting is cut off', () => {
   const schema = { type: 'array', items: { type: 'string' } };
   const errors = validateAgainstSchema(schema, Array.from({ length: 500 }, () => 1));
   assert.equal(errors.length, MAX_SCHEMA_ERRORS);
-  let nested = 'x';
   const deepSchema = { $defs: {}, type: 'object', properties: {} };
   let node = deepSchema;
-  let value = {};
+  const value = {};
   let cursor = value;
   for (let index = 0; index < 100; index += 1) {
     node.type = 'object';
@@ -103,7 +102,6 @@ test('error counts and paths are bounded; deep nesting is cut off', () => {
   const deepErrors = validateAgainstSchema(deepSchema, value);
   assert.ok(deepErrors.some((e) => e.message.includes('too deeply')));
   assert.ok(deepErrors.every((e) => e.path.length <= 203));
-  assert.ok(nested === 'x');
 });
 
 test('sha256 digests match a known vector and abbreviate for display', async () => {

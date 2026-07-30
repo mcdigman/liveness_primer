@@ -70,7 +70,10 @@ jobs:
 
       - name: Guard the bundle against leaked paths and fixtures
         run: |
-          ! grep -R "/Users/\|/home/\|report_golden\|locator_golden" dist
+          if grep -R "/Users/\|/home/\|report_golden\|locator_golden" dist; then
+            echo "developer path or test fixture leaked into the bundle"
+            exit 1
+          fi
           test ! -e dist/tmp-report.json
 
       - name: Performance report (non-gating; explorer contract §15)
@@ -91,7 +94,6 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload distributable bundle
-        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: explorer-dist

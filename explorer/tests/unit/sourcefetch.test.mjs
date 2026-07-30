@@ -66,7 +66,7 @@ test('non-GitHub pins produce no request at all', async () => {
 });
 
 test('a redirect off the allowed origin is rejected without reading the body', async () => {
-  const outcome = await fetchPinnedFile(PIN, 'pkg/a.py', async (url) =>
+  const outcome = await fetchPinnedFile(PIN, 'pkg/a.py', async (_url) =>
     response({ url: 'https://evil.invalid/capture' }),
   );
   assert.equal(outcome.ok, false);

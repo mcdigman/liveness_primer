@@ -20,6 +20,7 @@ export default [
         localStorage: 'readonly',
         navigator: 'readonly',
         window: 'readonly',
+        structuredClone: 'readonly',
         Blob: 'readonly',
         DataTransfer: 'readonly',
         File: 'readonly',
