@@ -97,11 +97,14 @@ count: int
 ```
 
 Exactly one of `rule_id` and `kind` is non-null. A finding with a rule ID groups by rule ID
-regardless of kind; otherwise it groups by kind. `count` is positive.
+regardless of kind; otherwise it groups by kind. A `changed` pair groups by its
+reference-side occurrence. `count` is positive.
 
 Rollups are computed from the complete diff sequence before `--max-results` truncation, in
-the same assembly step as `DiffTotals`. Overall rollups are the sum of the complete project
-rollups. A hook that filters or replaces diffs must recompute totals and rollups before the
+the same assembly step as `DiffTotals`. The serialized tuple is deterministically ordered by
+diff class in `new`, `dropped`, `changed` order, then descending count, then lexicographically
+by rule ID or kind — the display ordering below without the top-five cap. Overall rollups are
+the sum of the complete project rollups. A hook that filters or replaces diffs must recompute totals and rollups before the
 final report is truncated or serialized; stale aggregate data is an invalid report.
 
 Human renderers show nonzero diff classes as one line each. They display at most the five
@@ -310,8 +313,10 @@ home, or temporary-directory prefix.
 The permalink targets the pinned corpus SHA. It must not target the detector base/head SHA
 or a moving corpus branch.
 
-In GitHub output, the visible `path:Lx` or `path:Lx-Ly` is the Markdown link label. In text
-output with supported terminal hyperlinks, the same visible location is an OSC-8 link. When
+In GitHub output, the visible `path:Lx` or `path:Lx-Ly` is the Markdown link label. A
+`changed` location with a moved span (`path:Lx->Ly`) links its base-side span; the head-side
+permalink accompanies the labelled head excerpt (§4.5). In text output with supported
+terminal hyperlinks, the same visible location is an OSC-8 link. When
 terminal hyperlinks are disabled or unsupported, the copyable relative location remains and
 the stable URL may be printed as a labelled continuation. A hidden terminal hyperlink must
 never be the only representation of the target.
@@ -378,8 +383,9 @@ enables them only when all of these conditions hold:
 - `TERM` is not `dumb`;
 - neither `TMUX` nor `STY` is set, because multiplexer passthrough cannot be inferred; and
 - at least one conservative capability signal is present: `TERM_PROGRAM` is exactly one of
-  `ghostty`, `iTerm.app`, `kitty`, `WezTerm`, or `vscode`; `VTE_VERSION` is a decimal integer
-  greater than or equal to `5000`; or `WT_SESSION` is nonempty.
+  `ghostty`, `iTerm.app`, `WezTerm`, or `vscode`; `KITTY_WINDOW_ID` is nonempty (kitty does
+  not set `TERM_PROGRAM`); `VTE_VERSION` is a decimal integer greater than or equal to
+  `5000`; or `WT_SESSION` is nonempty.
 
 An absent, malformed, or unrecognized capability signal disables hyperlinks in `auto` mode.
 The implementation must not claim that terminfo or Rich detects OSC-8 support. Redirected
@@ -464,7 +470,7 @@ Implementation is complete only when tests establish all of the following.
 10. A changed finding with a changed line span shows labelled base and head excerpts using
     their respective locations; an unchanged span shows the reference-side excerpt once.
 11. The source permalink contains the corpus SHA and normalized path and opens the exact line
-   or span.
+    or span.
 12. No detector-derived finding row, source excerpt, or source link contains a disposable
     checkout prefix such as `/private/var/folders/`, a cache path, or a serialized `"file"`
     field from a detector record. Trusted manifest argv may contain such paths.
