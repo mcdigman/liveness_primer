@@ -1,6 +1,6 @@
 # Static report explorer contract for `liveness_primer`
 
-Status: draft.
+Status: approved.
 
 This document specifies the browser-based review surface for completed `liveness_primer`
 reports. It depends on the approved, not-yet-implemented
@@ -58,8 +58,7 @@ The v1 explorer does not:
 - replace the text or GitHub report as the durable CI summary;
 - replace the JSON report as the authoritative machine-readable result;
 - host copies of complete corpus source trees;
-- require a per-PR Pages deployment; or
-- promise functional or visual parity with a future Dash wrapper.
+- require a per-PR Pages deployment.
 
 The report projection, filtering, locator, permalink, and export logic must nevertheless be
 implemented as framework-neutral, strictly typed modules rather than embedded in view event
