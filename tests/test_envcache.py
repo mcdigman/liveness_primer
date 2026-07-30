@@ -3,6 +3,7 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+import json
 import shutil
 import sys
 from collections import deque
@@ -364,6 +365,8 @@ class FakeInstaller:
 
     freezes: deque[tuple[str, ...]]
     wheel_names: tuple[str, ...] = ('tomli-2.4.0-py3-none-any.whl', 'legacy-1.0.tar.gz', 'not-a-wheel.whl')
+    wheel_symlink_target: Path | None = None
+    manifest_symlink_target: Path | None = None
     name: str = 'fake'
     events: list[str] = field(default_factory=list)
     prefetches: list[tuple[str, ...]] = field(default_factory=list)
@@ -387,7 +390,11 @@ class FakeInstaller:
         self.events.append('prefetch')
         self.prefetches.append(tuple(requirements))
         for wheel in self.wheel_names:
-            (wheelhouse / wheel).write_bytes(b'payload-' + wheel.encode('utf-8'))
+            destination = wheelhouse / wheel
+            if self.wheel_symlink_target is None:
+                destination.write_bytes(b'payload-' + wheel.encode('utf-8'))
+            else:
+                destination.symlink_to(self.wheel_symlink_target)
 
     def create_venv(self, env_dir: Path, *, isolation: Isolation, env: Mapping[str, str] | None = None) -> None:
         """Create the environment directory like a real venv would."""
@@ -409,6 +416,8 @@ class FakeInstaller:
         """Record the install request."""
         del env
         self.installs.append((env_dir, wheelhouse, target, isolation.description))
+        if self.manifest_symlink_target is not None:
+            (env_dir / 'liveness-primer-env.json').symlink_to(self.manifest_symlink_target)
 
     def freeze(self, env_dir: Path) -> tuple[str, ...]:
         """Pop the next scripted freeze.
@@ -484,6 +493,23 @@ def test_pair_prefetch_is_a_single_union_before_any_build(tmp_path: Path, detect
     assert installer.events[0] == 'prefetch'
     assert installer.events.count('prefetch') == 1
     assert installer.events.count('create') == 2
+
+
+def test_prefetch_refuses_symlinked_distribution(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    outside = tmp_path / 'outside.whl'
+    outside.write_bytes(b'outside payload')
+    installer = FakeInstaller(
+        freezes=deque(),
+        wheel_names=('tomli-2.4.0-py3-none-any.whl',),
+        wheel_symlink_target=outside,
+    )
+    with (
+        pytest.raises(EnvCacheError, match='not a regular file'),
+        environments(tmp_path, installer).prepare_pair(
+            detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
+        ),
+    ):
+        pass
 
 
 def test_builds_use_a_scrubbed_credential_free_environment(
@@ -604,6 +630,47 @@ def test_corrupt_env_manifest_triggers_rebuild(tmp_path: Path, detector_repo: De
             pass
         assert pair.base.record.rebuilt
         assert pair.head.record.from_cache
+
+
+def test_symlinked_env_manifest_triggers_rebuild(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    first = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
+    with environments(tmp_path, first).prepare_pair(
+        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
+    ) as primed:
+        pass
+    outside = tmp_path / 'outside-manifest.json'
+    outside.write_text(json.dumps({'freeze': ['poison==1']}), encoding='utf-8')
+    manifest = primed.base.env_dir / 'liveness-primer-env.json'
+    manifest.unlink()
+    manifest.symlink_to(outside)
+
+    again = FakeInstaller(freezes=deque([FREEZE_A]))
+    with environments(tmp_path, again).prepare_pair(
+        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
+    ) as pair:
+        pass
+    assert pair.base.record.rebuilt
+    assert pair.base.record.freeze == FREEZE_A
+    assert pair.head.record.from_cache
+    assert json.loads(outside.read_text(encoding='utf-8')) == {'freeze': ['poison==1']}
+
+
+def test_build_replaces_planted_manifest_symlink(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    victim = tmp_path / 'victim.json'
+    victim.write_text('do not overwrite', encoding='utf-8')
+    installer = FakeInstaller(
+        freezes=deque([FREEZE_A]),
+        manifest_symlink_target=victim,
+    )
+    with environments(tmp_path, installer).prepare_pair(
+        detector_repo.url, 'base-branch', 'base-branch', VultureAdapter()
+    ) as pair:
+        pass
+
+    manifest = pair.base.env_dir / 'liveness-primer-env.json'
+    assert victim.read_text(encoding='utf-8') == 'do not overwrite'
+    assert not manifest.is_symlink()
+    assert json.loads(manifest.read_text(encoding='utf-8'))['freeze'] == list(FREEZE_A)
 
 
 def test_same_ref_on_both_sides_records_one_git_fetch(tmp_path: Path, detector_repo: DetectorRepo) -> None:

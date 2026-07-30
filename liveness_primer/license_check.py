@@ -28,8 +28,6 @@ else:
     except ImportError:
         httpx = None
 
-GITHUB_API = 'https://api.github.com'
-
 _REQUEST_TIMEOUT = 30.0
 
 
@@ -192,7 +190,7 @@ def _check_one(client: httpx.Client, project: CorpusProject) -> LicenseCheckResu
         return _result(project, detected=None, ok=False, detail='repository is not GitHub-hosted (§6)')
     owner, repo = parsed
     try:
-        response = client.get(f'/repos/{owner}/{repo}/license')
+        response = client.get(f'https://api.github.com/repos/{owner}/{repo}/license')
     except httpx.HTTPError as exc:
         return _result(project, detected=None, ok=False, detail=f'license API request failed: {exc}')
     if response.status_code == httpx.codes.NOT_FOUND:
@@ -243,7 +241,6 @@ def check_licenses(
     if token is not None:
         headers['Authorization'] = f'Bearer {token}'
     with httpx.Client(
-        base_url=GITHUB_API,
         headers=headers,
         timeout=_REQUEST_TIMEOUT,
         transport=transport,

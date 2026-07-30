@@ -764,10 +764,18 @@ def _fetch_records_for(wheelhouse: Path, added: Iterable[str]) -> tuple[FetchRec
     -------
     tuple[FetchRecord, ...]
         One record per file: name, resolved version, SHA-256 digest.
+
+    Raises
+    ------
+    EnvCacheError
+        If a downloaded distribution is a symlink or not a regular file.
     """
     records: list[FetchRecord] = []
     for filename in sorted(added):
         path = wheelhouse / filename
+        if path.is_symlink() or not path.is_file():
+            msg = f'downloaded distribution is not a regular file: {filename}'
+            raise EnvCacheError(msg)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         try:
             if filename.endswith('.whl'):
@@ -830,6 +838,8 @@ def _read_env_manifest(env_manifest: Path) -> tuple[str, ...] | None:
         The stored freeze, or ``None`` when absent or unusable (which
         triggers a rebuild).
     """
+    if env_manifest.is_symlink() or not env_manifest.is_file():
+        return None
     try:
         stored = json.loads(env_manifest.read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -840,6 +850,29 @@ def _read_env_manifest(env_manifest: Path) -> tuple[str, ...] | None:
     if not isinstance(freeze, list) or any(not isinstance(line, str) for line in freeze):
         return None
     return tuple(freeze)
+
+
+def _write_env_manifest(env_manifest: Path, fingerprint: str, freeze: tuple[str, ...]) -> None:
+    """Atomically replace one environment manifest.
+
+    Parameters
+    ----------
+    env_manifest : Path
+        Destination manifest path.
+    fingerprint : str
+        Full environment fingerprint.
+    freeze : tuple[str, ...]
+        Installed distribution freeze.
+    """
+    payload = json.dumps({'fingerprint': fingerprint, 'freeze': list(freeze)})
+    descriptor, temporary_name = tempfile.mkstemp(prefix='.liveness-primer-env-', dir=env_manifest.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as manifest:
+            manifest.write(payload)
+        temporary.replace(env_manifest)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -975,7 +1008,7 @@ class DetectorEnvironments:
             requirements.extend(metadata.build_requires)
         return self._prefetch(requirements)
 
-    def _build(self, env_dir: Path, checkout: Path, wheelhouse: Path) -> tuple[str, ...]:
+    def _build(self, fingerprint: str, checkout: Path, wheelhouse: Path) -> tuple[str, ...]:
         """Build one environment: venv, offline sandboxed install, freeze.
 
         Every build-step subprocess runs under the §11 sandbox with a
@@ -983,8 +1016,8 @@ class DetectorEnvironments:
 
         Parameters
         ----------
-        env_dir : Path
-            The environment directory to (re)build.
+        fingerprint : str
+            Full environment fingerprint from ``environment_fingerprint``.
         checkout : Path
             Detector checkout to install.
         wheelhouse : Path
@@ -995,6 +1028,7 @@ class DetectorEnvironments:
         tuple[str, ...]
             The freeze of the built environment.
         """
+        env_dir = self._cache_dir / 'envs' / Path(fingerprint).name
         if env_dir.exists():
             shutil.rmtree(env_dir)
         with tempfile.TemporaryDirectory(prefix='liveness-primer-build-home-') as scratch_home:
@@ -1053,8 +1087,8 @@ class DetectorEnvironments:
         else:
             house = wheelhouse()
             checkout = self._store.materialize(repo, sha)
-            freeze = self._build(env_dir, checkout, house)
-            env_manifest.write_text(json.dumps({'fingerprint': fingerprint, 'freeze': list(freeze)}), 'utf-8')
+            freeze = self._build(fingerprint, checkout, house)
+            _write_env_manifest(env_manifest, fingerprint, freeze)
             record = EnvironmentRecord(
                 ref=ref,
                 sha=sha,
