@@ -15,6 +15,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from liveness_primer.testing.filesystem import atomic_write_text
+
 
 @dataclass(frozen=True, slots=True)
 class FakeFinding:
@@ -126,7 +128,7 @@ def write_fake_detector_script(
         'raw_lines': list(raw_lines),
         'sleep_seconds': sleep_seconds,
     }
-    script_path.write_text(json.dumps(script, indent=2), encoding='utf-8')
+    atomic_write_text(script_path, json.dumps(script, indent=2))
     return fake_detector_command(script_path)
 
 

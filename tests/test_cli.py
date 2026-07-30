@@ -15,6 +15,7 @@ from liveness_primer.findings import Report
 from liveness_primer.isolation import UNENFORCED, Isolation, IsolationError
 from liveness_primer.license_check import LicenseCheckResult
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
+from liveness_primer.testing.filesystem import atomic_write_text
 from tests.test_runner import ScriptedEnvInstaller, fake_detector_repo
 
 __all__ = ['fake_detector_repo']
@@ -274,7 +275,7 @@ branch = "main"
 
 def write_corpus(tmp_path: Path, content: str = CORPUS_TOML) -> Path:
     corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.write_text(content, encoding='utf-8')
+    atomic_write_text(corpus_file, content)
     return corpus_file
 
 

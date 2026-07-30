@@ -33,6 +33,7 @@ from liveness_primer.envcache import (
 from liveness_primer.findings import DependencyDelta
 from liveness_primer.isolation import UNENFORCED, Isolation
 from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
+from liveness_primer.testing.filesystem import atomic_write_bytes, atomic_write_text
 from liveness_primer.tools.vulture import VultureAdapter
 
 PYPROJECT = """
@@ -51,7 +52,7 @@ extra = ["rich>=13"]
 
 
 def write_pyproject(directory: Path, content: str = PYPROJECT) -> None:
-    (directory / 'pyproject.toml').write_text(content, encoding='utf-8')
+    atomic_write_text(directory / 'pyproject.toml', content)
 
 
 def test_metadata_full_document(tmp_path: Path) -> None:
@@ -392,7 +393,7 @@ class FakeInstaller:
         for wheel in self.wheel_names:
             destination = wheelhouse / wheel
             if self.wheel_symlink_target is None:
-                destination.write_bytes(b'payload-' + wheel.encode('utf-8'))
+                atomic_write_bytes(destination, b'payload-' + wheel.encode('utf-8'))
             else:
                 destination.symlink_to(self.wheel_symlink_target)
 

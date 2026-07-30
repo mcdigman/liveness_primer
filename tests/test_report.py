@@ -32,6 +32,12 @@ from liveness_primer.findings import (
 )
 from liveness_primer.report import render_github, render_json, render_text
 from liveness_primer.report.sanitize import fenced_block, sanitize_cell, sanitize_excerpt, sanitize_inline
+from liveness_primer.testing.filesystem import (
+    ArtifactFilesystemError,
+    atomic_write_text,
+    contained_path,
+    read_small_text,
+)
 
 GOLDEN_DIR = Path(__file__).parent / 'fixtures'
 
@@ -202,10 +208,10 @@ def build_report() -> Report:
 
 
 def check_golden(rendered: str, golden_name: str) -> None:
-    golden_path = GOLDEN_DIR / golden_name
+    golden_path = contained_path(GOLDEN_DIR, golden_name)
     if os.environ.get('LP_UPDATE_GOLDENS'):
-        golden_path.write_text(rendered, encoding='utf-8')
-    assert rendered == golden_path.read_text(encoding='utf-8')
+        atomic_write_text(golden_path, rendered)
+    assert rendered == read_small_text(golden_path)
 
 
 def test_text_report_matches_golden() -> None:
@@ -214,6 +220,11 @@ def test_text_report_matches_golden() -> None:
 
 def test_github_report_matches_golden() -> None:
     check_golden(render_github(build_report()), 'report_golden.md')
+
+
+def test_golden_check_rejects_traversal() -> None:
+    with pytest.raises(ArtifactFilesystemError, match='without traversal'):
+        check_golden('', '../outside.txt')
 
 
 def test_json_report_round_trips_with_full_detail() -> None:

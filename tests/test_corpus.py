@@ -15,6 +15,7 @@ from filelock import FileLock
 from liveness_primer.config import CorpusProject
 from liveness_primer.corpus import CheckoutError, CheckoutStore, cache_root
 from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
+from liveness_primer.testing.filesystem import atomic_write_text, contained_path, read_small_text
 
 PIN_MISSING = 'd' * 40
 
@@ -129,13 +130,13 @@ def test_resolve_project_pin_branch_and_adhoc(store: CheckoutStore, origin: Repo
 
 def test_materialize_checks_out_requested_sha(store: CheckoutStore, origin: RepoFixture) -> None:
     checkout = store.materialize(origin.url, origin.first_sha)
-    assert (checkout / 'module.py').read_text(encoding='utf-8') == 'FIRST = 1\n'
+    assert read_small_text(checkout / 'module.py') == 'FIRST = 1\n'
 
 
 def test_materialize_direct_sha_fetch_when_server_allows(store: CheckoutStore, origin: RepoFixture) -> None:
     git('config', 'uploadpack.allowAnySHA1InWant', 'true', cwd=origin.path)
     checkout = store.materialize(origin.url, origin.first_sha)
-    assert (checkout / 'module.py').read_text(encoding='utf-8') == 'FIRST = 1\n'
+    assert read_small_text(checkout / 'module.py') == 'FIRST = 1\n'
 
 
 @dataclass
@@ -185,16 +186,16 @@ def test_materialize_rebuilds_interrupted_checkouts(store: CheckoutStore, origin
     checkout = store.materialize(origin.url, origin.first_sha)
     marker = checkout.with_name(checkout.name + '.complete')
     marker.unlink()
-    (checkout / 'stray.txt').write_text('leftover', encoding='utf-8')
+    atomic_write_text(checkout / 'stray.txt', 'leftover')
     rebuilt = store.materialize(origin.url, origin.first_sha)
     assert rebuilt == checkout
     assert not (rebuilt / 'stray.txt').exists()
-    assert (rebuilt / 'module.py').read_text(encoding='utf-8') == 'FIRST = 1\n'
+    assert read_small_text(rebuilt / 'module.py') == 'FIRST = 1\n'
 
 
 def test_materialize_rebuilds_when_the_tree_vanished(store: CheckoutStore, origin: RepoFixture) -> None:
     checkout = store.materialize(origin.url, origin.first_sha)
-    shutil.rmtree(checkout)
+    shutil.rmtree(path=contained_path(store.checkout_root, checkout.name))
     rebuilt = store.materialize(origin.url, origin.first_sha)
     assert (rebuilt / 'module.py').exists()
 

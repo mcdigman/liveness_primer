@@ -3,6 +3,7 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -225,11 +226,41 @@ def test_load_corpus_accepts_symlink_to_regular_file(tmp_path: Path) -> None:
     assert len(corpus.projects) == 2
 
 
+def test_load_corpus_rejects_broken_symlink(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.symlink_to(tmp_path / 'absent.toml')
+    with pytest.raises(CorpusConfigError, match='cannot read corpus file'):
+        load_corpus(corpus_file)
+
+
+def test_load_corpus_rejects_symlink_to_directory(tmp_path: Path) -> None:
+    target = tmp_path / 'target'
+    target.mkdir()
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.symlink_to(target)
+    with pytest.raises(CorpusConfigError, match='not a regular file'):
+        load_corpus(corpus_file)
+
+
+def test_load_corpus_rejects_symlink_loop(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.symlink_to(corpus_file)
+    with pytest.raises(CorpusConfigError, match='cannot read corpus file'):
+        load_corpus(corpus_file)
+
+
 def test_load_corpus_rejects_non_file(tmp_path: Path) -> None:
     corpus_file = tmp_path / 'corpus.toml'
     corpus_file.mkdir()
     with pytest.raises(CorpusConfigError, match='not a regular file'):
         load_corpus(corpus_file)
+
+
+def test_load_corpus_rejects_character_device() -> None:
+    # A character device would stream without end, so the size cap alone
+    # cannot bound the read: only the regular-file check stops it.
+    with pytest.raises(CorpusConfigError, match='not a regular file'):
+        load_corpus(Path(os.devnull))
 
 
 def test_load_corpus_rejects_oversized_file(tmp_path: Path) -> None:

@@ -21,6 +21,7 @@ from liveness_primer.isolation import UNENFORCED, Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async, run_sync
 from liveness_primer.runner import PrimerRunner, RunnerError, RunOptions, evaluate_gates, report_has_failures
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
+from liveness_primer.testing.filesystem import atomic_write_text, read_small_text
 from liveness_primer.tools.registry import get_adapter
 
 BASE_FINDING = FakeFinding(path='pkg/mod.py', line=5, symbol='unused_helper', kind='function', confidence=60)
@@ -341,7 +342,7 @@ class ScriptedEnvInstaller:
         """Install the detector by wiring its per-ref script to a wrapper."""
         del wheelhouse, isolation, env
         script = env_dir / 'script.json'
-        script.write_text((target / 'script.json').read_text(encoding='utf-8'), encoding='utf-8')
+        atomic_write_text(script, read_small_text(target / 'script.json'))
         bin_dir = env_dir / 'bin'
         bin_dir.mkdir()
         wrapper = bin_dir / 'vulture'

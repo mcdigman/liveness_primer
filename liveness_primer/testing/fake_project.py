@@ -13,6 +13,7 @@ from pathlib import Path
 
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.launcher import SyncLauncher, run_sync, validate_sync_launcher
+from liveness_primer.testing.filesystem import ArtifactFilesystemError, atomic_write_text, contained_path
 
 DEFAULT_FILES: Mapping[str, str] = {
     'pkg/__init__.py': '',
@@ -105,15 +106,23 @@ def create_fake_project(
     Returns
     -------
     FakeProject
-        The created project. Git failures raise :class:`FakeProjectError`.
+        The created project.
+
+    Raises
+    ------
+    FakeProjectError
+        If an artifact path escapes the project or a Git command fails.
     """
     validate_sync_launcher(launcher)
     directory.mkdir(parents=True, exist_ok=True)
     contents = DEFAULT_FILES if files is None else files
     for relative, text in contents.items():
-        target = directory / relative
+        try:
+            target = contained_path(directory, relative)
+        except ArtifactFilesystemError as error:
+            raise FakeProjectError(str(error)) from error
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding='utf-8')
+        atomic_write_text(target, text)
     if not init_git:
         return FakeProject(path=directory, head_sha=None)
     _git(launcher, directory, 'init', '--quiet')
