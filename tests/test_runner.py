@@ -16,12 +16,14 @@ import pytest
 from liveness_primer.config import CorpusProject
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
-from liveness_primer.findings import DiffClass, DiffTotals, Report
+from liveness_primer.filesystem import atomic_write_text, read_small_text
+from liveness_primer.findings import ChangedField, DiffClass, DiffRollup, DiffTotals, Report
 from liveness_primer.isolation import UNENFORCED, Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async, run_sync
+from liveness_primer.report import render_github, render_text
+from liveness_primer.report.terminal import TextRenderOptions
 from liveness_primer.runner import PrimerRunner, RunnerError, RunOptions, evaluate_gates, report_has_failures
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
-from liveness_primer.testing.filesystem import atomic_write_text, read_small_text
 from liveness_primer.tools.registry import get_adapter
 
 BASE_FINDING = FakeFinding(path='pkg/mod.py', line=5, symbol='unused_helper', kind='function', confidence=60)
@@ -591,3 +593,100 @@ def test_managed_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, f
     git_fetches = [record for record in manifest.fetches if record.kind == 'git']
     assert fake_detector_repo in {record.name for record in git_fetches}
     assert corpus_project.repo in {record.name for record in git_fetches}
+
+
+def test_run_collects_source_evidence_from_pinned_checkout(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    # Reporting §3.3 and acceptance 9: the excerpt is the actual pinned
+    # source line at the detector-reported location, and unreadable or
+    # out-of-range locations produce bounded warnings, not fabricated text.
+    report = escape_run(tmp_path, corpus_project, [BASE_FINDING], [MOVED_FINDING, NEW_FINDING])
+    (project_report,) = report.projects
+    changed = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.CHANGED)
+    assert changed.base_occurrence is not None
+    excerpt = changed.base_occurrence.source_excerpt
+    assert excerpt is not None
+    assert excerpt.start_line == 5
+    assert excerpt.lines[0] == 'def unused_helper() -> int:'
+    assert excerpt.omitted_lines == 0
+    # The moved head side (line 9) is beyond the 6-line file: no excerpt.
+    assert changed.head_occurrence is not None
+    assert changed.head_occurrence.source_excerpt is None
+    assert 'pkg/mod.py:L9: reported line 9 is beyond the end of the file (6 line(s))' in project_report.source_warnings
+    assert 'pkg/extra.py: not a regular non-symlink file' in project_report.source_warnings
+
+
+def test_zero_excerpt_lines_disables_source_collection(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    options = RunOptions(jobs=2, timeout=30.0, excerpt_lines=0)
+    report = escape_run(tmp_path, corpus_project, [], [BASE_FINDING], options)
+    (project_report,) = report.projects
+    (new,) = project_report.diffs
+    assert new.head_occurrence is not None
+    assert new.head_occurrence.source_excerpt is None
+    assert project_report.source_warnings == ()
+
+
+def test_rendered_finding_content_never_leaks_disposable_paths(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    # Reporting acceptance 12: no finding row, source excerpt, or source
+    # link contains a checkout, cache, or temporary-directory prefix, and no
+    # serialized detector record reaches the human output. Trusted manifest
+    # argv (the fake detector command) and the local repo URL may.
+    report = escape_run(tmp_path, corpus_project, [BASE_FINDING], [MOVED_FINDING, NEW_FINDING])
+    text = render_text(report, TextRenderOptions(width=160))
+    markdown = render_github(report)
+    for rendered, trusted_marker in ((text, 'command:'), (markdown, '**base command**')):
+        for line in rendered.splitlines():
+            if 'command' in line or line.strip().startswith(('repo ', '- **corpus**')):
+                continue
+            assert str(tmp_path) not in line
+            assert '/private/var/folders' not in line
+            assert '"file"' not in line
+        assert trusted_marker in rendered
+
+
+def test_fake_skylos_rule_change_pairs_as_one_changed_diff(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    # Reporting acceptance 3, end to end through the skylos adapter: the
+    # same target with different explicit rule IDs is one `changed` diff
+    # with `rule` in changed_fields; a bucket move that also changes kind
+    # stays a `new` plus a `dropped` finding.
+    base_cmd = write_fake_detector_script(
+        tmp_path / 'sky-base.json',
+        [
+            FakeFinding(path='pkg/mod.py', line=5, symbol='unused_helper', kind='function', rule_id='SKY-U001'),
+            FakeFinding(
+                path='pkg/mod.py', line=2, symbol='shifty', kind='variable', bucket='unused_variables', rule_id=None
+            ),
+        ],
+        output_format='skylos',
+    )
+    head_cmd = write_fake_detector_script(
+        tmp_path / 'sky-head.json',
+        [
+            FakeFinding(path='pkg/mod.py', line=5, symbol='unused_helper', kind='function', rule_id='SKY-U009'),
+            FakeFinding(
+                path='pkg/mod.py', line=2, symbol='shifty', kind='parameter', bucket='unused_parameters', rule_id=None
+            ),
+        ],
+        output_format='skylos',
+    )
+    runner = PrimerRunner(
+        adapter=get_adapter('skylos'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+    )
+    report = runner.run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
+    (project_report,) = report.projects
+    assert project_report.errors == ()
+    assert project_report.totals == DiffTotals(new=1, dropped=1, changed=1)
+    changed = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.CHANGED)
+    assert changed.changed_fields == (ChangedField.RULE,)
+    assert changed.base_occurrence is not None
+    assert changed.base_occurrence.rule_id == 'SKY-U001'
+    assert changed.head_occurrence is not None
+    assert changed.head_occurrence.rule_id == 'SKY-U009'
+    moved_kinds = {diff.diff_class: diff.kind for diff in project_report.diffs if diff.symbol == 'shifty'}
+    assert moved_kinds == {DiffClass.DROPPED: 'variable', DiffClass.NEW: 'parameter'}
+    # The bucket mapping stamps the fallback rule IDs on the moved pair.
+    assert DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U006', kind=None, count=1) in project_report.rollups
+    assert DiffRollup(diff_class=DiffClass.DROPPED, rule_id='SKY-U003', kind=None, count=1) in project_report.rollups
+    assert report.rollups == project_report.rollups

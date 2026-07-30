@@ -11,11 +11,12 @@
       "type": "string"
     },
     "ChangedField": {
-      "description": "Observable occurrence field that may differ within a ``changed`` diff (contract \u00a78).\n\nAttributes\n----------\nLINE_SPAN\n    The start/end line span moved.\nMESSAGE\n    The message text changed.\nCONFIDENCE\n    The confidence value changed (only for tools declaring the capability).",
+      "description": "Observable occurrence field that may differ within a ``changed`` diff (contract \u00a78).\n\nAttributes\n----------\nLINE_SPAN\n    The start/end line span moved.\nMESSAGE\n    The message text changed.\nCONFIDENCE\n    The confidence value changed (only for tools declaring the capability).\nRULE\n    The detector rule ID changed (reporting contract \u00a73.1).",
       "enum": [
         "line-span",
         "message",
-        "confidence"
+        "confidence",
+        "rule"
       ],
       "title": "ChangedField",
       "type": "string"
@@ -123,6 +124,50 @@
       ],
       "title": "DiffClass",
       "type": "string"
+    },
+    "DiffRollup": {
+      "additionalProperties": false,
+      "description": "One complete pre-truncation rollup group (reporting contract \u00a73.2).\n\nExactly one of ``rule_id`` and ``kind`` is non-null: a finding with a\nrule ID groups by rule ID regardless of kind; otherwise it groups by\nkind. A ``changed`` pair groups by its reference-side occurrence.\n\nAttributes\n----------\ndiff_class : DiffClass\n    ``new``, ``dropped``, or ``changed``.\nrule_id : str | None\n    Rule ID of the group, when its findings carry one.\nkind : str | None\n    Kind fallback of the group, when its findings carry no rule ID.\ncount : int\n    Number of findings in the group; positive.",
+      "properties": {
+        "count": {
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "diff_class": {
+          "$ref": "#/$defs/DiffClass"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Kind"
+        },
+        "rule_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rule Id"
+        }
+      },
+      "required": [
+        "diff_class",
+        "rule_id",
+        "kind",
+        "count"
+      ],
+      "title": "DiffRollup",
+      "type": "object"
     },
     "DiffTotals": {
       "additionalProperties": false,
@@ -291,8 +336,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
+          "const": "1.1.0",
+          "default": "1.1.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -326,7 +371,7 @@
     },
     "FindingOccurrence": {
       "additionalProperties": false,
-      "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.",
+      "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one (reporting contract \u00a73.1).\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.\nsource_excerpt : SourceExcerpt | None\n    Bounded pinned-source evidence (reporting contract \u00a73.3).",
       "properties": {
         "confidence": {
           "anyOf": [
@@ -363,11 +408,34 @@
           "default": null,
           "title": "Raw Excerpt"
         },
+        "rule_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Id"
+        },
         "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
+          "const": "1.1.0",
+          "default": "1.1.0",
           "title": "Schema Version",
           "type": "string"
+        },
+        "source_excerpt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceExcerpt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "start_line": {
           "minimum": 1,
@@ -385,7 +453,7 @@
     },
     "ProjectReport": {
       "additionalProperties": false,
-      "description": "Per-project slice of the blast radius (contract \u00a78, \u00a79).\n\nAttributes\n----------\nproject : str\n    Corpus project name.\ndiffs : tuple[FindingDiff, ...]\n    Classified diffs, canonically ordered, possibly truncated.\ntotals : DiffTotals\n    Totals before truncation.\ntruncated : bool\n    Whether ``diffs`` was truncated by the results cap.\nbase_findings : int\n    Total base-side findings parsed.\nhead_findings : int\n    Total head-side findings parsed.\nmeasured_cost_seconds : float | None\n    Measured wall-clock analysis cost, when both sides completed.\nerrors : tuple[ToolError, ...]\n    Detector invocation failures for this project.\nintegrity_warnings : tuple[CorpusIntegrityWarning, ...]\n    Expected-clean violations observed on the base side.",
+      "description": "Per-project slice of the blast radius (contract \u00a78, \u00a79).\n\nAttributes\n----------\nproject : str\n    Corpus project name.\ndiffs : tuple[FindingDiff, ...]\n    Classified diffs, canonically ordered, possibly truncated.\ntotals : DiffTotals\n    Totals before truncation.\nrollups : tuple[DiffRollup, ...]\n    Complete pre-truncation rollups by diff class and rule ID with kind\n    fallback, deterministically ordered (reporting contract \u00a73.2).\ntruncated : bool\n    Whether ``diffs`` was truncated by the results cap.\nbase_findings : int\n    Total base-side findings parsed.\nhead_findings : int\n    Total head-side findings parsed.\nmeasured_cost_seconds : float | None\n    Measured wall-clock analysis cost, when both sides completed.\nerrors : tuple[ToolError, ...]\n    Detector invocation failures for this project.\nintegrity_warnings : tuple[CorpusIntegrityWarning, ...]\n    Expected-clean violations observed on the base side.\nsource_warnings : tuple[str, ...]\n    Bounded warnings from pinned-source evidence collection (reporting\n    contract \u00a73.3).",
       "properties": {
         "base_findings": {
           "title": "Base Findings",
@@ -433,6 +501,22 @@
           "title": "Project",
           "type": "string"
         },
+        "rollups": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DiffRollup"
+          },
+          "title": "Rollups",
+          "type": "array"
+        },
+        "source_warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Warnings",
+          "type": "array"
+        },
         "totals": {
           "$ref": "#/$defs/DiffTotals"
         },
@@ -455,7 +539,7 @@
     },
     "Report": {
       "additionalProperties": false,
-      "description": "The blast radius: all finding diffs plus summary totals (contract \u00a72, \u00a79).\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nmanifest : RunManifest\n    Run manifest for reproducibility.\nprojects : tuple[ProjectReport, ...]\n    Per-project reports, in run order.\ntotals : DiffTotals\n    Overall totals before truncation.\ntruncated : bool\n    Whether any project's diffs were truncated.",
+      "description": "The blast radius: all finding diffs plus summary totals (contract \u00a72, \u00a79).\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nmanifest : RunManifest\n    Run manifest for reproducibility.\nprojects : tuple[ProjectReport, ...]\n    Per-project reports, in run order.\ntotals : DiffTotals\n    Overall totals before truncation.\nrollups : tuple[DiffRollup, ...]\n    Overall rollups: the sum of the complete project rollups,\n    deterministically ordered (reporting contract \u00a73.2).\ntruncated : bool\n    Whether any project's diffs were truncated.",
       "properties": {
         "manifest": {
           "$ref": "#/$defs/RunManifest"
@@ -467,9 +551,17 @@
           "title": "Projects",
           "type": "array"
         },
+        "rollups": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DiffRollup"
+          },
+          "title": "Rollups",
+          "type": "array"
+        },
         "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
+          "const": "1.1.0",
+          "default": "1.1.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -607,8 +699,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
+          "const": "1.1.0",
+          "default": "1.1.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -643,7 +735,7 @@
     },
     "RunSettings": {
       "additionalProperties": false,
-      "description": "Effective settings of one run, recorded for reproducibility (contract \u00a73).\n\nAttributes\n----------\njobs : int\n    Maximum concurrent per-project subprocesses.\ntimeout : float\n    Default per-(project, tool) timeout in seconds.\nmax_results : int\n    Cap on rendered finding diffs.\nexcerpt_lines : int\n    Cap on rendered excerpt lines.\nfail_on : tuple[str, ...]\n    Enabled ``--fail-on`` gates.\nselection : tuple[str, ...]\n    Selected corpus project names, in run order.",
+      "description": "Effective settings of one run, recorded for reproducibility (contract \u00a73).\n\nAttributes\n----------\njobs : int\n    Maximum concurrent per-project subprocesses.\ntimeout : float\n    Default per-(project, tool) timeout in seconds.\nmax_results : int\n    Cap on rendered finding diffs.\nexcerpt_lines : int\n    Pinned-source evidence lines stored and rendered per occurrence;\n    ``0`` disables source excerpts (reporting contract \u00a73.3).\nfail_on : tuple[str, ...]\n    Enabled ``--fail-on`` gates.\nselection : tuple[str, ...]\n    Selected corpus project names, in run order.",
       "properties": {
         "excerpt_lines": {
           "title": "Excerpt Lines",
@@ -685,6 +777,37 @@
         "selection"
       ],
       "title": "RunSettings",
+      "type": "object"
+    },
+    "SourceExcerpt": {
+      "additionalProperties": false,
+      "description": "Bounded pinned-source evidence for one occurrence (reporting contract \u00a73.3).\n\nThe excerpt is derived review context read from the byte-identical\npinned corpus checkout; it never participates in finding identity, the\ncanonical occurrence key, or changed-field classification.\n\nAttributes\n----------\nstart_line : int\n    Line number of the first retained line (1-based); always the\n    occurrence's reported ``start_line``.\nlines : tuple[str, ...]\n    Retained consecutive source lines, starting at ``start_line``.\nomitted_lines : int\n    Existing reported-span lines dropped by the evidence budget.",
+      "properties": {
+        "lines": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Lines",
+          "type": "array"
+        },
+        "omitted_lines": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Omitted Lines",
+          "type": "integer"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_line",
+        "lines"
+      ],
+      "title": "SourceExcerpt",
       "type": "object"
     },
     "ToolError": {
@@ -730,8 +853,8 @@
       "$ref": "#/$defs/Report"
     },
     "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
+      "const": "1.1.0",
+      "default": "1.1.0",
       "title": "Schema Version",
       "type": "string"
     }

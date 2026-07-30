@@ -1,6 +1,39 @@
 {
+  "$defs": {
+    "SourceExcerpt": {
+      "additionalProperties": false,
+      "description": "Bounded pinned-source evidence for one occurrence (reporting contract \u00a73.3).\n\nThe excerpt is derived review context read from the byte-identical\npinned corpus checkout; it never participates in finding identity, the\ncanonical occurrence key, or changed-field classification.\n\nAttributes\n----------\nstart_line : int\n    Line number of the first retained line (1-based); always the\n    occurrence's reported ``start_line``.\nlines : tuple[str, ...]\n    Retained consecutive source lines, starting at ``start_line``.\nomitted_lines : int\n    Existing reported-span lines dropped by the evidence budget.",
+      "properties": {
+        "lines": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Lines",
+          "type": "array"
+        },
+        "omitted_lines": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Omitted Lines",
+          "type": "integer"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_line",
+        "lines"
+      ],
+      "title": "SourceExcerpt",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
-  "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.",
+  "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one (reporting contract \u00a73.1).\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.\nsource_excerpt : SourceExcerpt | None\n    Bounded pinned-source evidence (reporting contract \u00a73.3).",
   "properties": {
     "confidence": {
       "anyOf": [
@@ -37,11 +70,34 @@
       "default": null,
       "title": "Raw Excerpt"
     },
+    "rule_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
     "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
+      "const": "1.1.0",
+      "default": "1.1.0",
       "title": "Schema Version",
       "type": "string"
+    },
+    "source_excerpt": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SourceExcerpt"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "start_line": {
       "minimum": 1,

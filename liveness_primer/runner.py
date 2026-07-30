@@ -21,7 +21,7 @@ from pathlib import Path
 
 from liveness_primer.config import CorpusProject, ToolSettings
 from liveness_primer.corpus import CheckoutStore
-from liveness_primer.diffing import diff_findings
+from liveness_primer.diffing import diff_findings, merge_rollups
 from liveness_primer.envcache import DetectorEnvironments, PreparedPair
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import (
@@ -39,6 +39,7 @@ from liveness_primer.findings import (
 )
 from liveness_primer.isolation import Isolation, scrubbed_environment
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
+from liveness_primer.report.source import collect_source_evidence
 from liveness_primer.tools.base import AdapterError, DetectorAdapter, RawToolOutput, build_invocation
 
 GATE_CHOICES = ('new', 'dropped', 'changed', 'any', 'corpus-integrity')
@@ -63,7 +64,8 @@ class RunOptions:
     max_results : int
         Per-project cap on rendered finding diffs (contract §8).
     excerpt_lines : int
-        Cap on rendered excerpt lines (applied by the report layer).
+        Pinned-source evidence lines stored and rendered per occurrence;
+        ``0`` disables source excerpts (reporting contract §3.3).
     fail_on : tuple[str, ...]
         Enabled ``--fail-on`` gates.
     fresh : bool
@@ -211,6 +213,7 @@ def _assemble_report(manifest: RunManifest, project_reports: Sequence[ProjectRep
         manifest=manifest,
         projects=tuple(project_reports),
         totals=totals,
+        rollups=merge_rollups(entry.rollups for entry in project_reports),
         truncated=any(entry.truncated for entry in project_reports),
     )
 
@@ -474,6 +477,7 @@ class PrimerRunner:
         """
         errors = tuple(outcome.error for outcome in (base, head) if outcome.error is not None)
         integrity = _integrity_warnings(item, base, tool=self._adapter.name)
+        source_warnings: tuple[str, ...] = ()
         if base.findings is not None and head.findings is not None:
             outcome = diff_findings(
                 base.findings,
@@ -481,24 +485,34 @@ class PrimerRunner:
                 confidence_capable=self._adapter.capabilities.has_confidence,
             )
             truncated = len(outcome.diffs) > self._options.max_results
-            diffs = outcome.diffs[: self._options.max_results]
+            # Source evidence is read from the pinned corpus checkout for
+            # the retained diffs only, after truncation (reporting §3.3).
+            diffs, source_warnings = collect_source_evidence(
+                outcome.diffs[: self._options.max_results],
+                checkout=item.checkout,
+                excerpt_lines=self._options.excerpt_lines,
+            )
             totals = outcome.totals
+            rollups = outcome.rollups
             measured: float | None = base.duration_seconds + head.duration_seconds
         else:
             truncated = False
             diffs = ()
             totals = DiffTotals()
+            rollups = ()
             measured = None
         return ProjectReport(
             project=item.project.name,
             diffs=diffs,
             totals=totals,
+            rollups=rollups,
             truncated=truncated,
             base_findings=len(base.findings) if base.findings is not None else 0,
             head_findings=len(head.findings) if head.findings is not None else 0,
             measured_cost_seconds=measured,
             errors=errors,
             integrity_warnings=integrity,
+            source_warnings=source_warnings,
         )
 
     async def _analyze_project(

@@ -151,7 +151,7 @@
     },
     "RunSettings": {
       "additionalProperties": false,
-      "description": "Effective settings of one run, recorded for reproducibility (contract \u00a73).\n\nAttributes\n----------\njobs : int\n    Maximum concurrent per-project subprocesses.\ntimeout : float\n    Default per-(project, tool) timeout in seconds.\nmax_results : int\n    Cap on rendered finding diffs.\nexcerpt_lines : int\n    Cap on rendered excerpt lines.\nfail_on : tuple[str, ...]\n    Enabled ``--fail-on`` gates.\nselection : tuple[str, ...]\n    Selected corpus project names, in run order.",
+      "description": "Effective settings of one run, recorded for reproducibility (contract \u00a73).\n\nAttributes\n----------\njobs : int\n    Maximum concurrent per-project subprocesses.\ntimeout : float\n    Default per-(project, tool) timeout in seconds.\nmax_results : int\n    Cap on rendered finding diffs.\nexcerpt_lines : int\n    Pinned-source evidence lines stored and rendered per occurrence;\n    ``0`` disables source excerpts (reporting contract \u00a73.3).\nfail_on : tuple[str, ...]\n    Enabled ``--fail-on`` gates.\nselection : tuple[str, ...]\n    Selected corpus project names, in run order.",
       "properties": {
         "excerpt_lines": {
           "title": "Excerpt Lines",
@@ -312,8 +312,8 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
+      "const": "1.1.0",
+      "default": "1.1.0",
       "title": "Schema Version",
       "type": "string"
     },

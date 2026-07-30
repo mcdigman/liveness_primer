@@ -11,17 +11,17 @@ from typing import cast
 
 import pytest
 
-from liveness_primer.launcher import LauncherError, SyncLauncher, run_async, run_sync
-from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
-from liveness_primer.testing.fake_detector import main
-from liveness_primer.testing.fake_project import DEFAULT_FILES, FakeProjectError
-from liveness_primer.testing.filesystem import (
-    ArtifactFilesystemError,
+from liveness_primer.filesystem import (
+    FilesystemPolicyError,
     atomic_write_bytes,
     atomic_write_text,
     contained_path,
     read_small_text,
 )
+from liveness_primer.launcher import LauncherError, SyncLauncher, run_async, run_sync
+from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
+from liveness_primer.testing.fake_detector import main
+from liveness_primer.testing.fake_project import DEFAULT_FILES, FakeProjectError
 
 
 def test_fake_finding_report_line_matches_vulture_format() -> None:
@@ -143,12 +143,12 @@ def test_contained_path_accepts_nested_relative_path(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize('relative', ['', '../artifact.txt'])
 def test_contained_path_rejects_invalid_relative_path(tmp_path: Path, relative: str) -> None:
-    with pytest.raises(ArtifactFilesystemError, match='non-empty relative path without traversal'):
+    with pytest.raises(FilesystemPolicyError, match='non-empty relative path without traversal'):
         contained_path(tmp_path, relative)
 
 
 def test_contained_path_rejects_absolute_path(tmp_path: Path) -> None:
-    with pytest.raises(ArtifactFilesystemError, match='non-empty relative path without traversal'):
+    with pytest.raises(FilesystemPolicyError, match='non-empty relative path without traversal'):
         contained_path(tmp_path, str(tmp_path / 'artifact.txt'))
 
 
@@ -159,7 +159,7 @@ def test_read_small_text_reads_utf8_within_limit(tmp_path: Path) -> None:
 
 
 def test_read_small_text_rejects_negative_limit(tmp_path: Path) -> None:
-    with pytest.raises(ArtifactFilesystemError, match='non-negative'):
+    with pytest.raises(FilesystemPolicyError, match='non-negative'):
         read_small_text(tmp_path / 'artifact.txt', max_bytes=-1)
 
 
@@ -172,14 +172,14 @@ def test_read_small_text_rejects_non_regular_path(tmp_path: Path, kind: str) -> 
         target = tmp_path / 'target.txt'
         target.write_text('outside', encoding='utf-8')
         artifact.symlink_to(target)
-    with pytest.raises(ArtifactFilesystemError, match='not a regular non-symlink file'):
+    with pytest.raises(FilesystemPolicyError, match='not a regular non-symlink file'):
         read_small_text(artifact)
 
 
 def test_read_small_text_rejects_oversized_file(tmp_path: Path) -> None:
     artifact = tmp_path / 'artifact.txt'
     artifact.write_bytes(b'1234')
-    with pytest.raises(ArtifactFilesystemError, match='exceeds 3 bytes'):
+    with pytest.raises(FilesystemPolicyError, match='exceeds 3 bytes'):
         read_small_text(artifact, max_bytes=3)
 
 
@@ -210,3 +210,41 @@ def test_atomic_write_replaces_symlink_without_touching_target(tmp_path: Path) -
     assert not artifact.is_symlink()
     assert read_small_text(artifact) == 'inside'
     assert read_small_text(outside) == 'outside'
+
+
+def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    command = write_fake_detector_script(
+        tmp_path / 'script.json',
+        [
+            FakeFinding(path='a.py', line=1, symbol='x', kind='function', rule_id='SKY-U777'),
+            FakeFinding(path='a.py', line=2, symbol='y', kind='variable', bucket='unused_variables'),
+        ],
+        output_format='skylos',
+    )
+    exit_code = main([*command[3:], '.'])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    document = json.loads(captured.out)
+    (function_entry,) = document['unused_functions']
+    assert function_entry['rule_id'] == 'SKY-U777'
+    assert function_entry['line'] == 1
+    (variable_entry,) = document['unused_variables']
+    assert 'rule_id' not in variable_entry
+    assert variable_entry['name'] == 'y'
+
+
+def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    command = write_fake_detector_script(tmp_path / 'script.json', [], output_format='skylos')
+    assert main(command[3:]) == 0
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_main_tolerates_malformed_script_documents(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Hand-written scripts may be sloppy: non-list findings and non-dict
+    # entries are skipped rather than crashing the fake detector.
+    script = tmp_path / 'weird.json'
+    script.write_text('{"findings": "nope"}', encoding='utf-8')
+    assert main([str(script)]) == 0
+    script.write_text('{"findings": [42]}', encoding='utf-8')
+    assert main([str(script)]) == 0
+    assert 'nope' not in capsys.readouterr().out

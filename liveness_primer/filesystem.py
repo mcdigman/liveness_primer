@@ -1,6 +1,10 @@
-"""Bounded filesystem helpers for shipped test utilities.
+"""Bounded, containment-enforcing filesystem helpers.
 
 Copyright (C) 2026 Matthew C. Digman
+
+Shared by pinned-source evidence collection (reporting contract §3.3) and
+the shipped test utilities: relative paths stay beneath their trusted root,
+reads are size-bounded, and only regular non-symlink files are accepted.
 """
 
 import os
@@ -11,8 +15,8 @@ from pathlib import Path
 DEFAULT_MAX_ARTIFACT_BYTES = 1_048_576
 
 
-class ArtifactFilesystemError(RuntimeError):
-    """Raised when a test artifact violates its filesystem policy."""
+class FilesystemPolicyError(RuntimeError):
+    """Raised when a path or file violates its bounded filesystem policy."""
 
 
 def contained_path(root: Path, relative: str) -> Path:
@@ -23,7 +27,7 @@ def contained_path(root: Path, relative: str) -> Path:
     root : Path
         Trusted containing directory.
     relative : str
-        Relative artifact path.
+        Relative path beneath the root.
 
     Returns
     -------
@@ -32,61 +36,65 @@ def contained_path(root: Path, relative: str) -> Path:
 
     Raises
     ------
-    ArtifactFilesystemError
+    FilesystemPolicyError
         If the path is empty, absolute, traversing, or escapes through a
         symlink.
     """
     relative_path = Path(relative)
     if not relative_path.parts or relative_path.is_absolute() or '..' in relative_path.parts:
-        msg = f'artifact path must be a non-empty relative path without traversal: {relative!r}'
-        raise ArtifactFilesystemError(msg)
+        msg = f'path must be a non-empty relative path without traversal: {relative!r}'
+        raise FilesystemPolicyError(msg)
     resolved_root = root.resolve()
     candidate = (resolved_root / relative_path).resolve(strict=False)
     try:
         candidate.relative_to(resolved_root)
     except ValueError as error:
-        msg = f'artifact path escapes its root: {relative!r}'
-        raise ArtifactFilesystemError(msg) from error
+        msg = f'path escapes its root: {relative!r}'
+        raise FilesystemPolicyError(msg) from error
     return candidate
 
 
 def read_small_text(path: Path, *, max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES) -> str:
-    """Read one bounded regular UTF-8 test artifact.
+    """Read one bounded regular UTF-8 file.
 
     Parameters
     ----------
     path : Path
-        Artifact path.
+        File path.
     max_bytes : int
         Maximum encoded size.
 
     Returns
     -------
     str
-        Decoded artifact contents.
+        Decoded file contents.
 
     Raises
     ------
-    ArtifactFilesystemError
+    FilesystemPolicyError
         If the limit is negative, the path is not a regular non-symlink file,
-        or the file exceeds the limit.
+        the file exceeds the limit, or the contents are not valid UTF-8.
     """
     if max_bytes < 0:
         msg = 'max_bytes must be non-negative'
-        raise ArtifactFilesystemError(msg)
+        raise FilesystemPolicyError(msg)
     if path.is_symlink() or not path.is_file():
-        msg = f'artifact is not a regular non-symlink file: {path}'
-        raise ArtifactFilesystemError(msg)
+        msg = f'not a regular non-symlink file: {path}'
+        raise FilesystemPolicyError(msg)
     with path.open('rb') as stream:
         payload = stream.read(max_bytes + 1)
     if len(payload) > max_bytes:
-        msg = f'artifact exceeds {max_bytes} bytes: {path}'
-        raise ArtifactFilesystemError(msg)
-    return payload.decode('utf-8')
+        msg = f'file exceeds {max_bytes} bytes: {path}'
+        raise FilesystemPolicyError(msg)
+    try:
+        return payload.decode('utf-8')
+    except UnicodeDecodeError as error:
+        msg = f'file is not valid UTF-8: {path}'
+        raise FilesystemPolicyError(msg) from error
 
 
 def atomic_write_bytes(path: Path, payload: bytes) -> None:
-    """Atomically replace one binary artifact beneath a trusted parent.
+    """Atomically replace one binary file beneath a trusted parent.
 
     Parameters
     ----------
@@ -95,7 +103,7 @@ def atomic_write_bytes(path: Path, payload: bytes) -> None:
     payload : bytes
         Bytes to write.
     """
-    descriptor, temporary_name = tempfile.mkstemp(prefix='.liveness-primer-test-', dir=path.parent)
+    descriptor, temporary_name = tempfile.mkstemp(prefix='.liveness-primer-write-', dir=path.parent)
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, 'wb') as stream:
@@ -112,7 +120,7 @@ def atomic_write_bytes(path: Path, payload: bytes) -> None:
 
 
 def atomic_write_text(path: Path, text: str) -> None:
-    """Atomically replace one UTF-8 artifact beneath a trusted parent.
+    """Atomically replace one UTF-8 file beneath a trusted parent.
 
     Parameters
     ----------

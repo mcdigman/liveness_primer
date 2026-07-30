@@ -16,6 +16,7 @@ from liveness_primer.findings import (
     ChangedField,
     CorpusPinRecord,
     DiffClass,
+    DiffRollup,
     DiffTotals,
     EvidenceKind,
     FetchRecord,
@@ -25,6 +26,7 @@ from liveness_primer.findings import (
     Report,
     RunManifest,
     RunSettings,
+    SourceExcerpt,
     Verdict,
     canonical_occurrence_key,
     finding_identity,
@@ -122,12 +124,13 @@ def test_occurrence_rejects_inverted_span() -> None:
 
 
 def test_occurrence_projection_carries_all_fields() -> None:
-    occurrence = make_finding().occurrence()
+    occurrence = make_finding(rule_id='SKY-U001').occurrence()
     assert occurrence == FindingOccurrence(
         start_line=10,
         end_line=10,
         message="unused function 'unused_fn'",
         confidence=60,
+        rule_id='SKY-U001',
         raw_excerpt="pkg/mod.py:10: unused function 'unused_fn' (60% confidence)",
     )
 
@@ -139,8 +142,47 @@ def test_canonical_key_orders_missing_confidence_first() -> None:
 
 
 def test_canonical_key_field_order() -> None:
-    occurrence = FindingOccurrence(start_line=3, end_line=4, message='m', confidence=80)
-    assert canonical_occurrence_key(occurrence) == (3, 4, 'm', 1, 80)
+    occurrence = FindingOccurrence(start_line=3, end_line=4, message='m', confidence=80, rule_id='SKY-U001')
+    assert canonical_occurrence_key(occurrence) == (3, 4, 'm', 1, 80, 1, 'SKY-U001')
+
+
+def test_canonical_key_orders_missing_rule_id_first() -> None:
+    # Reporting contract §3.1: rule_id is appended after confidence with a
+    # presence component, so absent sorts before present.
+    with_rule = FindingOccurrence(start_line=1, end_line=1, message='m', rule_id='A')
+    without_rule = FindingOccurrence(start_line=1, end_line=1, message='m', rule_id=None)
+    assert canonical_occurrence_key(without_rule) < canonical_occurrence_key(with_rule)
+    assert canonical_occurrence_key(without_rule) == (1, 1, 'm', 0, 0, 0, '')
+
+
+def test_rule_id_stays_outside_finding_identity() -> None:
+    # Reporting contract §3.1: a rule-code change on the same target must
+    # pair as one `changed` diff, so identity excludes the rule ID.
+    assert make_finding(rule_id='SKY-U001').identity == make_finding(rule_id='SKY-U999').identity
+
+
+def test_source_excerpt_shape_is_validated() -> None:
+    excerpt = SourceExcerpt(start_line=4, lines=('def f():', '    pass'), omitted_lines=1)
+    assert excerpt.start_line == 4
+    with pytest.raises(ValidationError, match='at least 1'):
+        SourceExcerpt(start_line=4, lines=(), omitted_lines=0)
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        SourceExcerpt.model_validate({'start_line': 0, 'lines': ('x',), 'omitted_lines': 0})
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        SourceExcerpt.model_validate({'start_line': 1, 'lines': ('x',), 'omitted_lines': -1})
+
+
+def test_diff_rollup_requires_exactly_one_group_key() -> None:
+    rollup = DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=2)
+    assert rollup.count == 2
+    fallback = DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind='function', count=1)
+    assert fallback.kind == 'function'
+    with pytest.raises(ValidationError, match='exactly one of rule_id and kind'):
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind='function', count=1)
+    with pytest.raises(ValidationError, match='exactly one of rule_id and kind'):
+        DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind=None, count=1)
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        DiffRollup.model_validate({'diff_class': DiffClass.NEW, 'rule_id': 'SKY-U001', 'kind': None, 'count': 0})
 
 
 def occurrence_at(line: int) -> FindingOccurrence:

@@ -20,6 +20,7 @@ from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import (
     ChangedField,
     DiffClass,
+    DiffRollup,
     DiffTotals,
     Finding,
     FindingDiff,
@@ -59,7 +60,7 @@ class _IdentityInfo:
 
 @dataclass(frozen=True, slots=True)
 class ProjectDiff:
-    """Classified diffs and pre-truncation totals for one (project, tool) pair.
+    """Classified diffs and pre-truncation aggregates for one (project, tool) pair.
 
     Attributes
     ----------
@@ -67,10 +68,13 @@ class ProjectDiff:
         All classified diffs in deterministic report order, untruncated.
     totals : DiffTotals
         Totals over ``diffs``.
+    rollups : tuple[DiffRollup, ...]
+        Complete rollups over ``diffs`` (reporting contract §3.2).
     """
 
     diffs: tuple[FindingDiff, ...]
     totals: DiffTotals
+    rollups: tuple[DiffRollup, ...]
 
 
 _CLASS_RANK = {DiffClass.NEW: 0, DiffClass.DROPPED: 1, DiffClass.CHANGED: 2}
@@ -296,6 +300,10 @@ def _changed_fields(
             msg = 'confidence differs for a tool without the has-confidence capability'
             raise DiffEngineError(msg)
         changed.append(ChangedField.CONFIDENCE)
+    if base.rule_id != head.rule_id:
+        # A rule-code change on the same target pairs as one `changed` diff
+        # and must never disappear from the blast radius (reporting §3.1).
+        changed.append(ChangedField.RULE)
     if not changed:
         msg = 'paired occurrences with no changed observable field survived stage 1'
         raise DiffEngineError(msg)
@@ -308,7 +316,7 @@ class _DiffSortKey(NamedTuple):
     kind: str
     identity: str
     class_rank: int
-    reference_occurrence: tuple[int, int, str, int, int]
+    reference_occurrence: tuple[int, int, str, int, int, int, str]
 
 
 def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
@@ -333,6 +341,80 @@ def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
         class_rank=_CLASS_RANK[diff.diff_class],
         reference_occurrence=canonical_occurrence_key(diff.reference_occurrence),
     )
+
+
+def _rollup_sort_key(rollup: DiffRollup) -> tuple[int, int, str]:
+    """Compute the deterministic rollup ordering key (reporting contract §3.2).
+
+    Parameters
+    ----------
+    rollup : DiffRollup
+        The rollup group to key.
+
+    Returns
+    -------
+    tuple[int, int, str]
+        Sort key: diff class in ``new``/``dropped``/``changed`` order, then
+        descending count, then the rule ID or kind lexicographically.
+    """
+    label = rollup.rule_id if rollup.rule_id is not None else rollup.kind
+    return (_CLASS_RANK[rollup.diff_class], -rollup.count, label if label is not None else '')
+
+
+def compute_rollups(diffs: Iterable[FindingDiff]) -> tuple[DiffRollup, ...]:
+    """Roll the complete diff sequence up by diff class and rule ID (reporting §3.2).
+
+    A finding with a rule ID groups by rule ID regardless of kind; otherwise
+    it groups by kind. A ``changed`` pair groups by its reference-side
+    occurrence. Rollups must be computed before ``--max-results`` truncation.
+
+    Parameters
+    ----------
+    diffs : Iterable[FindingDiff]
+        The complete classified diff sequence.
+
+    Returns
+    -------
+    tuple[DiffRollup, ...]
+        Deterministically ordered rollup groups.
+    """
+    counts: dict[tuple[DiffClass, str | None, str | None], int] = {}
+    for diff in diffs:
+        rule_id = diff.reference_occurrence.rule_id
+        key = (diff.diff_class, rule_id, diff.kind if rule_id is None else None)
+        counts[key] = counts.get(key, 0) + 1
+    rollups = [
+        DiffRollup(diff_class=diff_class, rule_id=rule_id, kind=kind, count=count)
+        for (diff_class, rule_id, kind), count in counts.items()
+    ]
+    rollups.sort(key=_rollup_sort_key)
+    return tuple(rollups)
+
+
+def merge_rollups(rollup_groups: Iterable[tuple[DiffRollup, ...]]) -> tuple[DiffRollup, ...]:
+    """Sum per-project rollups into overall rollups (reporting contract §3.2).
+
+    Parameters
+    ----------
+    rollup_groups : Iterable[tuple[DiffRollup, ...]]
+        Complete rollups of each project.
+
+    Returns
+    -------
+    tuple[DiffRollup, ...]
+        Deterministically ordered overall rollup groups.
+    """
+    counts: dict[tuple[DiffClass, str | None, str | None], int] = {}
+    for group in rollup_groups:
+        for rollup in group:
+            key = (rollup.diff_class, rollup.rule_id, rollup.kind)
+            counts[key] = counts.get(key, 0) + rollup.count
+    merged = [
+        DiffRollup(diff_class=diff_class, rule_id=rule_id, kind=kind, count=count)
+        for (diff_class, rule_id, kind), count in counts.items()
+    ]
+    merged.sort(key=_rollup_sort_key)
+    return tuple(merged)
 
 
 def _totals(diffs: Sequence[FindingDiff]) -> DiffTotals:
@@ -452,4 +534,4 @@ def diff_findings(
             for occurrence in head_rest
         )
     diffs.sort(key=_diff_sort_key)
-    return ProjectDiff(diffs=tuple(diffs), totals=_totals(diffs))
+    return ProjectDiff(diffs=tuple(diffs), totals=_totals(diffs), rollups=compute_rollups(diffs))

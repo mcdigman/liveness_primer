@@ -14,8 +14,8 @@ from filelock import FileLock
 
 from liveness_primer.config import CorpusProject
 from liveness_primer.corpus import CheckoutError, CheckoutStore, cache_root
+from liveness_primer.filesystem import atomic_write_text, contained_path, read_small_text
 from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
-from liveness_primer.testing.filesystem import atomic_write_text, contained_path, read_small_text
 
 PIN_MISSING = 'd' * 40
 
