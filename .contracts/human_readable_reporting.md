@@ -2,10 +2,10 @@
 
 Status: draft.
 
-This document refines §§7–9, §12, and §15 of
+This document refines §§7–9, §12, §15, and §17 of
 [`initial_contract.md`](initial_contract.md). It is authoritative for human-readable report
-data, layout, source evidence, links, and terminal styling. The initial contract remains
-authoritative elsewhere.
+data, layout, source evidence, links, terminal styling, and the dependency amendment required
+by them. The initial contract remains authoritative elsewhere.
 
 ## 1. Purpose
 
@@ -27,7 +27,8 @@ The human report therefore must provide, for every displayed finding:
 - a bounded excerpt of the pinned source at the reported location.
 
 The report must remain compact enough to scan across a corpus. It must not reproduce raw
-structured detector records or temporary local paths.
+structured detector records or expose temporary local paths through detector-derived finding
+content. Trusted manifest commands remain reproducibility data (§3.5).
 
 ## 2. Scope and non-goals
 
@@ -78,7 +79,43 @@ pair as one `changed` diff. It participates in the canonical occurrence key and 
 `changed_fields`; the latter gains the value `rule`. A rule-code change must never disappear
 from the blast radius.
 
-### 3.2 Source evidence
+### 3.2 Aggregate rollups
+
+The report must answer whether a large blast radius consists primarily of one rule or kind
+without requiring a reviewer to read every finding row. `ProjectReport` and `Report` therefore
+carry complete pre-truncation rollups by diff class and rule ID. Findings without rule IDs
+fall back to kind so a detector such as Vulture does not collapse into an uninformative `-`
+group.
+
+Both models expose `rollups: tuple[DiffRollup, ...]`. Each `DiffRollup` has this narrow shape:
+
+```text
+diff_class: DiffClass
+rule_id: str | None
+kind: str | None
+count: int
+```
+
+Exactly one of `rule_id` and `kind` is non-null. A finding with a rule ID groups by rule ID
+regardless of kind; otherwise it groups by kind. `count` is positive.
+
+Rollups are computed from the complete diff sequence before `--max-results` truncation, in
+the same assembly step as `DiffTotals`. Overall rollups are the sum of the complete project
+rollups. A hook that filters or replaces diffs must recompute totals and rollups before the
+final report is truncated or serialized; stale aggregate data is an invalid report.
+
+Human renderers show nonzero diff classes as one line each. They display at most the five
+largest groups, ordered by descending count and then lexicographically by rule ID or kind. An
+omitted tail is explicit and gives both its finding count and group count:
+
+```text
+new 168: SKY-U006 155, SKY-U002 13
+changed 24: SKY-U001 18, SKY-U003 4, 2 findings across 2 other rules
+```
+
+Kind fallbacks render as `kind:<kind>` rather than being presented as rule IDs.
+
+### 3.3 Source evidence
 
 The actual source text is not the detector's `raw_excerpt`. Source evidence must be derived
 from the byte-identical pinned corpus checkout after the adapter has normalized and validated
@@ -89,7 +126,7 @@ Each occurrence may carry a nullable, frozen `SourceExcerpt` with the narrow sha
 ```text
 start_line: int
 lines: tuple[str, ...]
-truncated: bool
+omitted_lines: int
 ```
 
 The line numbers represented by `lines` are consecutive and begin at `start_line`. The first
@@ -97,10 +134,16 @@ line must be the reported `start_line`. `--excerpt-lines N` controls the maximum
 source lines stored and rendered per occurrence:
 
 - `N = 0` disables source excerpts;
-- a point finding begins at the reported line and includes at most `N` consecutive lines;
-- a multi-line span begins at its first line and includes at most `N` lines;
-- `truncated` is true when the reported span or requested context contains more source lines
-  than were retained; and
+- a point finding begins at the reported line and may use following existing lines to fill the
+  `N`-line evidence budget;
+- a multi-line span begins at its first line, prioritizes lines in the reported span, and may
+  use following existing lines to fill any remaining evidence budget;
+- `omitted_lines` counts existing lines in the reported span that were not retained because
+  the span exceeded `N`;
+- context beyond the `N`-line evidence budget was never requested and is not counted as
+  omitted;
+- a point finding near end-of-file has `omitted_lines = 0` when fewer than `N` source lines
+  exist; and
 - missing, unreadable, non-regular, or out-of-range source produces no excerpt and a bounded
   report warning rather than fabricated text.
 
@@ -113,7 +156,7 @@ Source extraction must use the repository's bounded, containment-enforcing files
 helpers. Corpus-controlled symlinks, special files, oversized files, undecodable bytes, and
 control characters must not bypass the report trust boundary.
 
-### 3.3 Raw detector records
+### 3.4 Raw detector records
 
 `raw_excerpt` remains optional provenance in JSON. Human renderers must not display a raw
 JSON object, raw serialized record, or other structured detector payload by default.
@@ -122,12 +165,21 @@ In particular, a structured record must not be rendered as one long line and the
 as an undifferentiated string. Any future diagnostic mode that exposes raw records must be an
 explicit opt-in distinct from `--excerpt-lines`.
 
-### 3.4 Schema version
+### 3.5 Trusted manifest commands
 
-Adding nullable `rule_id`, nullable `SourceExcerpt`, and the additive `rule` changed-field
-value requires an additive schema-version update and regenerated checked-in schemas. The
-source excerpt must be present in JSON when collected so an archived report remains
-self-contained after disposable workspaces are gone.
+User-supplied escape-hatch `base_cmd` and `head_cmd` argv are trusted configuration and
+reproducibility evidence under the initial contract's trust model. Human manifest headers
+render every argv value faithfully, including absolute or temporary paths. Values are
+shell-quoted and structurally escaped for the output format, but are not path-shortened or
+rewritten. This exception does not apply to detector-derived locations, excerpts, messages,
+or source links.
+
+### 3.6 Schema version
+
+Adding nullable `rule_id`, nullable `SourceExcerpt`, complete rollups, and the additive `rule`
+changed-field value requires an additive schema-version update and regenerated checked-in
+schemas. The source excerpt must be present in JSON when collected so an archived report
+remains self-contained after disposable workspaces are gone.
 
 ## 4. Common finding presentation
 
@@ -140,6 +192,9 @@ the complete total.
 
 The project link must name the pinned corpus tree, not the detector repository, the corpus
 default branch, a cache directory, or a disposable checkout.
+
+The overall header and each project header include the aggregate rollup lines from §3.2. The
+overall header uses overall rollups; each project header uses only that project's rollups.
 
 ### 4.2 Borderless table
 
@@ -193,7 +248,13 @@ sufficient evidence.
 
 ### 4.5 Source continuation
 
-When a source excerpt is present, it follows the summary row as a continuation of that row.
+For `new`, the head excerpt follows the summary row. For `dropped`, the base excerpt follows
+it. For `changed` with an unchanged line span, the reference-side base excerpt appears once.
+For `changed` with `line` in `changed_fields`, both excerpts appear, labelled `base` and
+`head`, because the two reported locations are the evidence needed to review the move. Each
+side uses its own reported span and pinned permalink. If one side cannot be collected, the
+available side remains visible with the bounded warning for the missing side.
+
 Each source line includes its real line number:
 
 ```text
@@ -203,7 +264,8 @@ Each source line includes its real line number:
 ```
 
 The source is evidence, not another table record. Long excerpts end with an explicit omitted
-line count rather than an unexplained ellipsis.
+line count derived from `SourceExcerpt.omitted_lines` rather than an unexplained ellipsis. No
+omission marker appears when `omitted_lines` is zero.
 
 ### 4.6 Column measurement and narrow outputs
 
@@ -258,9 +320,13 @@ never be the only representation of the target.
 
 ### 6.1 Rendering library
 
-The terminal renderer should use Rich as a runtime dependency rather than implementing
+The terminal renderer must use Rich as a runtime dependency rather than implementing
 Unicode width, ANSI styling, wrapping, and OSC-8 links independently. The table is borderless
 and header-bearing, with no padded outer edge.
+
+This explicitly amends initial contract §17: runtime dependencies additionally include
+`rich>=13`. The supported floor is installed and tested by the repository's
+lowest-direct-resolution CI jobs.
 
 All detector-derived and corpus-derived strings must be sanitized first and passed to Rich
 as literal `Text`. They must never be parsed as Rich markup. Generated styles and links are
@@ -305,9 +371,19 @@ For color, `auto` enables ANSI styling only when standard output is an interacti
 styling in redirected output; `--color never` forbids it. JSON and GitHub output never
 contain ANSI styling regardless of this setting.
 
-For hyperlinks, `auto` enables OSC-8 links only on an interactive terminal whose declared
-capabilities support them. `always` is an explicit request; `never` forbids them. Redirected
-text must contain no OSC-8 escapes unless `always` was requested.
+For hyperlinks, `never` forbids OSC-8 links and `always` explicitly enables them. `auto`
+enables them only when all of these conditions hold:
+
+- standard output is an interactive terminal;
+- `TERM` is not `dumb`;
+- neither `TMUX` nor `STY` is set, because multiplexer passthrough cannot be inferred; and
+- at least one conservative capability signal is present: `TERM_PROGRAM` is exactly one of
+  `ghostty`, `iTerm.app`, `kitty`, `WezTerm`, or `vscode`; `VTE_VERSION` is a decimal integer
+  greater than or equal to `5000`; or `WT_SESSION` is nonempty.
+
+An absent, malformed, or unrecognized capability signal disables hyperlinks in `auto` mode.
+The implementation must not claim that terminfo or Rich detects OSC-8 support. Redirected
+text contains no OSC-8 escapes unless `always` was requested.
 
 Plain and colored terminal reports must have identical visible text, column widths, wrapping,
 and semantics after ANSI and OSC-8 sequences are stripped.
@@ -350,6 +426,9 @@ untrusted. Human renderers must:
 A row must never be truncated as one serialized aggregate. In particular, a long source path
 must not hide rule, confidence, message, symbol, or changed fields.
 
+Trusted manifest argv remain shell-quoted and structurally escaped as described in §3.5, but
+are not normalized or suppressed as detector-derived data.
+
 ## 9. Output-mode guarantees
 
 | Property | `text`, interactive | `text`, redirected | `github` | `json` |
@@ -361,7 +440,8 @@ must not hide rule, confidence, message, symbol, or changed fields.
 | exact pinned source link | OSC-8 plus visible fallback | visible URL | Markdown link | structured/derivable |
 | bounded source excerpt | yes | yes | yes | complete retained excerpt |
 | raw detector record | no | no | no | when retained |
-| temporary local paths | never | never | never | never in normalized locations |
+| temporary paths in detector-derived finding content | never | never | never | never in normalized locations |
+| trusted escape-hatch argv | faithfully rendered | faithfully rendered | faithfully rendered | complete manifest argv |
 
 ## 10. Acceptance criteria
 
@@ -369,28 +449,45 @@ Implementation is complete only when tests establish all of the following.
 
 1. A recorded Skylos finding renders its canonical `SKY-Uxxx` code in text, GitHub, and JSON.
 2. A detector-provided rule ID takes precedence over the bucket mapping.
-3. A rule-ID change becomes one `changed` finding with `rule` in `changed_fields`.
+3. A fake-detector finding with otherwise identical identity fields and different explicit
+   rule IDs becomes one `changed` finding with `rule` in `changed_fields`. A Skylos bucket
+   move that also changes kind remains a `new` plus a `dropped` finding.
 4. Vulture findings without a native rule ID render `-`, not an invented code.
-5. `NA`, `XX%`, `NA->XX%`, `XX%->NA`, and `XX%->YY%` have focused regression coverage.
-6. Rows align at their visible column boundaries with ASCII, combining Unicode, wide Unicode,
+5. Project and overall rollups use the complete pre-truncation diffs, group by rule with kind
+   fallback, apply the deterministic top-five ordering, and report the omitted finding and
+   group counts.
+6. `NA`, `XX%`, `NA->XX%`, `XX%->NA`, and `XX%->YY%` have focused regression coverage.
+7. Rows align at their visible column boundaries with ASCII, combining Unicode, wide Unicode,
    long paths, long messages, and long symbols.
-7. Narrow output uses the defined stacked layout rather than uncontrolled wrapping.
-8. The source excerpt contains the actual pinned source line at the detector-reported location.
-9. The source permalink contains the corpus SHA and normalized path and opens the exact line
+8. Narrow output uses the defined stacked layout rather than uncontrolled wrapping.
+9. The source excerpt contains the actual pinned source line at the detector-reported location.
+10. A changed finding with a changed line span shows labelled base and head excerpts using
+    their respective locations; an unchanged span shows the reference-side excerpt once.
+11. The source permalink contains the corpus SHA and normalized path and opens the exact line
    or span.
-10. No human report contains a disposable checkout prefix such as `/private/var/folders/`, a
-    cache path, or a serialized `"file"` field from a detector record.
-11. Source content and detector strings cannot inject ANSI, OSC-8, Rich markup, Markdown
+12. No detector-derived finding row, source excerpt, or source link contains a disposable
+    checkout prefix such as `/private/var/folders/`, a cache path, or a serialized `"file"`
+    field from a detector record. Trusted manifest argv may contain such paths.
+13. Source content and detector strings cannot inject ANSI, OSC-8, Rich markup, Markdown
     structure, HTML, or terminal control behavior.
-12. `--color never` and redirected `auto` output contain no ANSI escapes.
-13. `--color always` styles only trusted renderer elements, and stripping its escapes produces
+14. `--color never` and redirected `auto` output contain no ANSI escapes.
+15. `--color always` styles only trusted renderer elements, and stripping its escapes produces
     the byte-equivalent visible plain report.
-14. Hyperlink capability modes follow their explicit and automatic contracts.
-15. GitHub locations are clickable, GitHub output contains no ANSI/OSC-8 escapes, and its
+16. Hyperlink tests cover `always`, `never`, redirected output, `TERM=dumb`, multiplexer
+    suppression, every `auto` allowlist signal, malformed `VTE_VERSION`, and the unknown-terminal
+    default-off case.
+17. GitHub locations are clickable, GitHub output contains no ANSI/OSC-8 escapes, and its
     status remains understandable without emoji color.
-16. `--excerpt-lines 0` suppresses source evidence without suppressing the diagnostic row.
-17. Result truncation continues to report complete pre-truncation totals and displayed counts.
-18. Existing message-only suppression remains explicit and the JSON report retains complete
+18. `--excerpt-lines 0` suppresses source evidence without suppressing the diagnostic row.
+19. `SourceExcerpt.omitted_lines` counts only real reported-span lines omitted by the evidence
+    budget; a point finding at end-of-file has zero omissions, and omission text appears only
+    for a positive count.
+20. Result truncation continues to report complete pre-truncation totals, rollups, and displayed
+    counts.
+21. The overall and project headers contain the applicable pinned-tree link and abbreviated
+    SHA, base/head finding counts, complete totals, aggregate rollups, execution cost, and
+    bounded errors or warnings.
+22. Existing message-only suppression remains explicit and the JSON report retains complete
     structured detail.
 
 Plain-text and GitHub golden fixtures must cover a representative `new`, `dropped`, and
