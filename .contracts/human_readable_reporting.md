@@ -1,6 +1,6 @@
 # Human-readable reporting contract for `liveness_primer`
 
-Status: draft.
+Status: approved; implementation pending.
 
 This document refines §§7–9, §12, §15, and §17 of
 [`initial_contract.md`](initial_contract.md). It is authoritative for human-readable report
@@ -78,6 +78,23 @@ than silently retaining a stale code.
 pair as one `changed` diff. It participates in the canonical occurrence key and in
 `changed_fields`; the latter gains the value `rule`. A rule-code change must never disappear
 from the blast radius.
+
+To refine initial contract §8 without reordering occurrences distinguished by existing
+fields, `rule_id` is appended after confidence in the canonical occurrence key. The complete
+key under this contract is:
+
+```text
+(start_line, end_line, message,
+ confidence_presence, confidence_value,
+ rule_id_presence, rule_id_value)
+```
+
+Each presence component is `0` when its field is absent and `1` when present, so absent sorts
+before present. The paired value component is `0` for absent confidence and the empty string
+for an absent rule ID; it otherwise carries the normalized value. `raw_excerpt` and
+`SourceExcerpt` do not participate. Python diffing, serialized report ordering, browser
+locators, and `bisect --occurrence` must use this exact key wherever the canonical occurrence
+key is required.
 
 ### 3.2 Aggregate rollups
 
@@ -188,13 +205,15 @@ remains self-contained after disposable workspaces are gone.
 
 ### 4.1 Project header
 
-Each project section begins with its name, pinned repository URL, abbreviated corpus SHA,
+Each project section begins with its name, repository, abbreviated corpus SHA,
 base/head finding counts, complete pre-truncation diff totals, measured cost, errors, and
 integrity warnings. If findings are capped, the section states both the number displayed and
 the complete total.
 
-The project link must name the pinned corpus tree, not the detector repository, the corpus
-default branch, a cache directory, or a disposable checkout.
+For a GitHub-hosted project, the project link must name the pinned corpus tree, not the
+detector repository, the corpus default branch, a cache directory, or a disposable checkout.
+For a non-GitHub ad-hoc project, the renderer shows the escaped repository string and corpus
+SHA separately without fabricating a pinned-tree URL.
 
 The overall header and each project header include the aggregate rollup lines from §3.2. The
 overall header uses overall rollups; each project header uses only that project's rollups.
@@ -255,8 +274,9 @@ For `new`, the head excerpt follows the summary row. For `dropped`, the base exc
 it. For `changed` with an unchanged line span, the reference-side base excerpt appears once.
 For `changed` with `line` in `changed_fields`, both excerpts appear, labelled `base` and
 `head`, because the two reported locations are the evidence needed to review the move. Each
-side uses its own reported span and pinned permalink. If one side cannot be collected, the
-available side remains visible with the bounded warning for the missing side.
+side uses its own reported span and pinned permalink when one is available. If one side
+cannot be collected, the available side remains visible with the bounded warning for the
+missing side.
 
 Each source line includes its real line number:
 
@@ -312,6 +332,10 @@ home, or temporary-directory prefix.
 
 The permalink targets the pinned corpus SHA. It must not target the detector base/head SHA
 or a moving corpus branch.
+
+For a non-GitHub ad-hoc project, no GitHub permalink exists. Human renderers retain the
+escaped, copyable relative `path:Lx` or `path:Lx-Ly` location as plain text and must not invent
+a source URL from an unvalidated repository string.
 
 In GitHub output, the visible `path:Lx` or `path:Lx-Ly` is the Markdown link label. A
 `changed` location with a moved span (`path:Lx->Ly`) links its base-side span; the head-side
@@ -406,10 +430,11 @@ in the blank class header column because GitHub-rendered tables do not have term
 - `🔴 -` for `dropped`; and
 - `🟡 ~` for `changed`.
 
-The `+`, `-`, and `~` remain mandatory so color is not the only carrier of meaning. The
-location is a Markdown link to the pinned source line. Source evidence appears in the same
-row beneath the diagnostic using escaped inline or preformatted text; a reviewer must not
-have to expand a collapsed section to see the first retained source line.
+The `+`, `-`, and `~` remain mandatory so color is not the only carrier of meaning. For a
+GitHub-hosted corpus project, the location is a Markdown link to the pinned source line. For
+a non-GitHub ad-hoc project, it is escaped plain text. Source evidence appears in the same row
+beneath the diagnostic using escaped inline or preformatted text; a reviewer must not have
+to expand a collapsed section to see the first retained source line.
 
 GitHub table source may omit a leading and trailing `|`. GitHub's required separator row is
 not a user-facing semantic header. The first header cell is blank; the remaining headers are
@@ -443,7 +468,7 @@ are not normalized or suppressed as detector-derived data.
 | class glyphs | yes | yes | yes | structured value |
 | ANSI color | capability-dependent | explicit only | never | never |
 | colored fallback marker | not required | no | yes | no |
-| exact pinned source link | OSC-8 plus visible fallback | visible URL | Markdown link | structured/derivable |
+| source location/link | pinned OSC-8 when available, plus visible fallback | pinned URL when available, otherwise plain location | pinned Markdown link when available, otherwise plain location | structured/derivable |
 | bounded source excerpt | yes | yes | yes | complete retained excerpt |
 | raw detector record | no | no | no | when retained |
 | temporary paths in detector-derived finding content | never | never | never | never in normalized locations |
@@ -469,8 +494,9 @@ Implementation is complete only when tests establish all of the following.
 9. The source excerpt contains the actual pinned source line at the detector-reported location.
 10. A changed finding with a changed line span shows labelled base and head excerpts using
     their respective locations; an unchanged span shows the reference-side excerpt once.
-11. The source permalink contains the corpus SHA and normalized path and opens the exact line
-    or span.
+11. For a GitHub-hosted project, the source permalink contains the corpus SHA and normalized
+    path and opens the exact line or span. A non-GitHub ad-hoc project renders the same
+    relative location as escaped plain text without an invented URL.
 12. No detector-derived finding row, source excerpt, or source link contains a disposable
     checkout prefix such as `/private/var/folders/`, a cache path, or a serialized `"file"`
     field from a detector record. Trusted manifest argv may contain such paths.
@@ -490,9 +516,9 @@ Implementation is complete only when tests establish all of the following.
     for a positive count.
 20. Result truncation continues to report complete pre-truncation totals, rollups, and displayed
     counts.
-21. The overall and project headers contain the applicable pinned-tree link and abbreviated
-    SHA, base/head finding counts, complete totals, aggregate rollups, execution cost, and
-    bounded errors or warnings.
+21. The overall and project headers contain the applicable pinned-tree link, or the plain
+    repository fallback for a non-GitHub project, plus the abbreviated SHA, base/head finding
+    counts, complete totals, aggregate rollups, execution cost, and bounded errors or warnings.
 22. Existing message-only suppression remains explicit and the JSON report retains complete
     structured detail.
 
