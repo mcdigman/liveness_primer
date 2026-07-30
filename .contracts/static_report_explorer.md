@@ -175,29 +175,64 @@ The following limits apply before a report becomes active:
 | review-note length | 4,096 Unicode code points |
 | remotely fetched source bytes | 2 MiB |
 
-The implementation reads at most one byte beyond a byte limit when enforcing it. A limit
-failure is explicit and does not leave a partially loaded report active.
+The local report-byte limit is enforced from `File.size` before any report content is read.
+The remote source limit applies to decoded response-body bytes delivered to the application.
+A source request may use an HTTP Range request when the server supports it; otherwise the
+application reads the response as a stream and cancels it as soon as a delivered chunk
+crosses the limit. Application-retained source buffering never exceeds the limit plus that
+one delivered chunk, and excess bytes are discarded immediately. This contract does not
+claim control over buffering internal to the browser or network stack.
+
+A limit failure is explicit and does not leave a partially loaded report active.
 
 Large JSON parsing and schema validation must not make controls appear operable while the UI
 thread is blocked. Files of 5 MiB or larger are parsed and projected in a Web Worker or an
 equivalent off-main-thread mechanism. A labelled progress state remains visible and
 cancelable.
 
-### 5.3 Schema validation
+### 5.3 Structural and semantic validation
 
 The explorer packages every `Report` JSON Schema version it claims to support. It validates
-the complete input before rendering any report-derived field.
+the complete input before rendering any report-derived field through two mandatory layers:
 
-The explorer:
+1. **Structural validation** applies the matching exported JSON Schema to types, required
+   fields, enumerations, scalar bounds such as confidence and positive line numbers, unknown
+   fields, and other constraints the schema actually expresses.
+2. **Semantic validation** enforces cross-field, cross-item, and ordering invariants that
+   exported JSON Schema does not express. Passing an AJV or equivalent schema check alone is
+   not sufficient.
+
+The structural layer:
 
 - rejects malformed JSON;
 - rejects a schema major version it does not support;
-- rejects a schema minor version whose required semantics it does not implement;
-- accepts additive fields only when the applicable schema version permits them;
-- rejects inconsistent diff sides, invalid line spans, invalid confidence values, duplicate
-  corpus pin names, and other violations expressed by the schema; and
-- reports validation failures as bounded structural paths and messages, never by dumping the
-  complete offending value into the DOM.
+- rejects a schema minor version whose required semantics it does not implement; and
+- accepts additive fields only when the applicable schema version permits them.
+
+The semantic layer rejects at least:
+
+- a finding or occurrence whose `end_line` precedes its `start_line`;
+- a `FindingDiff` whose populated sides or `changed_fields` contradict its diff class, or
+  whose `changed_fields` do not equal its changed observable occurrence fields;
+- a finding identity that is not the specified digest of its tool, project, path, symbol,
+  and kind;
+- source evidence whose start, retained lines, or omitted-span count contradicts its
+  occurrence or the human-readable reporting contract;
+- duplicate corpus-pin names, duplicate project-report names, a project without exactly one
+  matching pin, a diff whose project or tool contradicts its containing report, or a
+  manifest selection/pin/project sequence that does not describe the same run;
+- overall totals, project totals, rollups, or truncation state that contradict one another or
+  the serialized findings to the extent that a truncated report permits verification; and
+- duplicate finding locators or other violations of the §6 projection rules.
+
+`ReviewSession` import applies the analogous two layers from §11: JSON Schema validation is
+followed by report-digest matching, known and unique locator checks, canonical entry ordering,
+and note limits. The checked-in semantic-validation fixtures are shared with Python so a
+constraint enforced only by a Pydantic model validator cannot silently disappear in the
+browser implementation.
+
+All validation failures are reported as bounded structural paths and messages, never by
+dumping the complete offending value into the DOM.
 
 The application displays both its own version and the report schema version in the report
 information surface.
@@ -242,8 +277,8 @@ symbol
 base_occurrence
 head_occurrence
 changed_fields
-base_source_permalink
-head_source_permalink
+base_source_permalink: str | None
+head_source_permalink: str | None
 review_disposition
 review_note
 ```
@@ -267,9 +302,24 @@ line: int
 occurrence: int
 ```
 
-`line` and `occurrence` address the diff class's reference side: head for `new`, base for
-`dropped` and `changed`. `occurrence` is zero-based within the canonical ordering of
-reference-side occurrences sharing `(identity, line)`.
+`line` addresses the diff class's reference-side start line: head for `new`, base for
+`dropped` and `changed`. To assign `occurrence`, take the subsequence of that same
+`ProjectReport.diffs` tuple whose identity and reference-side start line equal
+`(identity, line)`, without changing its serialized order. `occurrence` is the zero-based
+position of the diff in that subsequence. Explorer filtering, sorting, pagination, and review
+state never affect this value.
+
+The serialized per-project diff sequence is the indexing set. Occurrences removed by the
+diff engine's equal-occurrence intersection are not indexed because they are not finding
+diffs and are absent from the report. Result truncation retains a canonical prefix, so the
+indices of retained findings are unchanged from the complete canonical diff sequence.
+That sequence uses the human-readable reporting contract's expanded canonical occurrence key,
+including `rule_id` in its specified position.
+
+This rule fixes the indexing set and zero-based convention left implicit by initial contract
+§12. The `bisect --occurrence` implementation must consume the same report subsequence and
+apply this identical rule. It must not index the detector side's complete pre-diff occurrence
+multiset.
 
 Locators are unique within one validated report. Duplicate computed locators are a validation
 failure, because silently sharing one disposition between two displayed rows would corrupt
@@ -492,6 +542,11 @@ A visible `Load complete pinned file` action may fetch the complete file only af
 explicit reviewer action. It is an enhancement, not a prerequisite for reviewing the
 finding.
 
+The action is present only when the joined corpus repository is a validated GitHub HTTPS
+repository and the pin supplies a full commit SHA. For a non-GitHub ad-hoc project,
+`base_source_permalink` and `head_source_permalink` are `None`, the action is absent, and the
+embedded excerpt retains an escaped plain `path:Lx` or `path:Lx-Ly` location.
+
 For a GitHub corpus repository, the request target is derived exclusively from the validated
 corpus repository, full resolved commit SHA, and normalized POSIX path:
 
@@ -507,7 +562,8 @@ The implementation must:
 - percent-encode each already-normalized path segment independently;
 - reject empty, `.`, `..`, absolute, backslash-containing, or control-containing paths;
 - send no credentials and use a no-referrer request policy;
-- stop reading after the §5.2 source-byte limit;
+- cancel promptly when delivered decoded bytes exceed the §5.2 source-byte limit and retain
+  no more than that section permits;
 - decode UTF-8 strictly;
 - verify that the final response URL remains on the allowed origin;
 - render the response only as text; and
@@ -516,7 +572,8 @@ The implementation must:
 On success, the viewer scrolls the real file to the applicable span, gives the target lines a
 non-color-only highlight, and retains the exact pinned GitHub permalink. On network, CORS,
 size, decoding, or validation failure, it shows a bounded error and falls back to the embedded
-excerpt and permalink.
+excerpt and, when available, permalink. A non-GitHub project falls back to its plain relative
+location rather than inventing a URL.
 
 The application must not use an iframe for GitHub pages or raw source.
 
@@ -631,14 +688,17 @@ The default summary contains, in order:
 7. an `Expected` section; and
 8. a statement of any remaining unreviewed displayed findings.
 
-Each reviewed finding line includes diff class, project, rule ID or kind fallback, pinned
-source link, normalized message, symbol when present, and note when present. Unexpected
-findings appear before expected findings; each group retains canonical report order.
+Each reviewed finding line includes diff class, project, rule ID or kind fallback, normalized
+message, symbol when present, and note when present. It uses a pinned source link when one is
+available; otherwise it includes an escaped plain `path:Lx` or `path:Lx-Ly` location.
+Unexpected findings appear before expected findings; each group retains canonical report
+order.
 
 The summary does not include raw detector records or complete source files. All untrusted
 text is escaped for Markdown structure, control characters are removed or visibly replaced,
-and generated links use only validated pinned permalinks. A note cannot create a heading,
-list item, link destination, HTML block, or fenced block outside its assigned quoted text.
+and generated links use only validated pinned permalinks. The plain-location fallback is text,
+not a report-supplied link target. A note cannot create a heading, list item, link destination,
+HTML block, or fenced block outside its assigned quoted text.
 
 Clipboard success and failure are announced through a polite status region. If the Clipboard
 API is unavailable or denied, the same bytes remain downloadable as `.md` and selectable in
@@ -850,10 +910,13 @@ once.
 
 Changing a common filter on the representative large-report fixture must update visible
 results within 200 ms at the 95th percentile after initial projection on a documented,
-pinned reference browser and runner. Shared CI records this benchmark and fails only under
-the project's defined regression policy; an ordinary noisy CI sample is not itself a
-portable performance baseline. Initial load performance is reported separately for parsing,
-validation, projection, and first render so optimizations cannot hide a blocked stage.
+pinned reference browser and runner. A checked-in `benchmark-policy.md` beside that fixture
+defines the runner, browser version, warmups, sample count, percentile calculation, tolerance,
+rerun rule, and baseline-update procedure. CI reads that policy as its single source of truth.
+Until the file exists and its baseline has been reviewed, CI reports the benchmark without
+using it as a merge gate; an ordinary noisy CI sample is not itself a portable performance
+baseline. Initial load performance is reported separately for parsing, validation,
+projection, and first render so optimizations cannot hide a blocked stage.
 
 A runtime error in optional complete-source loading, clipboard access, local storage, or a
 nonessential enhancement must not discard the report or review entries. The UI offers a
@@ -880,11 +943,21 @@ only in the deployment job and are not granted to ordinary PR test jobs.
 
 ## 17. Testing strategy
 
+The frontend toolchain is pinned by its lock file and checked-in configuration. CI runs its
+formatter check, linter with zero warnings, strict type checker, unit tests with coverage,
+and browser tests. Hand-written production TypeScript and JavaScript in the framework-neutral
+validation, projection, filtering, locator, persistence, and export modules must achieve full
+line and branch coverage with non-vacuous tests. Generated files may be excluded by explicit
+configuration; blanket directory, file, or branch exclusions for hand-written production
+logic are forbidden. UI behavior that depends on browser APIs remains subject to the browser
+and accessibility gates below rather than being treated as covered by a DOM mock alone.
+
 ### 17.1 Pure logic tests
 
 Unit tests cover:
 
 - report-schema acceptance and rejection;
+- every supplemental semantic-validation invariant from §5.3;
 - digest calculation over exact bytes;
 - project-to-corpus-pin joins;
 - reference-side values and finding locators;
@@ -895,6 +968,18 @@ Unit tests cover:
 - review-session validation, uniqueness, ordering, and digest matching;
 - local-state failure behavior; and
 - byte-exact JSON and Markdown exports.
+
+Python generates a checked-in locator golden fixture containing report JSON and the exact
+ordered `FindingLocator` sequence expected from it. Python tests, frontend tests, and the
+future `bisect` tests consume the same fixture and assert the same ordered locator values.
+Byte equality is required only for a serialization whose canonical UTF-8 JSON form is
+specified; otherwise the assertion is exact structural sequence equality.
+
+The fixture covers at least duplicate occurrences, `new`/`dropped`/`changed` candidates that
+share an identity and line, identical reference occurrence keys that lead to different diff
+classes, moved spans, missing and zero confidence, absent and present rule IDs, and a rule-ID
+change. It is generated only by an explicit maintenance command; ordinary tests compare the
+checked-in expected values rather than silently regenerating them.
 
 ### 17.2 Browser tests
 
@@ -950,15 +1035,16 @@ Implementation is complete only when all of the following are established.
    Python or Node server at runtime.
 2. Loading a valid report performs no network request and displays its digest, schema,
    detector refs, totals, rollups, warnings, and completeness state.
-3. Malformed, oversized, unsupported, or schema-invalid reports fail before any
-   report-derived HTML is rendered.
+3. Malformed, oversized, unsupported, structurally invalid, or semantically invalid reports
+   fail before any report-derived HTML is rendered.
 4. Project, repository, diff-class, rule, kind, confidence, changed-field, disposition, and
    text filters have non-vacuous tests and correct combined semantics.
-5. Report-order restoration is byte-for-byte consistent with serialized project/diff order.
+5. Report-order restoration produces the exact serialized project/diff sequence.
 6. `0` confidence, `NA` confidence, and an absent occurrence remain distinguishable in every
    applicable filter and details view.
 7. Every review row resolves to one unique finding locator using the contract's reference-side
-   and occurrence-index rules.
+   and occurrence-index rules, and Python, frontend, and future bisect tests agree on the
+   shared locator golden fixtures.
 8. A truncated report cannot produce a UI or exported summary claiming the complete blast
    radius was reviewed.
 9. New, dropped, and changed findings use green, red, and amber/yellow highlights respectively,
@@ -973,8 +1059,9 @@ Implementation is complete only when all of the following are established.
     at 320 CSS pixels and 200-percent zoom.
 14. Selecting a finding displays its structured base/head evidence and embedded pinned source
     excerpt without requiring a network request.
-15. Optional complete-file loading fetches only the validated pinned GitHub raw URL, observes
-    byte and decoding limits, and safely falls back on every failure.
+15. Optional complete-file loading is absent for non-GitHub projects; when available it fetches
+    only the validated pinned GitHub raw URL, observes the decoded-byte and buffering limits,
+    and safely falls back on every failure.
 16. No source is embedded through an iframe, and no untrusted value reaches an HTML, script,
     style, template, or arbitrary-URL execution sink.
 17. Review state survives a same-browser reload under the exact report digest and never leaks
@@ -982,12 +1069,13 @@ Implementation is complete only when all of the following are established.
 18. JSON review export validates against the checked-in generated schema, uses unique canonical
     locators, and round-trips without loss.
 19. Markdown export places unexpected findings before expected findings, preserves canonical
-    order, uses pinned links, reports incomplete/unreviewed state, and resists structural
-    injection from every untrusted field.
+    order, uses pinned links when available and plain escaped locations otherwise, reports
+    incomplete/unreviewed state, and resists structural injection from every untrusted field.
 20. Clipboard, storage, source-network, and optional-enhancement failures preserve the loaded
     report and offer an accessible recovery path.
-21. Automated browser, accessibility, contrast, adversarial, and strict CSP tests pass in CI,
-    and the required manual accessibility pass is recorded for release.
+21. Pinned frontend formatting, linting, strict typing, full line/branch coverage, browser,
+    accessibility, contrast, adversarial, and strict CSP gates pass in CI, and the required
+    manual accessibility pass is recorded for release.
 22. The deployed bundle contains no remote runtime dependency, analytics, credential,
     developer path, bundled report fixture, or unaccounted third-party license.
 
