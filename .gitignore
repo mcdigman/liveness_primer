@@ -25,3 +25,12 @@ venv/
 
 # macOS
 .DS_Store
+
+# Explorer build output and dev toolchain (explorer contract §16).
+explorer/dist/
+explorer/node_modules/
+explorer/playwright-report/
+explorer/test-results/
+
+# Local agent/editor session files.
+.claude/

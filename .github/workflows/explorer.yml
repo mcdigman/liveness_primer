@@ -1,0 +1,99 @@
+name: Explorer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: explorer-${{ github.ref }}
+  cancel-in-progress: true
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: explorer
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      # The runner image ships a current Node LTS; the unit tests, build,
+      # and generated-schema check are dependency-free by design.
+      - name: Show toolchain
+        run: node --version && npm --version
+
+      # The generated schema module must match the checked-in exported
+      # schemas (pydantic models remain the source of truth, contract §7).
+      - name: Verify generated schemas are in sync
+        run: |
+          node generate-schemas.mjs
+          git diff --exit-code -- src/generated
+
+      - name: Install dev toolchain
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            echo "::warning::package-lock.json is missing; installing unpinned dev toolchain"
+            npm install --no-audit --no-fund
+          fi
+
+      # Non-blocking until the tree has been normalized with a local
+      # `npm run format:write` commit; the sources were authored without a
+      # local Prettier install. Promote to blocking after that commit.
+      - name: Prettier check
+        continue-on-error: true
+        run: npm run format
+
+      - name: ESLint (zero warnings)
+        run: npm run lint
+
+      - name: Strict type check
+        run: npm run typecheck
+
+      - name: Unit tests with coverage thresholds
+        run: npm run coverage
+
+      - name: Build production bundle
+        env:
+          EXPLORER_VERSION: ${{ github.sha }}
+        run: npm run build
+
+      - name: Guard the bundle against leaked paths and fixtures
+        run: |
+          ! grep -R "/Users/\|/home/\|report_golden\|locator_golden" dist
+          test ! -e dist/tmp-report.json
+
+      - name: Performance report (non-gating; explorer contract §15)
+        run: node tests/benchmark.mjs
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Browser, accessibility, contrast, and adversarial suites
+        run: npm run test:browser
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: explorer-playwright-report
+          path: explorer/playwright-report/
+          if-no-files-found: ignore
+
+      - name: Upload distributable bundle
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: explorer-dist
+          path: explorer/dist/
+          if-no-files-found: error

@@ -20,6 +20,7 @@ from liveness_primer.findings import (
     FindingOccurrence,
     HookEnvelope,
     Report,
+    ReviewSession,
     RunManifest,
 )
 
@@ -30,6 +31,7 @@ EXPORTED_MODELS: Mapping[str, type[BaseModel]] = {
     'finding-occurrence': FindingOccurrence,
     'hook-envelope': HookEnvelope,
     'report': Report,
+    'review-session': ReviewSession,
     'run-manifest': RunManifest,
 }
 

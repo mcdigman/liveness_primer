@@ -841,6 +841,126 @@ class Report(_FrozenModel):
     truncated: bool
 
 
+class ReviewDisposition(StrEnum):
+    """Reviewer judgment about one displayed finding diff (explorer contract §10.1).
+
+    Dispositions concern the expected blast radius of a detector change;
+    they are not the internal-corpus annotation verdicts and are never
+    stored in or translated into :class:`Annotation`.
+
+    Attributes
+    ----------
+    EXPECTED
+        The reviewer believes this diff belongs in the intended blast radius.
+    UNEXPECTED
+        The reviewer believes this diff warrants attention in the detector PR.
+    """
+
+    EXPECTED = 'expected'
+    UNEXPECTED = 'unexpected'
+
+
+class FindingLocator(_FrozenModel):
+    """Persistent reference to one finding diff in one report (contract §7, explorer §6.2).
+
+    ``line`` addresses the diff class's reference-side start line — head for
+    ``new``, base for ``dropped`` and ``changed``. ``occurrence`` is the
+    zero-based position of the diff within the subsequence of its serialized
+    per-project diff sequence sharing ``(identity, line)``, in serialized
+    order.
+
+    Attributes
+    ----------
+    project : str
+        Corpus project name.
+    identity : str
+        Stable finding identity hash.
+    line : int
+        Reference-side start line (1-based).
+    occurrence : int
+        Zero-based index among diffs sharing ``(identity, line)``.
+    """
+
+    project: str
+    identity: str
+    line: int = Field(ge=1)
+    occurrence: int = Field(ge=0)
+
+
+class ReviewEntry(_FrozenModel):
+    """One reviewed finding in a review session (explorer contract §11.1).
+
+    Attributes
+    ----------
+    locator : FindingLocator
+        Locator of the reviewed finding diff.
+    disposition : ReviewDisposition
+        ``expected`` or ``unexpected``.
+    note : str | None
+        Optional reviewer note of at most 4,096 Unicode code points.
+    """
+
+    locator: FindingLocator
+    disposition: ReviewDisposition
+    note: str | None = Field(default=None, max_length=4096)
+
+
+class ReviewSession(_FrozenModel):
+    """Portable review state for one exact report byte representation (explorer §11.1).
+
+    ``report_sha256`` is the SHA-256 digest of the exact imported report
+    bytes; semantically equivalent but byte-different reports intentionally
+    have different digests. Unreviewed findings are omitted.
+
+    Attributes
+    ----------
+    schema_version : SchemaVersion
+        Package-wide schema semver (contract §7).
+    report_sha256 : str
+        Lowercase hex SHA-256 digest of the exact report bytes.
+    report_schema_version : str
+        Schema version declared by the reviewed report.
+    created_at : datetime
+        UTC time the session was first created for the report digest.
+    updated_at : datetime
+        UTC time a portable entry last changed.
+    entries : tuple[ReviewEntry, ...]
+        Review entries with unique locators, in canonical report order.
+    """
+
+    schema_version: SchemaVersion = SCHEMA_VERSION
+    report_sha256: str = Field(pattern='^[0-9a-f]{64}$')
+    report_schema_version: str
+    created_at: datetime
+    updated_at: datetime
+    entries: tuple[ReviewEntry, ...]
+
+    @model_validator(mode='after')
+    def _check_unique_locators(self) -> Self:
+        """Reject sessions whose entries share a locator (explorer contract §11.1).
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If two entries carry the same locator.
+        """
+        seen: set[FindingLocator] = set()
+        for entry in self.entries:
+            if entry.locator in seen:
+                msg = (
+                    f'duplicate review-entry locator: {entry.locator.project!r} '
+                    f'{entry.locator.identity} L{entry.locator.line} #{entry.locator.occurrence}'
+                )
+                raise ValueError(msg)
+            seen.add(entry.locator)
+        return self
+
+
 class HookEnvelope(_FrozenModel):
     """Versioned JSON envelope spoken by the subprocess hook bridge (contract §10).
 

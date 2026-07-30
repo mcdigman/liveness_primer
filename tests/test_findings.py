@@ -22,8 +22,12 @@ from liveness_primer.findings import (
     FetchRecord,
     Finding,
     FindingDiff,
+    FindingLocator,
     FindingOccurrence,
     Report,
+    ReviewDisposition,
+    ReviewEntry,
+    ReviewSession,
     RunManifest,
     RunSettings,
     SourceExcerpt,
@@ -323,3 +327,56 @@ def test_annotation_coverage_rule() -> None:
         runner='corpus_runners/demo.py',
     )
     assert manual_dead.runner == 'corpus_runners/demo.py'
+
+
+def locator_at(line: int, occurrence: int = 0) -> FindingLocator:
+    return FindingLocator(project='demo', identity='a' * 64, line=line, occurrence=occurrence)
+
+
+def make_session(entries: tuple[ReviewEntry, ...]) -> ReviewSession:
+    return ReviewSession(
+        report_sha256='c' * 64,
+        report_schema_version=SCHEMA_VERSION,
+        created_at=datetime(2026, 7, 29, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 29, 1, tzinfo=UTC),
+        entries=entries,
+    )
+
+
+def test_review_session_shape_and_round_trip() -> None:
+    entry = ReviewEntry(locator=locator_at(5), disposition=ReviewDisposition.EXPECTED, note='fine')
+    session = make_session((entry,))
+    assert session.schema_version == SCHEMA_VERSION
+    restored = ReviewSession.model_validate_json(session.model_dump_json())
+    assert restored == session
+
+
+def test_review_session_rejects_bad_digest_and_bounds() -> None:
+    with pytest.raises(ValidationError, match='pattern'):
+        ReviewSession.model_validate({**make_session(()).model_dump(), 'report_sha256': 'C' * 64})
+    with pytest.raises(ValidationError, match='pattern'):
+        ReviewSession.model_validate({**make_session(()).model_dump(), 'report_sha256': 'zz'})
+    with pytest.raises(ValidationError, match=r'at most 4,?096'):
+        ReviewEntry.model_validate(
+            {'locator': locator_at(5).model_dump(), 'disposition': 'expected', 'note': 'x' * 4097}
+        )
+    note = ReviewEntry(locator=locator_at(5), disposition=ReviewDisposition.UNEXPECTED, note='y' * 4096)
+    assert note.note is not None
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        FindingLocator.model_validate({'project': 'p', 'identity': 'i', 'line': 0, 'occurrence': 0})
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        FindingLocator.model_validate({'project': 'p', 'identity': 'i', 'line': 1, 'occurrence': -1})
+
+
+def test_review_session_rejects_duplicate_locators() -> None:
+    entries = (
+        ReviewEntry(locator=locator_at(5), disposition=ReviewDisposition.EXPECTED, note=None),
+        ReviewEntry(locator=locator_at(5), disposition=ReviewDisposition.UNEXPECTED, note=None),
+    )
+    with pytest.raises(ValidationError, match='duplicate review-entry locator'):
+        make_session(entries)
+    distinct = (
+        ReviewEntry(locator=locator_at(5), disposition=ReviewDisposition.EXPECTED, note=None),
+        ReviewEntry(locator=locator_at(5, occurrence=1), disposition=ReviewDisposition.UNEXPECTED, note=None),
+    )
+    assert len(make_session(distinct).entries) == 2

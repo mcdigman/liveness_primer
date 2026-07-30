@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <!--
+      Strictest enforceable meta CSP for static hosting (explorer §14.3).
+      frame-ancestors requires an HTTP response header and is therefore not
+      claimed here; hosts that can set headers should add
+      `frame-ancestors 'none'` themselves.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://raw.githubusercontent.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; child-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>liveness primer report explorer</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./src/app/main.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#findings-region">Skip to findings</a>
+    <header class="app-header">
+      <p class="product">
+        <span class="product-name">liveness primer</span>
+        <span class="product-surface">Report explorer</span>
+      </p>
+      <p class="report-identity" id="report-identity" hidden>
+        <span id="report-filename"></span>
+        <code id="report-digest-abbrev" title="report SHA-256 digest"></code>
+      </p>
+      <div class="header-actions">
+        <button type="button" id="open-another" hidden>Open another report</button>
+        <a id="export-jump" href="#export-region" hidden>Export review</a>
+        <label class="theme-label" for="theme-select">Theme</label>
+        <select id="theme-select">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </header>
+    <main>
+      <section id="import-region" aria-labelledby="import-heading">
+        <h1 id="import-heading">Open a report</h1>
+        <p>
+          Select the JSON report artifact produced by a <code>liveness-primer</code> run. The report is
+          processed entirely in this browser and is not uploaded anywhere.
+        </p>
+        <p>
+          <label for="report-input">Report JSON file</label>
+          <input type="file" id="report-input" accept=".json,application/json" />
+        </p>
+        <p class="hint">
+          GitHub Actions ZIP archives are not read directly: extract the archive and select the
+          <code>.json</code> report inside it.
+        </p>
+        <div id="import-progress" hidden>
+          <p role="status" id="import-progress-text">Validating report…</p>
+          <button type="button" id="import-cancel">Cancel</button>
+        </div>
+        <div id="import-errors" role="alert" hidden>
+          <h2>Report rejected</h2>
+          <p id="import-errors-summary"></p>
+          <ul id="import-errors-list"></ul>
+        </div>
+      </section>
+
+      <section id="summary-region" aria-labelledby="summary-heading" hidden>
+        <h1 id="summary-heading">Report summary</h1>
+        <div id="banners"></div>
+        <dl id="summary-facts" class="facts"></dl>
+        <div id="summary-rollups"></div>
+        <details id="run-details">
+          <summary>Run details</summary>
+          <dl id="run-details-facts" class="facts"></dl>
+        </details>
+      </section>
+
+      <section id="filters-region" aria-labelledby="filters-heading" hidden>
+        <h2 id="filters-heading">Filters</h2>
+        <form id="filters-form">
+          <p>
+            <label for="search-input">Search path, symbol, message, rule, kind</label>
+            <input type="search" id="search-input" autocomplete="off" />
+          </p>
+          <div id="filter-groups"></div>
+          <fieldset id="confidence-filter">
+            <legend>Confidence</legend>
+            <p>
+              <input type="checkbox" id="confidence-active" />
+              <label for="confidence-active">Filter by confidence</label>
+            </p>
+            <p>
+              <label for="confidence-side">Side</label>
+              <select id="confidence-side">
+                <option value="reference">reference</option>
+                <option value="base">base</option>
+                <option value="head">head</option>
+                <option value="either">either</option>
+              </select>
+            </p>
+            <p>
+              <input type="checkbox" id="confidence-range" checked />
+              <label for="confidence-range">Range</label>
+              <label for="confidence-min" class="inline-label">from</label>
+              <input type="number" id="confidence-min" min="0" max="100" value="0" />
+              <label for="confidence-max" class="inline-label">to</label>
+              <input type="number" id="confidence-max" min="0" max="100" value="100" />
+            </p>
+            <p>
+              <input type="checkbox" id="confidence-na" checked />
+              <label for="confidence-na">Include NA (no confidence)</label>
+            </p>
+          </fieldset>
+          <p>
+            <button type="button" id="filters-reset">Reset filters</button>
+          </p>
+        </form>
+      </section>
+
+      <section id="findings-region" aria-labelledby="findings-heading" hidden tabindex="-1">
+        <h2 id="findings-heading">Findings</h2>
+        <p id="findings-count"></p>
+        <p class="sort-controls">
+          <label for="sort-select">Sort by</label>
+          <select id="sort-select"></select>
+          <input type="checkbox" id="sort-descending" />
+          <label for="sort-descending">Descending</label>
+        </p>
+        <div class="table-scroll">
+          <table id="findings-table">
+            <thead>
+              <tr>
+                <th scope="col"><span class="visually-hidden">Diff class</span></th>
+                <th scope="col">rule</th>
+                <th scope="col">%</th>
+                <th scope="col">kind</th>
+                <th scope="col">project</th>
+                <th scope="col">location</th>
+                <th scope="col">message</th>
+                <th scope="col">review</th>
+                <th scope="col"><span class="visually-hidden">Details</span></th>
+              </tr>
+            </thead>
+            <tbody id="findings-body"></tbody>
+          </table>
+        </div>
+        <nav class="pagination" aria-label="Findings pages">
+          <button type="button" id="page-previous">Previous page</button>
+          <span id="page-status"></span>
+          <button type="button" id="page-next">Next page</button>
+        </nav>
+      </section>
+
+      <section id="details-region" aria-labelledby="details-heading" hidden tabindex="-1">
+        <h2 id="details-heading">Finding details</h2>
+        <button type="button" id="details-close">Close details</button>
+        <div id="details-content"></div>
+      </section>
+
+      <section id="export-region" aria-labelledby="export-heading" hidden>
+        <h2 id="export-heading">Review export</h2>
+        <p id="review-progress"></p>
+        <p>
+          <button type="button" id="export-json">Download review JSON</button>
+          <button type="button" id="copy-markdown">Copy Markdown summary</button>
+          <button type="button" id="download-markdown">Download Markdown summary</button>
+        </p>
+        <p>
+          <label for="session-import">Import review JSON</label>
+          <input type="file" id="session-import" accept=".json,application/json" />
+        </p>
+        <p>
+          <button type="button" id="clear-review">Clear local review</button>
+        </p>
+        <p>
+          <label for="markdown-fallback">Markdown summary (copy manually if the clipboard is unavailable)</label>
+        </p>
+        <textarea id="markdown-fallback" rows="8" readonly></textarea>
+        <p class="hint">
+          Review state is saved in this browser's local storage under the report digest. Nothing is
+          uploaded; deleting it here does not delete downloaded files.
+        </p>
+      </section>
+    </main>
+    <div id="status" role="status" aria-live="polite" class="visually-hidden"></div>
+    <div id="alert" role="alert" class="visually-hidden"></div>
+  </body>
+</html>

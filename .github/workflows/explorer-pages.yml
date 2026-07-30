@@ -1,0 +1,53 @@
+name: Explorer Pages
+
+# Deploys the stable explorer application from trusted default-branch code
+# only (explorer contract §4.1). Pull requests never build or deploy with a
+# Pages write token; reports remain downloadable workflow artifacts opened
+# locally by the stable explorer. This workflow is inert until GitHub Pages
+# is enabled for the repository with the "GitHub Actions" source.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# The default token stays read-only; deployment permissions exist only in
+# the deploy job below (explorer contract §16).
+permissions:
+  contents: read
+
+concurrency:
+  group: explorer-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build production bundle
+        env:
+          EXPLORER_VERSION: ${{ github.sha }}
+        run: node explorer/build.mjs
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: explorer/dist/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

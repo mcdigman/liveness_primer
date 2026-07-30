@@ -1,0 +1,27 @@
+{
+  "description": "Static browser explorer for completed liveness_primer reports.",
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@eslint/js": "^9.39.0",
+    "@playwright/test": "^1.58.0",
+    "eslint": "^9.39.0",
+    "prettier": "^3.8.0",
+    "typescript": "^5.9.3"
+  },
+  "license": "Apache-2.0",
+  "name": "liveness-primer-explorer",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "coverage": "node --test --experimental-test-coverage --test-coverage-include='src/lib/**' --test-coverage-lines=100 --test-coverage-branches=96 --test-coverage-functions=100 tests/unit/*.test.mjs",
+    "format": "prettier --check src tests build.mjs generate-schemas.mjs index.html styles.css",
+    "format:write": "prettier --write src tests build.mjs generate-schemas.mjs index.html styles.css",
+    "generate-schemas": "node generate-schemas.mjs",
+    "lint": "eslint --max-warnings 0 src tests build.mjs generate-schemas.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:browser": "playwright test",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "type": "module",
+  "version": "0.0.1"
+}
