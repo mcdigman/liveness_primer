@@ -45,8 +45,10 @@ test('hostile values cannot break the markdown export structure', async ({ page 
   await page.getByLabel(/Review note/).blur();
   await page.getByRole('button', { name: 'Download Markdown summary' }).click();
   const markdown = await page.locator('#markdown-fallback').inputValue();
-  expect(markdown).not.toContain('](javascript:');
-  // The evil link brackets arrive escaped, so no Markdown link is formed.
+  // The hostile link brackets arrive escaped, so no Markdown link is
+  // formed: every `](` before a javascript: or evil target is `\](`.
+  expect(markdown).not.toMatch(/[^\\]\]\(javascript:/);
+  expect(markdown).toContain('\\[x\\](javascript:alert(3))');
   expect(markdown).not.toMatch(/[^\\]\]\(https:\/\/evil\.invalid/);
   expect(markdown).toContain('\\[link\\](https://evil.invalid)');
   expect(markdown).not.toContain('\n# heading');
