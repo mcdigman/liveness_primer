@@ -90,7 +90,7 @@
     --error-background: #3b1a18;
     --error-border: #cf6f68;
 
-    --selection-background: #234a6e;
+    --selection-background: #1a3854;
     --code-background: #262b32;
     --code-highlight: #4d3f12;
   }
@@ -169,7 +169,7 @@
   --error-foreground: #f2a9a4;
   --error-background: #3b1a18;
   --error-border: #cf6f68;
-  --selection-background: #234a6e;
+  --selection-background: #1a3854;
   --code-background: #262b32;
   --code-highlight: #4d3f12;
 }
@@ -317,6 +317,11 @@ section {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.75rem 1rem;
+  min-width: 0;
+}
+
+input[type='file'] {
+  max-width: 100%;
 }
 
 h1 {
@@ -518,9 +523,47 @@ tr.selected td {
 
 .pagination {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   margin-top: 0.5rem;
+}
+
+/*
+ * Labelled card list below the width where the table's minimum columns
+ * fit; only source code keeps a contained horizontal scroll (explorer
+ * §7.5). Cell labels are trusted fixed text set by the controller.
+ */
+@media (max-width: 40rem) {
+  #findings-table thead {
+    display: none;
+  }
+
+  #findings-table,
+  #findings-table tbody,
+  #findings-table tr,
+  #findings-table td {
+    display: block;
+    width: 100%;
+  }
+
+  #findings-table tr {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: 0.5rem 0;
+    padding: 0.25rem 0.5rem;
+  }
+
+  #findings-table td {
+    border-bottom: none;
+    padding: 0.15rem 0;
+    overflow-wrap: anywhere;
+  }
+
+  #findings-table td[data-label]::before {
+    content: attr(data-label) ': ';
+    font-weight: 600;
+  }
 }
 
 .source-view {

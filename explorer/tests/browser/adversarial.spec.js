@@ -46,7 +46,9 @@ test('hostile values cannot break the markdown export structure', async ({ page 
   await page.getByRole('button', { name: 'Download Markdown summary' }).click();
   const markdown = await page.locator('#markdown-fallback').inputValue();
   expect(markdown).not.toContain('](javascript:');
-  expect(markdown).not.toContain('](https://evil.invalid');
+  // The evil link brackets arrive escaped, so no Markdown link is formed.
+  expect(markdown).not.toMatch(/[^\\]\]\(https:\/\/evil\.invalid/);
+  expect(markdown).toContain('\\[link\\](https://evil.invalid)');
   expect(markdown).not.toContain('\n# heading');
   const headings = markdown.split('\n').filter((line) => line.startsWith('#'));
   expect(headings[0]).toBe('# liveness primer review summary');

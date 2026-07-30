@@ -20,6 +20,7 @@ const TEXT_PAIRINGS = [
   ['--error-foreground', '--error-background', 4.5],
   ['--text', '--code-background', 4.5],
   ['--text', '--selection-background', 4.5],
+  ['--link', '--selection-background', 4.5],
   ['--text', '--code-highlight', 4.5],
 ];
 

@@ -56,8 +56,14 @@ test('filters compose, announce counts, and reset to canonical order', async ({ 
   await loadReport(page);
   await page.getByLabel('new', { exact: true }).check();
   await expect(page.locator('#findings-count')).toContainText('5 of 18');
-  await page.getByLabel('No rule ID').check();
-  await expect(page.locator('#findings-count')).toContainText('4 of 18');
+  // OR within the class dimension...
+  await page.getByLabel('changed', { exact: true }).check();
+  await expect(page.locator('#findings-count')).toContainText('14 of 18');
+  // ...AND across dimensions: only the changed `ruled` diff carries SKY-U001.
+  await page.getByLabel('SKY-U001').check();
+  await expect(page.locator('#findings-count')).toContainText('1 of 18');
+  await page.getByLabel('SKY-U001').uncheck();
+  await page.getByLabel('changed', { exact: true }).uncheck();
   await page.getByLabel('Search path, symbol, message, rule, kind').fill('lib/b.py');
   await expect(page.locator('#findings-count')).toContainText('1 of 18');
   await page.getByRole('button', { name: 'Reset filters' }).click();
@@ -108,7 +114,7 @@ test('markdown copy falls back to the labelled textarea when the clipboard is de
   await loadReport(page);
   await page.getByRole('button', { name: 'Copy Markdown summary' }).click();
   const fallback = page.locator('#markdown-fallback');
-  await expect(fallback).toContainText('liveness primer review summary');
+  await expect(fallback).toHaveValue(/liveness primer review summary/);
   await expect(page.locator('#status')).toContainText(/copied|shown below/);
   test.skip(browserName !== 'chromium', 'clipboard permission control is chromium-specific');
   await context.clearPermissions();
@@ -118,7 +124,7 @@ test('a truncated report shows the persistent incompleteness banner and export w
   await loadReport(page, truncatedReport());
   await expect(page.locator('#banners')).toContainText('Incomplete finding detail');
   await page.getByRole('button', { name: 'Download Markdown summary' }).click();
-  await expect(page.locator('#markdown-fallback')).toContainText('not the complete blast radius');
+  await expect(page.locator('#markdown-fallback')).toHaveValue(/not the complete blast radius/);
 });
 
 test('non-comparable and unenforced-isolation reports stay prominent', async ({ page }) => {

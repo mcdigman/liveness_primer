@@ -23,7 +23,8 @@ function cleaned(text, cap) {
   const kept = [];
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0;
-    const isControl = code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+    const isControl =
+      code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029 || /\p{Cf}/u.test(ch);
     kept.push(isControl ? ' ' : ch);
   }
   const joined = kept.join('');

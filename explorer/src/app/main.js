@@ -506,19 +506,30 @@ function renderFindings() {
     `${sorted.length} of ${app.rows.length} displayed findings match the active filters.`;
   const body = byId('findings-body');
   body.replaceChildren();
+  /**
+   * @param {string} label Trusted fixed column label for the card layout.
+   * @param {string} [text]
+   */
+  const labelledCell = (label, text) => {
+    const cell = el('td', text === undefined ? {} : { text });
+    if (label !== '') cell.dataset.label = label;
+    return cell;
+  };
   for (const row of pageRows) {
     const tr = el('tr');
     if (row.locatorKey === app.selectedKey) tr.className = 'selected';
     const classCell = el('td');
     classCell.append(classBadge(row));
     tr.append(classCell);
-    tr.append(el('td', { text: row.ruleId ?? '-' }));
-    tr.append(el('td', { text: confidenceText(row) }));
-    tr.append(el('td', { text: row.kind }));
-    tr.append(el('td', { text: row.project }));
-    tr.append(locationCell(row));
-    tr.append(el('td', { text: row.reference.message }));
-    const reviewCell = el('td');
+    tr.append(labelledCell('rule', row.ruleId ?? '-'));
+    tr.append(labelledCell('%', confidenceText(row)));
+    tr.append(labelledCell('kind', row.kind));
+    tr.append(labelledCell('project', row.project));
+    const location = locationCell(row);
+    location.dataset.label = 'location';
+    tr.append(location);
+    tr.append(labelledCell('message', row.reference.message));
+    const reviewCell = labelledCell('review');
     reviewCell.append(reviewBadge(disposition(row)));
     tr.append(reviewCell);
     const detailsCell = el('td');
