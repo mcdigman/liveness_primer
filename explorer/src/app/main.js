@@ -105,6 +105,7 @@ function nowIso() {
 
 // ---------------------------------------------------------------- theme
 
+/** @param {'system' | 'light' | 'dark'} theme */
 function applyTheme(theme) {
   if (theme === 'system') {
     delete document.documentElement.dataset.theme;
@@ -276,6 +277,10 @@ function fact(list, term, value) {
   list.append(el('dt', { text: term }), el('dd', { text: value }));
 }
 
+/**
+ * @param {{ new: number, dropped: number, changed: number,
+ *   changed_confidence: number, changed_message_only: number }} totals
+ */
 function totalsText(totals) {
   return (
     `${totals.new} new, ${totals.dropped} dropped, ${totals.changed} changed ` +
@@ -283,6 +288,7 @@ function totalsText(totals) {
   );
 }
 
+/** @param {{ diff_class: string, rule_id: string | null, kind: string | null, count: number }} rollup */
 function rollupLabel(rollup) {
   return rollup.rule_id === null ? `kind:${rollup.kind ?? ''}` : rollup.rule_id;
 }
@@ -374,6 +380,7 @@ function renderSummary() {
 
 // ---------------------------------------------------------------- filters
 
+/** @type {(row: import('../lib/projection.js').ReviewRow) => 'expected' | 'unexpected' | 'unreviewed'} */
 const disposition = (row) => dispositionOf(app.review, row.locatorKey);
 
 /**
@@ -401,7 +408,7 @@ function filterGroup(title, dimension, options, counts) {
       renderFilters();
       renderFindings();
     });
-    const label = el('label', { text: option.label });
+    const label = /** @type {HTMLLabelElement} */ (el('label', { text: option.label }));
     label.htmlFor = input.id;
     const count = el('span', { className: 'count', text: ` (${counts.get(option.value) ?? 0})` });
     wrapper.append(input, label, count);
@@ -414,6 +421,7 @@ function renderFilters() {
   const groups = byId('filter-groups');
   groups.replaceChildren();
   const rows = app.rows;
+  /** @param {string[]} values */
   const unique = (values) => [...new Set(values)].sort();
   const projectOptions = unique(rows.map((row) => row.project)).map((value) => ({ value, label: value }));
   const classOptions = ['new', 'dropped', 'changed'].map((value) => ({ value, label: value }));
@@ -424,6 +432,10 @@ function renderFilters() {
   const kindOptions = unique(rows.map((row) => row.kind)).map((value) => ({ value, label: value }));
   const fieldOptions = ['line-span', 'message', 'confidence', 'rule'].map((value) => ({ value, label: value }));
   const dispositionOptions = ['expected', 'unexpected', 'unreviewed'].map((value) => ({ value, label: value }));
+  /**
+   * @param {import('../lib/filters.js').DimensionName} dimension
+   * @param {(row: import('../lib/projection.js').ReviewRow) => string[]} values
+   */
   const count = (dimension, values) => optionCounts(rows, app.filters, dimension, values, disposition);
   groups.append(
     filterGroup('Project', 'projects', projectOptions, count('projects', (row) => [row.project])),
@@ -581,7 +593,7 @@ function sourceBlock(container, label, occurrence, permalink, row) {
   }
   const pin = app.report?.manifest.corpus_pins.find((candidate) => candidate.name === row.project);
   if (pin !== undefined && rawFileUrl(pin, row.path) !== null) {
-    const load = el('button', { text: `Load complete pinned file (${label})` });
+    const load = /** @type {HTMLButtonElement} */ (el('button', { text: `Load complete pinned file (${label})` }));
     const output = el('div');
     load.addEventListener('click', async () => {
       load.disabled = true;
@@ -687,7 +699,7 @@ function renderDetails(moveFocus) {
     input.addEventListener('change', () => {
       setDisposition(row, /** @type {'expected' | 'unexpected'} */ (option));
     });
-    const label = el('label', { text: option });
+    const label = /** @type {HTMLLabelElement} */ (el('label', { text: option }));
     label.htmlFor = input.id;
     wrapper.append(input, label);
     reviewSet.append(wrapper);
@@ -703,7 +715,9 @@ function renderDetails(moveFocus) {
   });
   reviewSet.append(clear);
   content.append(reviewSet);
-  const noteLabel = el('label', { text: `Review note (up to ${NOTE_LIMIT} characters, optional)` });
+  const noteLabel = /** @type {HTMLLabelElement} */ (
+    el('label', { text: `Review note (up to ${NOTE_LIMIT} characters, optional)` })
+  );
   noteLabel.htmlFor = 'note-input';
   const note = /** @type {HTMLTextAreaElement} */ (el('textarea'));
   note.id = 'note-input';

@@ -30,6 +30,7 @@ const MAX_ERRORS = 50;
 /**
  * @typedef {{ manifest: { tool: string, comparable: boolean, isolation_enforced: boolean,
  *   detector_repo: string | null, created_at: string, schema_version: string,
+ *   platform: string, python_version: string, installer: string | null,
  *   base: { ref: string, sha: string } | null, head: { ref: string, sha: string } | null,
  *   base_cmd: string[] | null, head_cmd: string[] | null,
  *   environment_delta: Array<Record<string, unknown>>,

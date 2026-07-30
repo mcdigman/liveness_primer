@@ -2,7 +2,6 @@
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
-    "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
     "lib": [
       "ES2023",
@@ -16,8 +15,6 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "noImplicitReturns": true,
-    "noPropertyAccessFromIndexSignature": true,
-    "noUncheckedIndexedAccess": false,
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022"
