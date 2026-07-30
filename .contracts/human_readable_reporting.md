@@ -1,6 +1,6 @@
 # Human-readable reporting contract for `liveness_primer`
 
-Status: draft.
+Status: approved; implementation pending.
 
 This document refines §§7–9, §12, §15, and §17 of
 [`initial_contract.md`](initial_contract.md). It is authoritative for human-readable report
