@@ -234,34 +234,6 @@ class _SideWorkspace:
     home: Path
 
 
-def _materialize_side(checkout: Path) -> _SideWorkspace:
-    """Give one detector invocation its own disposable checkout copy.
-
-    Both sides derive from the same pinned cache entry, so the copies are
-    byte-identical (contract §3) — but neither side can influence the other
-    (or a later run) through writes to a shared working tree, and the
-    detector's scratch ``HOME`` lives and dies with the workspace.
-
-    Parameters
-    ----------
-    checkout : Path
-        Pinned cached checkout to copy.
-
-    Returns
-    -------
-    _SideWorkspace
-        The materialized workspace.
-    """
-    root = Path(tempfile.mkdtemp(prefix='liveness-primer-side-'))
-    side_checkout = root / 'checkout'
-    # Symlinks are copied as symlinks: following them could pull content
-    # from outside the pinned tree into the analyzed copy.
-    shutil.copytree(checkout, side_checkout, symlinks=True, ignore=shutil.ignore_patterns('.git'))
-    home = root / 'home'
-    home.mkdir()
-    return _SideWorkspace(root=root, checkout=side_checkout, home=home)
-
-
 class PrimerRunner:
     """Runs one two-revision comparison over selected corpus projects.
 
@@ -300,9 +272,48 @@ class PrimerRunner:
             raise RunnerError(msg)
         self._adapter = adapter
         self._store = store
+        self._checkout_root = store.checkout_root
         self._isolation = isolation
         self._options = options
         self._async_launcher = async_launcher
+
+    def _materialize_side(self, checkout: Path) -> _SideWorkspace:
+        """Give one detector invocation its own disposable checkout copy.
+
+        Both sides derive from the same pinned cache entry, so the copies are
+        byte-identical (contract §3) — but neither side can influence the other
+        (or a later run) through writes to a shared working tree, and the
+        detector's scratch ``HOME`` lives and dies with the workspace.
+
+        Parameters
+        ----------
+        checkout : Path
+            Pinned cached checkout to copy.
+
+        Returns
+        -------
+        _SideWorkspace
+            The materialized workspace.
+
+        Raises
+        ------
+        RunnerError
+            If the checkout is not a direct child of the checkout cache.
+        """
+        # Only the pinned cache is ever copied: re-anchoring the name under the
+        # cache root keeps a misdirected checkout from reaching the detector.
+        source = self._checkout_root / Path(checkout).name
+        if source != checkout:
+            msg = f'refusing to copy {checkout}: not a checkout cache entry'
+            raise RunnerError(msg)
+        root = Path(tempfile.mkdtemp(prefix='liveness-primer-side-'))
+        side_checkout = root / 'checkout'
+        # Symlinks are copied as symlinks: following them could pull content
+        # from outside the pinned tree into the analyzed copy.
+        shutil.copytree(source, side_checkout, symlinks=True, ignore=shutil.ignore_patterns('.git'))
+        home = root / 'home'
+        home.mkdir()
+        return _SideWorkspace(root=root, checkout=side_checkout, home=home)
 
     def _fetch_corpus(self, projects: Sequence[CorpusProject]) -> tuple[list[_ProjectWork], tuple[FetchRecord, ...]]:
         """Resolve and materialize every selected project (fetch step, §3).
@@ -420,7 +431,7 @@ class PrimerRunner:
             # Each side analyzes its own disposable copy of the pinned
             # checkout under a scrubbed, credential-free environment
             # (contract §3, §11).
-            workspace = await asyncio.to_thread(_materialize_side, item.checkout)
+            workspace = await asyncio.to_thread(self._materialize_side, item.checkout)
             try:
                 environment = scrubbed_environment(home=workspace.home)
                 try:

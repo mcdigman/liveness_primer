@@ -3,6 +3,7 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+import asyncio
 import re
 import sys
 from collections.abc import Mapping, Sequence
@@ -456,6 +457,76 @@ def test_each_side_analyzes_its_own_disposable_copy(tmp_path: Path, corpus_proje
     (checkout,) = cached
     assert (checkout / 'pkg' / 'mod.py').exists()
     assert (checkout / '.git').exists()
+
+
+def test_side_copy_refuses_a_checkout_outside_the_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = CheckoutStore(tmp_path / 'cache')
+    trusted = store.checkout_root / 'checkout-key'
+    trusted.mkdir(parents=True)
+    (trusted / 'marker.txt').write_text('trusted', encoding='utf-8')
+    outside = tmp_path / 'checkout-key'
+    outside.mkdir()
+    (outside / 'marker.txt').write_text('outside', encoding='utf-8')
+
+    def misdirect_materialize(repo: str, sha: str) -> Path:
+        """Return an identically named path outside the cache.
+
+        Parameters
+        ----------
+        repo : str
+            Ignored repository URL.
+        sha : str
+            Ignored commit SHA.
+
+        Returns
+        -------
+        Path
+            The outside path.
+        """
+        del repo, sha
+        return outside
+
+    monkeypatch.setattr(store, 'materialize', misdirect_materialize)
+    launched: list[tuple[str, ...]] = []
+
+    async def recording_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        del cwd, env
+        await asyncio.sleep(0)
+        launched.append(tuple(argv))
+        return LaunchResult(
+            argv=tuple(argv),
+            returncode=0,
+            stdout='',
+            stderr='',
+            duration_seconds=0.0,
+            timed_out=False,
+        )
+
+    project = CorpusProject(
+        name='fakeproj',
+        repo='https://example.invalid/repo',
+        pin='a' * 40,
+    )
+    runner = PrimerRunner(
+        adapter=get_adapter('vulture'),
+        store=store,
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+        async_launcher=recording_launcher,
+    )
+    with pytest.raises(ExceptionGroup) as excinfo:
+        runner.run_escape_hatch([project], base_cmd=('detector',), head_cmd=('detector',))
+    assert excinfo.group_contains(RunnerError, match='not a checkout cache entry')
+    assert launched == []
+    assert (outside / 'marker.txt').read_text(encoding='utf-8') == 'outside'
 
 
 def test_analysis_runs_with_a_scrubbed_environment(

@@ -80,6 +80,17 @@ class CheckoutStore:
         self._launcher = launcher
         self._git_timeout = git_timeout
 
+    @property
+    def checkout_root(self) -> Path:
+        """Directory containing materialized checkouts.
+
+        Returns
+        -------
+        Path
+            Checkout cache directory.
+        """
+        return self._root / 'checkouts'
+
     def _git(self, args: list[str], *, cwd: Path | None = None, check: bool = True) -> LaunchResult:
         """Run one git command through the audited launcher.
 
@@ -246,7 +257,7 @@ class CheckoutStore:
         if not _SHA_RE.match(sha):
             msg = f'checkout requires a full commit SHA, got {sha!r}'
             raise CheckoutError(msg)
-        checkouts = self._root / 'checkouts'
+        checkouts = self.checkout_root
         checkouts.mkdir(parents=True, exist_ok=True)
         dest = checkouts / Path(f'{_slug(repo)}-{sha}').name
         lock = FileLock(str(dest) + '.lock')
