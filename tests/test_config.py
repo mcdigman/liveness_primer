@@ -216,6 +216,36 @@ def test_load_corpus_rejects_missing_file(tmp_path: Path) -> None:
         load_corpus(tmp_path / 'absent.toml')
 
 
+def test_load_corpus_accepts_symlink_to_regular_file(tmp_path: Path) -> None:
+    target = tmp_path / 'target.toml'
+    target.write_text(VALID_TOML, encoding='utf-8')
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.symlink_to(target)
+    corpus = load_corpus(corpus_file)
+    assert len(corpus.projects) == 2
+
+
+def test_load_corpus_rejects_non_file(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.mkdir()
+    with pytest.raises(CorpusConfigError, match='not a regular file'):
+        load_corpus(corpus_file)
+
+
+def test_load_corpus_rejects_oversized_file(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.write_text(VALID_TOML + '\n#' + 'x' * 1_048_576, encoding='utf-8')
+    with pytest.raises(CorpusConfigError, match='exceeds 1048576 bytes'):
+        load_corpus(corpus_file)
+
+
+def test_load_corpus_rejects_invalid_utf8(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file.write_bytes(b'\xff')
+    with pytest.raises(CorpusConfigError, match='not valid UTF-8'):
+        load_corpus(corpus_file)
+
+
 def test_load_corpus_rejects_bad_toml(tmp_path: Path) -> None:
     corpus_file = tmp_path / 'corpus.toml'
     corpus_file.write_text('projects = [', encoding='utf-8')

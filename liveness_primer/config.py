@@ -34,6 +34,8 @@ _GITHUB_PATTERN = re.compile(
     r'(\.git)?/?$'
 )
 
+_MAX_CORPUS_BYTES = 1_048_576
+
 
 class CorpusConfigError(LivenessPrimerError):
     """Raised when the corpus specification is invalid or selection fails."""
@@ -320,6 +322,45 @@ def _check_tool_names(corpus: Corpus, known_tools: Collection[str]) -> None:
         raise CorpusConfigError('; '.join(problems))
 
 
+def _read_corpus_text(path: Path) -> str:
+    """Read a bounded UTF-8 corpus file from a regular resolved path.
+
+    Parameters
+    ----------
+    path : Path
+        Operator-selected corpus file path.
+
+    Returns
+    -------
+    str
+        Decoded corpus contents.
+
+    Raises
+    ------
+    CorpusConfigError
+        If the path is missing, not a regular file, oversized, unreadable,
+        or not valid UTF-8.
+    """
+    not_regular = f'corpus file {path} is not a regular file'
+    try:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_file():
+            raise CorpusConfigError(not_regular)
+        with resolved.open('rb') as corpus_file:
+            encoded = corpus_file.read(_MAX_CORPUS_BYTES + 1)
+    except OSError as exc:
+        msg = f'cannot read corpus file {path}: {exc}'
+        raise CorpusConfigError(msg) from exc
+    if len(encoded) > _MAX_CORPUS_BYTES:
+        msg = f'corpus file {path} exceeds {_MAX_CORPUS_BYTES} bytes'
+        raise CorpusConfigError(msg)
+    try:
+        return encoded.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        msg = f'corpus file {path} is not valid UTF-8: {exc}'
+        raise CorpusConfigError(msg) from exc
+
+
 def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Corpus:
     """Load and validate a corpus TOML file (contract §5).
 
@@ -339,13 +380,10 @@ def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Co
     Raises
     ------
     CorpusConfigError
-        If the file is unreadable, not valid TOML, or violates the schema.
+        If the file is missing, not regular, oversized, unreadable, not valid
+        UTF-8 or TOML, or violates the schema.
     """
-    try:
-        text = path.read_text(encoding='utf-8')
-    except OSError as exc:
-        msg = f'cannot read corpus file {path}: {exc}'
-        raise CorpusConfigError(msg) from exc
+    text = _read_corpus_text(path)
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
