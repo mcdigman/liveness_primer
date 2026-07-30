@@ -348,7 +348,7 @@ def _read_corpus_text(path: Path) -> str:
             raise CorpusConfigError(not_regular)
         with resolved.open('rb') as corpus_file:
             encoded = corpus_file.read(_MAX_CORPUS_BYTES + 1)
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         msg = f'cannot read corpus file {path}: {exc}'
         raise CorpusConfigError(msg) from exc
     if len(encoded) > _MAX_CORPUS_BYTES:
