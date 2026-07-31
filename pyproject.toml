@@ -29,7 +29,7 @@ keywords = [
 ]
 
 dependencies = [
-    # Contract §17 pins pydantic>=2; 2.8 supports the project's Python 3.13
+    # Contract §17 pins pydantic>=2; 2.8 supports the project Python 3.13
     # and continues to support the 3.12 lowest-direct-resolution CI job.
     "pydantic>=2.8",
     "platformdirs>=4",
