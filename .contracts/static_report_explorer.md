@@ -153,6 +153,9 @@ the findings toolbar, it displays persistent, concise status for:
 - detector errors and corpus/source warnings; and
 - non-detector environment deltas.
 
+The visual references show a report free of these conditions, so this section rather than the
+mockups is authoritative for the status region's placement and appearance.
+
 Details may open in a secondary panel, but the existence and severity of these conditions
 must be visible without opening it. Complete report totals and rollups are labelled as such;
 counts derived from displayed, filtered, selected, or hidden rows are not presented as
@@ -181,7 +184,8 @@ an acceptable shortcut.
 
 Direct presentation operations are permitted: indexing projects and pins by their declared
 name, choosing already-defined reference-side values, normalizing text for search, deriving
-visible facet counts, and ordering rows through the selected grid control.
+visible facet counts, ordering rows through the selected grid control, and constructing the
+§7 permalink from validated pin fields.
 
 ### 4.2 Serialized locators
 
@@ -197,6 +201,19 @@ FindingLocator:
     occurrence: int
 ```
 
+`line` is the diff class's reference-side start line: head for `new`, base for `dropped` and
+`changed`. `occurrence` is the diff's zero-based position within the subsequence of the same
+serialized `ProjectReport.diffs` tuple whose identity and reference-side start line equal
+`(identity, line)`, without changing its serialized order. Occurrences removed by the diff
+engine's equal-occurrence intersection are not indexed, and truncation retains a canonical
+prefix, so retained indices match the complete canonical sequence. This fixes the indexing set
+and zero-based convention left implicit by initial contract §12; `bisect --occurrence` must
+apply the identical rule.
+
+Every serialized `FindingDiff` carries a locator. Python therefore assigns it during canonical
+assembly — after the canonical sort and any diff-transforming hook, and before truncation and
+serialization — rather than at diff construction, where the ordinal is not yet known.
+
 The locator is unique within a report. Python tests cover duplicate occurrences and all diff
 classes. Browser selection, hiding, inspection, persistence, and export reference this
 serialized locator; browser code must not calculate the occurrence ordinal.
@@ -210,6 +227,8 @@ supported schema version.
 Validation is provided by Ajv, a maintained, standards-conforming JSON Schema library.
 The schema is compiled during the build into a bundled validator compatible with the
 production Content Security Policy. A custom JSON Schema interpreter is prohibited.
+Exported schema documents declare the JSON Schema dialect they use, and the validator is
+compiled for that declared dialect rather than a build-time guess.
 
 Malformed JSON, unsupported schema versions, and schema failures prevent activation and
 produce bounded path-based errors. Structural validation establishes that the browser can
@@ -230,7 +249,8 @@ In particular:
 
 - JSON Schema validation uses the library boundary in §4.3;
 - the findings surface uses a maintained data-grid or grouped-table library providing row
-  grouping, sorting, keyboard behavior, and bounded rendering or virtualization; and
+  grouping, sorting, keyboard behavior, and bounded rendering or virtualization, whose
+  grouped-row accessibility under §9 is verified before the surface is built on it; and
 - a component library or framework may own component rendering and shared application state.
 
 A custom schema engine, custom virtualization engine, or hand-built general-purpose data grid
@@ -265,15 +285,18 @@ The versioned JSON review record contains only:
 
 ```text
 ExplorerReview:
-    schema_version: str
+    schema_version: SchemaVersion
     report_sha256: str
     selected: tuple[FindingLocator, ...]
     hidden: tuple[FindingLocator, ...]
 ```
 
-Entries are unique and follow report order. The implementation supplies a Python model and
-generated schema for this portable record rather than maintaining independent Python and
-browser definitions. Importing review JSON is optional for v1; exporting it is required.
+`schema_version` is the package-wide value of initial contract §7. `report_sha256` is exactly
+64 lowercase hexadecimal characters. Entries within each tuple are unique, enforced by a model
+validator; report order is a producer obligation the model cannot check without the report.
+The implementation supplies a Python model and generated schema for this portable record
+rather than maintaining independent Python and browser definitions. Importing review JSON is
+optional for v1; exporting it is required.
 
 The Markdown export covers selected findings only and clearly states the selected count,
 report digest, detector revisions, comparison safety/completeness state, and affected project
@@ -288,7 +311,10 @@ parse `raw_excerpt` as source and does not require the network.
 
 `Open pinned source` constructs the same deterministic HTTPS permalink defined by the
 human-readable reporting contract from schema-validated repository, commit, path, and span
-fields. An optional `Load complete file` action may fetch a raw GitHub file only after an
+fields. When the pin is not a GitHub repository or carries no resolved full commit SHA, no URL
+is fabricated and the escaped location text remains the evidence.
+
+An optional `Load complete file` action may fetch a raw GitHub file only after an
 explicit user action and only from those values. It sends no credentials and renders the
 response as text. Failure falls back to the embedded excerpt.
 
@@ -341,9 +367,9 @@ their invoking control.
 ## 10. Verification
 
 CI runs formatting, linting, strict type checking, unit tests, browser tests, accessibility
-scans, a production build, and static-subpath smoke tests. Project-authored production logic
-follows the repository's line and branch coverage policy; library internals and generated
-validators are not reimplemented merely to make them coverable.
+scans, a bundled-dependency license check, a production build, and static-subpath smoke tests.
+Project-authored production logic follows the repository's line and branch coverage policy;
+library internals and generated validators are not reimplemented merely to make them coverable.
 
 Python tests establish:
 
