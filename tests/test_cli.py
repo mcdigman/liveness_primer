@@ -14,10 +14,11 @@ import pytest
 
 import liveness_primer.cli
 from liveness_primer.cli import EXIT_FAILURE, EXIT_GATE, EXIT_OK, main
-from liveness_primer.filesystem import atomic_write_text
+from liveness_primer.filesystem import atomic_write_text, read_small_text
 from liveness_primer.findings import SCHEMA_VERSION, Report
 from liveness_primer.isolation import UNENFORCED, Isolation, IsolationError
 from liveness_primer.license_check import LicenseCheckResult
+from liveness_primer.report import render_json
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from tests.test_runner import ScriptedEnvInstaller, fake_detector_repo
 
@@ -96,6 +97,58 @@ def test_run_github_output(tmp_path: Path, project_url: str, capsys: pytest.Capt
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert captured.out.startswith('# liveness primer report')
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_json_out_archives_the_report_beside_any_output_mode(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reporting acceptance 31: a CI job renders the human report and keeps
+    # the CI-consumable JSON product from the same corpus run.
+    destination = tmp_path / 'report.json'
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW], '--output', 'github', '--json-out', str(destination)))
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert captured.out.startswith('# liveness primer report')
+    archived = read_small_text(destination)
+    report = Report.model_validate_json(archived)
+    assert report.totals.new == 1
+    # Byte-identical to what `--output json` would have written.
+    assert archived == render_json(report)
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_json_out_reports_an_unwritable_destination(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    destination = tmp_path / 'missing-directory' / 'report.json'
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW], '--json-out', str(destination)))
+    captured = capsys.readouterr()
+    assert code == EXIT_FAILURE
+    assert 'could not write the JSON report' in captured.err
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_source_urls_is_opt_in(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reporting acceptance 28: the flag is accepted and the default text
+    # report carries no per-finding url continuation lines.
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW]))
+    assert code == EXIT_OK
+    assert 'url: ' not in capsys.readouterr().out
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW], '--source-urls'))
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    # The ad-hoc local project is not GitHub-hosted, so no URL exists to
+    # print; the flag must still be accepted and change nothing else.
+    assert 'url: ' not in captured.out
 
 
 @pytest.mark.usefixtures('_isolated_cache')

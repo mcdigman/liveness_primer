@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from liveness_primer.diffing import compute_rollups
 from liveness_primer.filesystem import (
     FilesystemPolicyError,
     atomic_write_text,
@@ -451,6 +452,7 @@ def test_changed_fields_tokens() -> None:
         project='orphan',
         diffs=(entry,),
         totals=DiffTotals(changed=1, changed_confidence=1),
+        rollups=compute_rollups((entry,)),
         truncated=False,
         base_findings=1,
         head_findings=1,
@@ -517,22 +519,27 @@ def test_headers_carry_rollups_and_counts() -> None:
 
 
 def test_project_header_links_pinned_tree_not_detector_repo() -> None:
-    # Reporting §4.1: the project link names the pinned corpus tree.
+    # Reporting §4.1: exactly one corpus line per project, naming the
+    # pinned corpus tree without printing the repository twice.
     text = render_text(build_report(), WIDE)
     alpha_section = text[text.index('project alpha') : text.index('project beta')]
-    assert f'tree: https://github.com/example/alpha/tree/{"3" * 40}' in alpha_section
+    assert f'  corpus: https://github.com/example/alpha/tree/{"3" * 40}' in alpha_section
+    assert alpha_section.count('corpus:') == 1
+    assert 'tree:' not in alpha_section
     assert 'jendrikseipp' not in alpha_section
-    beta_section = text[text.index('project beta') :]
-    # Non-GitHub ad-hoc project: escaped repository string and SHA shown
-    # separately; no pinned-tree URL is fabricated (reporting §4.1, §5).
-    assert 'repo ssh://git@internal.invalid/beta.git @ 444444444444' in beta_section
-    assert 'tree:' not in beta_section
+    beta_section = text[text.index('project beta') : text.index('project gamma')]
+    # Non-GitHub ad-hoc project: escaped repository string and SHA on the
+    # same one line; no pinned-tree URL is fabricated (reporting §4.1, §5).
+    assert '  corpus: ssh://git@internal.invalid/beta.git @ 444444444444' in beta_section
+    assert beta_section.count('corpus:') == 1
     assert 'https://github.com' not in beta_section
 
 
 def test_source_permalink_targets_corpus_sha_and_normalized_path() -> None:
-    # Reporting acceptance 11.
-    text = render_text(build_report(), WIDE)
+    # Reporting acceptance 11 and 28: per-finding URL lines are opt-in.
+    plain = render_text(build_report(), WIDE)
+    assert 'url: https://github.com/' not in plain
+    text = render_text(build_report(), TextRenderOptions(width=160, source_urls=True))
     assert f'url: https://github.com/example/alpha/blob/{"3" * 40}/pkg/mod.py#L9' in text
     assert f'url: https://github.com/example/alpha/blob/{"3" * 40}/pkg/mod.py#L14' in text
     # The detector base/head SHAs never form source links (reporting §5).
@@ -542,13 +549,16 @@ def test_source_permalink_targets_corpus_sha_and_normalized_path() -> None:
 
 def test_moved_changed_span_shows_labelled_base_and_head_excerpts() -> None:
     # Reporting acceptance 10.
-    text = render_text(build_report(), WIDE)
-    lines = text.splitlines()
+    lines = render_text(build_report(), WIDE).splitlines()
     base_label = next(index for index, line in enumerate(lines) if line.strip() == 'base:')
     assert lines[base_label + 1].strip() == '10 | def mover():'
     head_label = next(index for index, line in enumerate(lines) if line.strip() == 'head:')
-    assert 'url: https://github.com/example/alpha/blob/' in lines[head_label + 1]
-    assert lines[head_label + 2].strip() == '14 | def mover():  # moved'
+    assert lines[head_label + 1].strip() == '14 | def mover():  # moved'
+    # The head-side url line appears only under --source-urls (§5).
+    linked = render_text(build_report(), TextRenderOptions(width=160, source_urls=True)).splitlines()
+    head_label = next(index for index, line in enumerate(linked) if line.strip() == 'head:')
+    assert 'url: https://github.com/example/alpha/blob/' in linked[head_label + 1]
+    assert linked[head_label + 2].strip() == '14 | def mover():  # moved'
 
 
 def test_unchanged_span_shows_reference_excerpt_once() -> None:
@@ -662,6 +672,7 @@ def test_hostile_source_and_fields_cannot_break_structure() -> None:
         project='alpha',
         diffs=(hostile,),
         totals=DiffTotals(new=1),
+        rollups=compute_rollups((hostile,)),
         truncated=False,
         base_findings=0,
         head_findings=1,
@@ -774,3 +785,90 @@ def test_excerpt_sides_tolerate_invalidly_constructed_diffs() -> None:
     headless_changed = construct_diff(DiffClass.CHANGED, occurrence(1, 'm'), None)
     assert excerpt_sides(headless_changed) == ((None, occurrence(1, 'm')),)
     assert pin_for_project(build_manifest(), 'unknown-project') is None
+
+
+def test_text_report_ends_with_the_repeated_summary_and_impact_table() -> None:
+    # Reporting acceptance 29.
+    text = render_text(build_report(), WIDE)
+    footer = text[text.rindex('\nsummary\n') :]
+    assert 'totals: 3 new, 2 dropped, 9 changed (1 confidence, 5 message-only)' in footer
+    assert 'new 3: SKY-U001 2, kind:function 1' in footer
+    assert 'cost: 1.67s' in footer
+    assert 'errors: 1' in footer
+    header = next(line for line in footer.splitlines() if line.strip().startswith('project '))
+    assert header.split() == [
+        'project',
+        'base',
+        '->',
+        'head',
+        'delta',
+        'ratio',
+        'new',
+        'dropped',
+        'changed',
+        'cost',
+        'warnings',
+    ]
+    rows = [line for line in footer.splitlines() if line.startswith('  ') and not line.strip().startswith('project')]
+    # Ordered by descending absolute delta, then project name: alpha and
+    # beta both moved by one, gamma did not move at all.
+    assert [row.split()[0] for row in rows] == ['alpha', 'beta', 'gamma']
+    assert '12 -> 13' in rows[0]
+    assert '+1' in rows[0]
+    assert '1.08x' in rows[0]
+    assert '1.25s' in rows[0]
+    # alpha carries one error, one integrity warning, and one source warning.
+    assert rows[0].split()[-1] == '3'
+    # A zero baseline renders explicitly rather than as a misleading ratio.
+    assert rows[2].split()[4:6] == ['+0', '-']
+
+
+def test_impact_ratio_marks_a_zero_baseline_as_new() -> None:
+    # Reporting acceptance 29: absolute and relative change appear together
+    # and a zero baseline is explicit.
+    report = build_report()
+    grown = report.projects[2].model_copy(update={'base_findings': 0, 'head_findings': 7})
+    text = render_text(report.model_copy(update={'projects': (grown,)}), WIDE)
+    footer = text[text.rindex('\nsummary\n') :]
+    row = next(line for line in footer.splitlines() if line.strip().startswith('gamma'))
+    assert row.split()[1:5] == ['0', '->', '7', '+7']
+    assert row.split()[5] == 'new'
+
+
+def test_github_overall_header_carries_cost_and_warning_summaries() -> None:
+    # Reporting acceptance 21: the GitHub overall header is not a reduced
+    # version of the text one.
+    markdown = render_github(build_report())
+    overall = markdown[markdown.index('## Totals') : markdown.index('## `alpha`')]
+    assert '- **cost**: 1.67s' in overall
+    assert '- **errors**: 1' in overall
+    assert '- **corpus-integrity warnings**: 1' in overall
+    assert '- **source warnings**: 1' in overall
+    assert '- **rollup**: new 3: SKY-U001 2, kind:function 1' in overall
+
+
+def test_github_rows_carry_only_the_first_retained_source_line() -> None:
+    # Reporting acceptance 30.
+    markdown = render_github(build_report())
+    rows = [line for line in markdown.splitlines() if line.startswith(('| \U0001f7e2', '| \U0001f534'))]
+    fresh = next(row for row in rows if 'hostile excerpt' in row)
+    assert '9 \\| def fresh(request):' in fresh
+    assert 'return request' not in fresh
+    assert '(+1 more retained line(s); see the JSON report)' in fresh
+    span = next(row for row in rows if 'omitted tail' in row)
+    assert '50 \\| class Span:' in span
+    assert 'a = 1' not in span
+    assert '+1 more retained line(s); 6 reported-span line(s) omitted' in span
+    # The complete retained excerpt is still in JSON (§7).
+    assert '    a = 1' in render_json(build_report())
+    # No row serializes a whole excerpt into one cell.
+    assert max(len(row) for row in rows) < 400
+
+
+def test_footer_omits_the_impact_table_when_no_project_ran() -> None:
+    empty = Report(manifest=build_manifest(), projects=(), totals=DiffTotals(), rollups=(), truncated=False)
+    text = render_text(empty, WIDE)
+    footer = text[text.rindex('\nsummary\n') :]
+    assert 'totals: 0 new, 0 dropped, 0 changed' in footer
+    assert 'cost: n/a' in footer
+    assert 'base -> head' not in footer

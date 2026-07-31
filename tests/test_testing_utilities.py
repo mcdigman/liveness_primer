@@ -152,6 +152,42 @@ def test_contained_path_rejects_absolute_path(tmp_path: Path) -> None:
         contained_path(tmp_path, str(tmp_path / 'artifact.txt'))
 
 
+def test_contained_path_normalizes_symlink_loop_without_leaking_the_root(tmp_path: Path) -> None:
+    # Reporting §3.3: Path.resolve() raises RuntimeError for a corpus-
+    # controlled symlink loop on the supported Python floor (3.12). Later
+    # interpreters resolve it silently, so the loop is simulated to keep
+    # the guarantee asserted on every supported version.
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'loop').symlink_to(root / 'loop')
+
+    def explode(self: Path, **_options: object) -> Path:
+        message = f'Symlink loop from {str(self)!r}'
+        raise RuntimeError(message)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'resolve', explode)
+        with pytest.raises(FilesystemPolicyError, match="path could not be resolved: 'loop'") as failure:
+            contained_path(root, 'loop')
+    assert str(tmp_path) not in str(failure.value)
+
+
+def test_read_small_text_normalizes_unreadable_regular_file(tmp_path: Path) -> None:
+    # Reporting §3.3: an unreadable regular file becomes a bounded policy
+    # error, never an uncaught PermissionError out of report assembly.
+    artifact = tmp_path / 'artifact.txt'
+    artifact.write_text('secret', encoding='utf-8')
+
+    def refuse(self: Path, *_args: object, **_options: object) -> object:
+        message = f'Permission denied: {self}'
+        raise PermissionError(message)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'open', refuse)
+        with pytest.raises(FilesystemPolicyError, match='file could not be read'):
+            read_small_text(artifact)
+
+
 def test_read_small_text_reads_utf8_within_limit(tmp_path: Path) -> None:
     artifact = tmp_path / 'artifact.txt'
     artifact.write_text('naïve', encoding='utf-8')

@@ -23,6 +23,7 @@ from liveness_primer.findings import (
     Finding,
     FindingDiff,
     FindingOccurrence,
+    ProjectReport,
     Report,
     RunManifest,
     RunSettings,
@@ -185,6 +186,62 @@ def test_diff_rollup_requires_exactly_one_group_key() -> None:
         DiffRollup.model_validate({'diff_class': DiffClass.NEW, 'rule_id': 'SKY-U001', 'kind': None, 'count': 0})
 
 
+def project_report(totals: DiffTotals, rollups: tuple[DiffRollup, ...]) -> ProjectReport:
+    return ProjectReport(
+        project='alpha',
+        diffs=(),
+        totals=totals,
+        rollups=rollups,
+        truncated=False,
+        base_findings=0,
+        head_findings=0,
+        measured_cost_seconds=None,
+    )
+
+
+def test_project_rollups_are_required_and_must_match_the_totals() -> None:
+    # Reporting acceptance 25: stale aggregate data is an invalid report,
+    # and validation is where a rewriting hook fails.
+    group = DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1)
+    assert project_report(DiffTotals(new=1), (group,)).rollups == (group,)
+    with pytest.raises(ValidationError, match='Field required'):
+        ProjectReport.model_validate(
+            {
+                'project': 'alpha',
+                'diffs': (),
+                'totals': DiffTotals(new=1),
+                'truncated': False,
+                'base_findings': 0,
+                'head_findings': 0,
+                'measured_cost_seconds': None,
+            }
+        )
+    with pytest.raises(ValidationError, match='rollups are stale: new counts disagree'):
+        project_report(DiffTotals(new=1), ())
+    with pytest.raises(ValidationError, match='rollups are stale: dropped, changed counts disagree'):
+        project_report(
+            DiffTotals(new=1),
+            (
+                group,
+                DiffRollup(diff_class=DiffClass.DROPPED, rule_id=None, kind='function', count=2),
+                DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=3),
+            ),
+        )
+
+
+def test_overall_aggregates_must_be_the_sum_of_the_projects() -> None:
+    # Reporting acceptance 25.
+    group = DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1)
+    project = project_report(DiffTotals(new=1), (group,))
+    manifest = make_manifest()
+    report = Report(manifest=manifest, projects=(project,), totals=DiffTotals(new=1), rollups=(group,), truncated=False)
+    assert report.rollups == (group,)
+    with pytest.raises(ValidationError, match='overall totals are stale'):
+        Report(manifest=manifest, projects=(project,), totals=DiffTotals(new=2), rollups=(group,), truncated=False)
+    with pytest.raises(ValidationError, match='overall rollups are stale'):
+        Report(manifest=manifest, projects=(project,), totals=DiffTotals(new=1), rollups=(), truncated=False)
+
+
 def occurrence_at(line: int) -> FindingOccurrence:
     return FindingOccurrence(start_line=line, end_line=line, message='m', confidence=None)
 
@@ -260,7 +317,7 @@ def test_diff_reference_side_rejects_invalidly_constructed_diff() -> None:
 
 
 def test_report_embeds_schema_version() -> None:
-    report = Report(manifest=make_manifest(), projects=(), totals=DiffTotals(), truncated=False)
+    report = Report(manifest=make_manifest(), projects=(), totals=DiffTotals(), rollups=(), truncated=False)
     assert report.schema_version == SCHEMA_VERSION
     assert report.manifest.schema_version == SCHEMA_VERSION
     payload = report.model_dump_json()
@@ -294,7 +351,7 @@ def test_schema_version_is_constrained_to_the_supported_version() -> None:
         FindingOccurrence(schema_version='2.0.0', start_line=1, end_line=1, message='m')
     manifest = make_manifest()
     with pytest.raises(ValidationError, match='is not the supported'):
-        Report(schema_version='1.0.1', manifest=manifest, projects=(), totals=DiffTotals(), truncated=False)
+        Report(schema_version='1.0.1', manifest=manifest, projects=(), totals=DiffTotals(), rollups=(), truncated=False)
 
 
 def test_annotation_coverage_rule() -> None:

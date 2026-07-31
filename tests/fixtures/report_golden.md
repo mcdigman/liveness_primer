@@ -23,9 +23,14 @@ base findings 13, head findings 15
 | new | dropped | changed | confidence changes | message-only |
 | --- | --- | --- | --- | --- |
 | 3 | 2 | 9 | 1 | 5 |
+
 - **rollup**: new 3: SKY-U001 2, kind:function 1
 - **rollup**: dropped 2: kind:function 2
 - **rollup**: changed 9: kind:function 9
+- **cost**: 1.67s
+- **errors**: 1
+- **corpus-integrity warnings**: 1
+- **source warnings**: 1
 
 Some project diffs were truncated by `--max-results`; totals reflect the full comparison.
 
@@ -45,12 +50,12 @@ base 12 findings, head 13; 2 new, 2 dropped, 8 changed (1 confidence, 5 message-
 
 |  | rule | % | kind | location | message | symbol | fields |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 🟢 + | SKY-U001 | 100% | function | [pkg/mod.py:L9](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L9) | unused function with a very hostile excerpt<br>9 \| def fresh(request):<br>10 \|     return request | fresh \| pipe\`tick\` | - |
+| 🟢 + | SKY-U001 | 100% | function | [pkg/mod.py:L9](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L9) | unused function with a very hostile excerpt<br>9 \| def fresh(request):<br>(+1 more retained line(s); see the JSON report) | fresh \| pipe\`tick\` | - |
 | 🔴 - | - | 60% | function | [pkg/mod.py:L5](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L5) | unused function 'goner'<br>5 \| def goner(): | goner | - |
 | 🟡 ~ | - | 60% | function | [pkg/mod.py:L10->L14](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L10) | unused function 'mover'<br>line: L10 -> L14<br>[base](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L10):<br>10 \| def mover():<br>[head](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L14):<br>14 \| def mover():  # moved | mover | line |
 | 🟡 ~ | - | 60%->90% | function | [pkg/mod.py:L21](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L21) | unused function 'flaky'<br>%: 60% -> 90%<br>21 \| def flaky(): | flaky | % |
 | 🟡 ~ | SKY-U001 | 60% | function | [pkg/mod.py:L40](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L40) | renumbered rule<br>rule: SKY-U001 -> SKY-U003<br>40 \| def renumbered(): | renumbered | rule |
-| 🔴 - | - | NA | function | [pkg/mod.py:L50-57](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L50-L57) | multi-line span with an omitted tail<br>50 \| class Span:<br>51 \|     a = 1<br>(6 reported-span line(s) omitted) | span | - |
+| 🔴 - | - | NA | function | [pkg/mod.py:L50-57](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L50-L57) | multi-line span with an omitted tail<br>50 \| class Span:<br>(+1 more retained line(s); 6 reported-span line(s) omitted; see the JSON report) | span | - |
 | 🟡 ~ | - | 60% | function | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | old wording for reworded-1<br>message: old wording for reworded-1 -> new wording for reworded-1 | reworded-1 | message |
 | 🟡 ~ | - | 60% | function | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | old wording for reworded-2<br>message: old wording for reworded-2 -> new wording for reworded-2 | reworded-2 | message |
 | 🟡 ~ | - | 60% | function | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | old wording for reworded-3<br>message: old wording for reworded-3 -> new wording for reworded-3 | reworded-3 | message |

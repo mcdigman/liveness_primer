@@ -21,8 +21,7 @@ note: some project diffs were truncated by --max-results; totals reflect the ful
 legend: + new; - dropped; ~ changed
 
 project alpha - base 12 findings, head 13; 2 new, 2 dropped, 8 changed (1 confidence, 5 message-only); cost 1.25s
-  repo https://github.com/example/alpha @ 333333333333
-  tree: https://github.com/example/alpha/tree/3333333333333333333333333333333333333333
+  corpus: https://github.com/example/alpha/tree/3333333333333333333333333333333333333333
   new 2: SKY-U001 2
   dropped 2: kind:function 2
   changed 8: kind:function 8
@@ -30,58 +29,74 @@ project alpha - base 12 findings, head 13; 2 new, 2 dropped, 8 changed (1 confid
   warning[corpus-integrity]: expected-clean base side reported 12 finding(s) and exit code 3
   warning[source]: pkg/gone.py: not a regular non-symlink file
   showing 11 of 12 finding diffs (truncated by --max-results)
-   rule      %           kind      location             message                                      symbol              fields
-+  SKY-U001  100%        function  pkg/mod.py:L9        unused function with a very hostile excerpt  fresh | pipe`tick`  -
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L9
-                                    9 | def fresh(request):
-                                   10 |     return request
--  -         60%         function  pkg/mod.py:L5        unused function 'goner'                      goner               -
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L5
-                                   5 | def goner():
-~  -         60%         function  pkg/mod.py:L10->L14  unused function 'mover'                      mover               line
-                                   line: L10 -> L14
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L10
-                                   base:
-                                   10 | def mover():
-                                   head:
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L14
-                                   14 | def mover():  # moved
-~  -         60%->90%    function  pkg/mod.py:L21       unused function 'flaky'                      flaky               %
-                                   %: 60% -> 90%
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L21
-                                   21 | def flaky():
-~  SKY-U001  60%         function  pkg/mod.py:L40       renumbered rule                              renumbered          rule
-                                   rule: SKY-U001 -> SKY-U003
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L40
-                                   40 | def renumbered():
--  -         NA          function  pkg/mod.py:L50-57    multi-line span with an omitted tail         span                -
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L50-L57
-                                   50 | class Span:
-                                   51 |     a = 1
-                                   (6 reported-span line(s) omitted)
-~  -         60%         function  pkg/mod.py:L30       old wording for reworded-1                   reworded-1          message
-                                   message: old wording for reworded-1 -> new wording for reworded-1
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30
-~  -         60%         function  pkg/mod.py:L30       old wording for reworded-2                   reworded-2          message
-                                   message: old wording for reworded-2 -> new wording for reworded-2
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30
-~  -         60%         function  pkg/mod.py:L30       old wording for reworded-3                   reworded-3          message
-                                   message: old wording for reworded-3 -> new wording for reworded-3
-                                   url: https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30
+   rule      %         kind      location             message                                      symbol              fields
++  SKY-U001  100%      function  pkg/mod.py:L9        unused function with a very hostile excerpt  fresh | pipe`tick`  -
+   9 | def fresh(request):
+  10 |     return request
+
+-  -         60%       function  pkg/mod.py:L5        unused function 'goner'                      goner               -
+  5 | def goner():
+
+~  -         60%       function  pkg/mod.py:L10->L14  unused function 'mover'                      mover               line
+  line: L10 -> L14
+  base:
+  10 | def mover():
+  head:
+  14 | def mover():  # moved
+
+~  -         60%->90%  function  pkg/mod.py:L21       unused function 'flaky'                      flaky               %
+  %: 60% -> 90%
+  21 | def flaky():
+
+~  SKY-U001  60%       function  pkg/mod.py:L40       renumbered rule                              renumbered          rule
+  rule: SKY-U001 -> SKY-U003
+  40 | def renumbered():
+
+-  -         NA        function  pkg/mod.py:L50-57    multi-line span with an omitted tail         span                -
+  50 | class Span:
+  51 |     a = 1
+  (6 reported-span line(s) omitted)
+
+~  -         60%       function  pkg/mod.py:L30       old wording for reworded-1                   reworded-1          message
+  message: old wording for reworded-1 -> new wording for reworded-1
+
+~  -         60%       function  pkg/mod.py:L30       old wording for reworded-2                   reworded-2          message
+  message: old wording for reworded-2 -> new wording for reworded-2
+
+~  -         60%       function  pkg/mod.py:L30       old wording for reworded-3                   reworded-3          message
+  message: old wording for reworded-3 -> new wording for reworded-3
+
   (2 more message-only change(s) not shown; the JSON report retains full detail)
 
 project beta - base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidence, 0 message-only); cost 0.42s
-  repo ssh://git@internal.invalid/beta.git @ 444444444444
+  corpus: ssh://git@internal.invalid/beta.git @ 444444444444
   new 1: kind:function 1
   changed 1: kind:function 1
-   rule  %           kind      location             message                        symbol    fields
-+  -     NA          function  lib/util.py:L3       no permalink for ad-hoc hosts  unlinked  -
-                               3 | x = 1
-~  -     NA          function  lib/move.py:L7->L11  moved without a permalink      wanderer  line
-                               line: L7 -> L11
-                               base:
-                               7 | old = 7
-                               head:
-                               11 | new = 11
+   rule  %   kind      location             message                        symbol    fields
++  -     NA  function  lib/util.py:L3       no permalink for ad-hoc hosts  unlinked  -
+  3 | x = 1
+
+~  -     NA  function  lib/move.py:L7->L11  moved without a permalink      wanderer  line
+  line: L7 -> L11
+  base:
+  7 | old = 7
+  head:
+  11 | new = 11
 
 project gamma - base 0 findings, head 0; 0 new, 0 dropped, 0 changed (0 confidence, 0 message-only); cost n/a
+
+summary
+base findings 13, head findings 15
+totals: 3 new, 2 dropped, 9 changed (1 confidence, 5 message-only)
+new 3: SKY-U001 2, kind:function 1
+dropped 2: kind:function 2
+changed 9: kind:function 9
+cost: 1.67s
+errors: 1
+corpus-integrity warnings: 1
+source warnings: 1
+
+  project  base -> head  delta  ratio  new  dropped  changed   cost  warnings
+  alpha    12 -> 13         +1  1.08x    2        2        8  1.25s         3
+  beta     1 -> 2           +1  2.00x    1        0        1  0.42s         0
+  gamma    0 -> 0           +0      -    0        0        0    n/a         0

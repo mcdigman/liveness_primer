@@ -29,6 +29,15 @@ liveness-primer run --tool vulture --project https://github.com/pytest-dev/plugg
   --old-cmd 'vulture-old' --new-cmd 'vulture-new'
 ```
 
+In CI, render the human report to the step summary and archive the JSON
+report — the CI-consumable product — from the same run:
+
+```bash
+liveness-primer run --tool skylos --repo "$REPO" --old "$BASE" --new "$HEAD" \
+  --all --output github --json-out liveness-primer-report.json \
+  >> "$GITHUB_STEP_SUMMARY"
+```
+
 Corpus and schema maintenance:
 
 ```bash

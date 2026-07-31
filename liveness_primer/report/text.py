@@ -36,19 +36,20 @@ from liveness_primer.report.common import (
     confidence_text,
     displayed_text,
     excerpt_sides,
+    overall_summary,
     pin_for_project,
     rollup_lines,
     rule_text,
     span_text,
     totals_text,
 )
-from liveness_primer.report.permalink import source_url, tree_url
+from liveness_primer.report.permalink import source_url, tree_reference
 from liveness_primer.report.sanitize import escape_argv_text, sanitize_inline, sanitize_location
 from liveness_primer.report.table import (
     Cell,
     Line,
     Segment,
-    column_offset,
+    aligned_table,
     continuation_lines,
     finding_lines,
     header_line,
@@ -58,21 +59,26 @@ from liveness_primer.report.terminal import TextRenderOptions
 
 # Default terminal style map (reporting contract §6.2). Roles without an
 # entry render in the default foreground; the class glyph is colored
-# strongly rather than the complete row.
+# strongly rather than the complete row. `dim` is reserved for pure
+# decoration and the `bright_*` variants are avoided: both lose contrast
+# against common light and dark terminal themes, and semantic data — kind,
+# symbol, project headers, source line numbers — must stay readable.
 STYLES: dict[str, str] = {
-    'class-new': 'bold bright_green',
-    'class-dropped': 'bold bright_red',
+    'class-new': 'bold green',
+    'class-dropped': 'bold red',
     'class-changed': 'bold yellow',
-    'rule': 'cyan',
+    'rule-new': 'green',
+    'rule-dropped': 'red',
+    'rule-changed': 'yellow',
     'confidence': 'magenta',
-    'kind': 'dim cyan',
+    'kind': 'cyan',
     'location-link': 'blue underline',
-    'symbol': 'dim',
     'fields': 'yellow',
-    'header': 'bold dim',
-    'source-number': 'bold dim',
-    'label': 'bold dim',
-    'error': 'bold bright_red',
+    'header': 'bold',
+    'gutter': 'dim',
+    'label': 'bold',
+    'impact': 'bold yellow',
+    'error': 'bold red',
     'warning': 'bold yellow',
 }
 
@@ -86,11 +92,17 @@ _SYMBOL_CAP = 96
 _VALUE_CAP = 120
 _SOURCE_CAP = 200
 _REPO_CAP = 120
+_PROJECT_CAP = 48
 
-_DETAIL_INDENT = 4
+# The continuation region sits two cells in, not under the location column:
+# evidence belongs with its finding and needs the width (reporting §4.5).
+_DETAIL_INDENT = 2
+_STACKED_INDENT = 4
 _SAFE_CONSOLE_WIDTH = 4000
 
-_LOCATION_COLUMN = 4
+# End-of-report per-project impact table (reporting contract §4.7).
+_IMPACT_HEADERS = ('project', 'base -> head', 'delta', 'ratio', 'new', 'dropped', 'changed', 'cost', 'warnings')
+_IMPACT_RIGHT_ALIGNED = frozenset({2, 3, 4, 5, 6, 7, 8})
 
 
 def _plain_line(text: str, role: str = 'plain', link: str | None = None) -> Line:
@@ -167,8 +179,8 @@ def _manifest_lines(manifest: RunManifest) -> list[Line]:
     return lines
 
 
-def _cost_text(report: Report) -> str:
-    """Summarize the measured execution cost across projects.
+def _summary_lines(report: Report) -> list[Line]:
+    """Render the overall facts shared by the header and footer (§4.1, §4.7).
 
     Parameters
     ----------
@@ -177,15 +189,23 @@ def _cost_text(report: Report) -> str:
 
     Returns
     -------
-    str
-        Total measured seconds, or ``n/a`` when nothing was measured.
+    list[Line]
+        Counts, totals, rollups, cost, and bounded error/warning summaries.
     """
-    measured = [
-        project.measured_cost_seconds for project in report.projects if project.measured_cost_seconds is not None
+    summary = overall_summary(report)
+    lines = [
+        _plain_line(f'base findings {summary.base_findings}, head findings {summary.head_findings}'),
+        _plain_line(f'totals: {totals_text(report.totals)}'),
     ]
-    if not measured:
-        return 'n/a'
-    return f'{sum(measured):.2f}s'
+    lines.extend(_plain_line(rollup) for rollup in rollup_lines(report.rollups))
+    lines.append(_plain_line(f'cost: {summary.cost}'))
+    if summary.errors:
+        lines.append(_plain_line(f'errors: {summary.errors}', 'error'))
+    if summary.integrity_warnings:
+        lines.append(_plain_line(f'corpus-integrity warnings: {summary.integrity_warnings}', 'warning'))
+    if summary.source_warnings:
+        lines.append(_plain_line(f'source warnings: {summary.source_warnings}', 'warning'))
+    return lines
 
 
 def _overview_lines(report: Report) -> list[Line]:
@@ -201,28 +221,99 @@ def _overview_lines(report: Report) -> list[Line]:
     list[Line]
         The overall header lines (reporting contract §4.1).
     """
-    base_findings = sum(project.base_findings for project in report.projects)
-    head_findings = sum(project.head_findings for project in report.projects)
-    lines = [
-        _plain_line(f'base findings {base_findings}, head findings {head_findings}'),
-        _plain_line(f'totals: {totals_text(report.totals)}'),
-    ]
-    lines.extend(_plain_line(rollup) for rollup in rollup_lines(report.rollups))
-    lines.append(_plain_line(f'cost: {_cost_text(report)}'))
-    error_count = sum(len(project.errors) for project in report.projects)
-    integrity_count = sum(len(project.integrity_warnings) for project in report.projects)
-    source_count = sum(len(project.source_warnings) for project in report.projects)
-    if error_count:
-        lines.append(_plain_line(f'errors: {error_count}', 'error'))
-    if integrity_count:
-        lines.append(_plain_line(f'corpus-integrity warnings: {integrity_count}', 'warning'))
-    if source_count:
-        lines.append(_plain_line(f'source warnings: {source_count}', 'warning'))
+    lines = _summary_lines(report)
     if report.truncated:
         lines.append(
             _plain_line('note: some project diffs were truncated by --max-results; totals reflect the full comparison')
         )
     lines.append(_plain_line(f'legend: {CLASS_LEGEND}'))
+    return lines
+
+
+def _impact_ratio(base_findings: int, head_findings: int) -> str:
+    """Render a project's head/base finding ratio (reporting contract §4.7).
+
+    Parameters
+    ----------
+    base_findings : int
+        Base-side finding count.
+    head_findings : int
+        Head-side finding count.
+
+    Returns
+    -------
+    str
+        ``N.NNx``, or the explicit zero-baseline forms ``new`` and ``-``.
+    """
+    if base_findings:
+        return f'{head_findings / base_findings:.2f}x'
+    return 'new' if head_findings else '-'
+
+
+def _impact_rows(report: Report) -> list[tuple[Segment, ...]]:
+    """Build the per-project impact rows (reporting contract §4.7).
+
+    Parameters
+    ----------
+    report : Report
+        The assembled report.
+
+    Returns
+    -------
+    list[tuple[Segment, ...]]
+        Rows ordered by descending absolute delta, then project name.
+    """
+    ordered = sorted(
+        report.projects,
+        key=lambda project: (-abs(project.head_findings - project.base_findings), project.project),
+    )
+    rows: list[tuple[Segment, ...]] = []
+    for project in ordered:
+        delta = project.head_findings - project.base_findings
+        # A changed blast radius is the reason to read the footer at all.
+        emphasis = 'impact' if delta else 'plain'
+        warnings = len(project.errors) + len(project.integrity_warnings) + len(project.source_warnings)
+        cost = f'{project.measured_cost_seconds:.2f}s' if project.measured_cost_seconds is not None else 'n/a'
+        rows.append(
+            (
+                Segment(text=sanitize_inline(project.project, max_length=_PROJECT_CAP)),
+                Segment(text=f'{project.base_findings} -> {project.head_findings}'),
+                Segment(text=f'{delta:+d}', role=emphasis),
+                Segment(text=_impact_ratio(project.base_findings, project.head_findings), role=emphasis),
+                Segment(text=str(project.totals.new)),
+                Segment(text=str(project.totals.dropped)),
+                Segment(text=str(project.totals.changed)),
+                Segment(text=cost),
+                Segment(text=str(warnings), role='warning' if warnings else 'plain'),
+            )
+        )
+    return rows
+
+
+def _footer_lines(report: Report) -> list[Line]:
+    """Repeat the overall summary at the end of the report (reporting §4.7).
+
+    Parameters
+    ----------
+    report : Report
+        The assembled report.
+
+    Returns
+    -------
+    list[Line]
+        The footer lines, ending with the per-project impact table.
+    """
+    lines: list[Line] = [(), _plain_line('summary', 'header'), *_summary_lines(report)]
+    if report.projects:
+        lines.append(())
+        lines.extend(
+            aligned_table(
+                _IMPACT_HEADERS,
+                _impact_rows(report),
+                indent=2,
+                right_aligned=_IMPACT_RIGHT_ALIGNED,
+            )
+        )
     return lines
 
 
@@ -269,7 +360,9 @@ def _row_cells(diff: FindingDiff, *, url: str | None, options: TextRenderOptions
     linked = url is not None and options.hyperlinks
     return (
         Cell(text=CLASS_GLYPHS[diff.diff_class], role=f'class-{diff.diff_class.value}'),
-        Cell(text=sanitize_inline(rule_text(diff), max_length=_RULE_CAP), role='rule'),
+        # The class accent continues through the rule column so findings
+        # group by class without color carrying the meaning (§6.2).
+        Cell(text=sanitize_inline(rule_text(diff), max_length=_RULE_CAP), role=f'rule-{diff.diff_class.value}'),
         Cell(text=confidence_text(diff), role='confidence'),
         Cell(text=sanitize_inline(diff.kind, max_length=_KIND_CAP), role='kind'),
         Cell(text=location, role='location-link' if linked else 'location', link=url if linked else None),
@@ -313,18 +406,17 @@ def _excerpt_block(
         lines.extend(
             continuation_lines(
                 indent=indent,
-                prefix=None,
                 body=Segment(text=f'{label}:', role='label', link=link),
                 total_width=options.width,
             )
         )
         # The base-side span is already linked from the location cell (or
-        # its url fallback); only the head side needs its own url line.
-        if side_url is not None and not options.hyperlinks and label == 'head':
+        # its url line); only the head side needs its own url line, and
+        # only when the reviewer asked for them (reporting contract §5).
+        if side_url is not None and options.source_urls and label == 'head':
             lines.extend(
                 continuation_lines(
                     indent=indent,
-                    prefix=None,
                     body=Segment(text=f'url: {side_url}'),
                     total_width=options.width,
                 )
@@ -335,7 +427,6 @@ def _excerpt_block(
             lines.extend(
                 continuation_lines(
                     indent=indent,
-                    prefix=None,
                     body=Segment(text='(no source excerpt collected; see source warnings)', role='warning'),
                     total_width=options.width,
                 )
@@ -343,7 +434,12 @@ def _excerpt_block(
         return lines
     number_width = len(str(excerpt.start_line + len(excerpt.lines) - 1))
     for offset, raw_line in enumerate(excerpt.lines):
-        prefix = Segment(text=f'{excerpt.start_line + offset:>{number_width}} | ', role='source-number')
+        # The line number is semantic data and stays at normal contrast;
+        # only the gutter itself is decoration (reporting contract §4.5).
+        prefix = (
+            Segment(text=f'{excerpt.start_line + offset:>{number_width}}'),
+            Segment(text=' | ', role='gutter'),
+        )
         lines.extend(
             continuation_lines(
                 indent=indent,
@@ -356,7 +452,6 @@ def _excerpt_block(
         lines.extend(
             continuation_lines(
                 indent=indent,
-                prefix=None,
                 body=Segment(text=f'({excerpt.omitted_lines} reported-span line(s) omitted)', role='label'),
                 total_width=options.width,
             )
@@ -402,16 +497,14 @@ def _detail_lines(
         lines.extend(
             continuation_lines(
                 indent=indent,
-                prefix=None,
                 body=Segment(text=f'{token}: {base_text} -> {head_text}', role='fields'),
                 total_width=options.width,
             )
         )
-    if url is not None and not options.hyperlinks:
+    if url is not None and options.source_urls:
         lines.extend(
             continuation_lines(
                 indent=indent,
-                prefix=None,
                 body=Segment(text=f'url: {url}'),
                 total_width=options.width,
             )
@@ -467,7 +560,7 @@ def _stacked_finding_lines(
         lines.extend(
             continuation_lines(
                 indent=2,
-                prefix=Segment(text=f'{label}: ', role='header'),
+                prefix=(Segment(text=f'{label}: ', role='header'),),
                 body=Segment(text=cell.text, role=cell.role, link=cell.link),
                 total_width=options.width,
             )
@@ -477,7 +570,7 @@ def _stacked_finding_lines(
             diff,
             pin=pin,
             url=url,
-            indent=_DETAIL_INDENT,
+            indent=_STACKED_INDENT,
             excerpt_lines=excerpt_lines,
             options=options,
         )
@@ -518,24 +611,60 @@ def _finding_table(
     if widths is None:
         # The available width cannot satisfy the minimum column widths:
         # use the labelled stacked layout rather than ragged wrapping.
-        for diff, url in zip(shown, urls, strict=True):
+        for index, (diff, url) in enumerate(zip(shown, urls, strict=True)):
+            if index:
+                lines.append(())
             lines.extend(_stacked_finding_lines(diff, pin=pin, url=url, excerpt_lines=excerpt_lines, options=options))
         return lines
     lines.append(header_line(widths))
-    indent = column_offset(widths, _LOCATION_COLUMN)
+    separate = False
     for diff, url, row in zip(shown, urls, rows, strict=True):
+        # One blank line separates a complete finding block from the next;
+        # a report with no continuation regions stays a dense table (§4.5).
+        if separate:
+            lines.append(())
         lines.extend(finding_lines(row, widths))
-        lines.extend(
-            _detail_lines(
-                diff,
-                pin=pin,
-                url=url,
-                indent=indent,
-                excerpt_lines=excerpt_lines,
-                options=options,
-            )
+        details = _detail_lines(
+            diff,
+            pin=pin,
+            url=url,
+            indent=_DETAIL_INDENT,
+            excerpt_lines=excerpt_lines,
+            options=options,
         )
+        lines.extend(details)
+        separate = bool(details)
     return lines
+
+
+def _corpus_line(pin: CorpusPinRecord, *, options: TextRenderOptions) -> Line:
+    """Render one project's single corpus provenance line (reporting §4.1).
+
+    Parameters
+    ----------
+    pin : CorpusPinRecord
+        Resolved corpus pin of the project.
+    options : TextRenderOptions
+        Resolved presentation options.
+
+    Returns
+    -------
+    Line
+        The `corpus:` line; the repository never appears twice.
+    """
+    sha = sanitize_inline(abbreviated_sha(pin.resolved_sha))
+    reference = tree_reference(pin)
+    if reference is None:
+        return _plain_line(f'  corpus: {sanitize_inline(pin.repo, max_length=_REPO_CAP)} @ {sha}')
+    label, pinned_tree = reference
+    if options.hyperlinks:
+        return (
+            Segment(text='  corpus: '),
+            Segment(text=f'{label} @ {sha}', role='location-link', link=pinned_tree),
+        )
+    # The pinned-tree URL already names the repository and the SHA; a
+    # separate repository line would print both a second time.
+    return _plain_line(f'  corpus: {pinned_tree}')
 
 
 def _project_lines(project: ProjectReport, *, manifest: RunManifest, options: TextRenderOptions) -> list[Line]:
@@ -564,20 +693,7 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest, options: Te
     )
     lines = [_plain_line(header, 'header')]
     if pin is not None:
-        pinned_tree = tree_url(pin)
-        repo_text = f'  repo {sanitize_inline(pin.repo, max_length=_REPO_CAP)} @ '
-        sha_text = sanitize_inline(abbreviated_sha(pin.resolved_sha))
-        if pinned_tree is not None and options.hyperlinks:
-            lines.append(
-                (
-                    Segment(text=repo_text),
-                    Segment(text=sha_text, role='location-link', link=pinned_tree),
-                )
-            )
-        else:
-            lines.append(_plain_line(repo_text + sha_text))
-            if pinned_tree is not None:
-                lines.append(_plain_line(f'  tree: {pinned_tree}'))
+        lines.append(_corpus_line(pin, options=options))
     lines.extend(_plain_line('  ' + rollup) for rollup in rollup_lines(project.rollups))
     lines.extend(
         _plain_line(f'  error[{error.side}]: {sanitize_inline(error.detail)}', 'error') for error in project.errors
@@ -596,8 +712,13 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest, options: Te
     if shown:
         lines.extend(_finding_table(shown, pin=pin, manifest=manifest, options=options))
     if suppressed:
-        lines.append(
-            _plain_line(f'  ({suppressed} more message-only change(s) not shown; the JSON report retains full detail)')
+        lines.extend(
+            (
+                (),
+                _plain_line(
+                    f'  ({suppressed} more message-only change(s) not shown; the JSON report retains full detail)'
+                ),
+            )
         )
     return lines
 
@@ -689,4 +810,5 @@ def render_text(report: Report, options: TextRenderOptions | None = None) -> str
     for project in report.projects:
         lines.append(())
         lines.extend(_project_lines(project, manifest=report.manifest, options=resolved))
+    lines.extend(_footer_lines(report))
     return _emit(lines, resolved)

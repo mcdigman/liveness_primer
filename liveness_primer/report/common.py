@@ -9,6 +9,7 @@ in structure and styling.
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from liveness_primer.findings import (
     ChangedField,
@@ -18,6 +19,7 @@ from liveness_primer.findings import (
     DiffTotals,
     FindingDiff,
     FindingOccurrence,
+    Report,
     RunManifest,
 )
 from liveness_primer.report.sanitize import sanitize_inline
@@ -370,6 +372,63 @@ def totals_text(totals: DiffTotals) -> str:
     return (
         f'{totals.new} new, {totals.dropped} dropped, {totals.changed} changed '
         f'({totals.changed_confidence} confidence, {totals.changed_message_only} message-only)'
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class OverallSummary:
+    """Overall header facts shared by both human renderers (reporting §4.1).
+
+    Attributes
+    ----------
+    base_findings : int
+        Base-side findings parsed across all projects.
+    head_findings : int
+        Head-side findings parsed across all projects.
+    cost : str
+        Measured execution cost, or ``n/a`` when nothing was measured.
+    errors : int
+        Detector invocation failures across all projects.
+    integrity_warnings : int
+        Corpus-integrity warnings across all projects.
+    source_warnings : int
+        Pinned-source evidence warnings across all projects.
+    """
+
+    base_findings: int
+    head_findings: int
+    cost: str
+    errors: int
+    integrity_warnings: int
+    source_warnings: int
+
+
+def overall_summary(report: Report) -> OverallSummary:
+    """Summarize the overall header facts (reporting contract §4.1).
+
+    Every human output mode states the same facts; a mode that omits cost
+    or the warning summaries is incomplete, not merely styled differently.
+
+    Parameters
+    ----------
+    report : Report
+        The assembled report.
+
+    Returns
+    -------
+    OverallSummary
+        The shared overall header facts.
+    """
+    measured = [
+        project.measured_cost_seconds for project in report.projects if project.measured_cost_seconds is not None
+    ]
+    return OverallSummary(
+        base_findings=sum(project.base_findings for project in report.projects),
+        head_findings=sum(project.head_findings for project in report.projects),
+        cost=f'{sum(measured):.2f}s' if measured else 'n/a',
+        errors=sum(len(project.errors) for project in report.projects),
+        integrity_warnings=sum(len(project.integrity_warnings) for project in report.projects),
+        source_warnings=sum(len(project.source_warnings) for project in report.projects),
     )
 
 

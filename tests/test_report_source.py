@@ -6,8 +6,15 @@ Copyright (C) 2026 Matthew C. Digman
 import os
 from pathlib import Path
 
+import pytest
+
 from liveness_primer.findings import ChangedField, DiffClass, SourceExcerpt
-from liveness_primer.report.source import MAX_SOURCE_WARNINGS, collect_source_evidence, extract_excerpt
+from liveness_primer.report.source import (
+    MAX_SOURCE_WARNINGS,
+    collect_source_evidence,
+    extract_excerpt,
+    split_source_lines,
+)
 from tests.test_report import diff, occurrence
 
 FILE_LINES = [f'line {number}' for number in range(1, 21)]
@@ -182,6 +189,83 @@ def test_collect_bounds_warning_count(tmp_path: Path) -> None:
     _, warnings = collect_source_evidence(entries, checkout=checkout, excerpt_lines=1)
     assert len(warnings) == MAX_SOURCE_WARNINGS + 1
     assert warnings[-1] == '(5 more source warning(s) omitted)'
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('a\nb\n', ('a', 'b')),
+        ('a\r\nb\r\n', ('a', 'b')),
+        ('a\rb\r', ('a', 'b')),
+        ('a\nb', ('a', 'b')),
+        ('a\n\nb\n', ('a', '', 'b')),
+        ('', ()),
+        # Form feed, vertical tab, NEL, and the Unicode separators are
+        # ordinary in-line characters for source numbering (§3.3).
+        ('a\fb\nc\n', ('a\fb', 'c')),
+        ('a\vb\nc\n', ('a\vb', 'c')),
+        ('a\x1cb\x1db\x1eb\nc\n', ('a\x1cb\x1db\x1eb', 'c')),
+        ('a\x85b\nc\n', ('a\x85b', 'c')),
+        ('a\u2028b\u2029c\nd\n', ('a\u2028b\u2029c', 'd')),
+    ],
+)
+def test_split_source_lines_uses_source_location_newline_semantics(text: str, expected: tuple[str, ...]) -> None:
+    assert split_source_lines(text) == expected
+
+
+def test_collect_does_not_shift_lines_on_hostile_control_characters(tmp_path: Path) -> None:
+    # Reporting §3.3 / acceptance 9: a corpus file may embed a form feed on
+    # a line that Python counts as one line. Splitting on it would present
+    # `FAKE_EVIDENCE` as the source at the reported line 2.
+    checkout = tmp_path / 'checkout'
+    (checkout / 'pkg').mkdir(parents=True)
+    (checkout / 'pkg' / 'mod.py').write_text('# harmless\fFAKE_EVIDENCE = 1\nactual = 2\n', encoding='utf-8')
+    entry = diff(DiffClass.NEW, 'actual', head=occurrence(2, 'm'))
+    (enriched,), warnings = collect_source_evidence((entry,), checkout=checkout, excerpt_lines=1)
+    assert warnings == ()
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt == SourceExcerpt(
+        start_line=2, lines=('actual = 2',), omitted_lines=0
+    )
+
+
+def test_collect_unreadable_file_warns_without_leaking_the_checkout(tmp_path: Path) -> None:
+    # Reporting §3.3: a PermissionError must not terminate collection.
+    checkout = write_checkout(tmp_path)
+    unreadable = checkout / 'pkg' / 'locked.py'
+    unreadable.write_text('x = 1\n', encoding='utf-8')
+    unreadable.chmod(0o000)
+    entries = (
+        diff(DiffClass.NEW, 'a', path='pkg/locked.py', head=occurrence(1, 'm')),
+        diff(DiffClass.NEW, 'b', head=occurrence(4, 'm')),
+    )
+    try:
+        (locked, readable), warnings = collect_source_evidence(entries, checkout=checkout, excerpt_lines=1)
+    finally:
+        unreadable.chmod(0o600)
+    assert locked.head_occurrence is not None
+    assert readable.head_occurrence is not None
+    if locked.head_occurrence.source_excerpt is not None:  # pragma: no cover - only when running as root
+        pytest.skip('the process can read mode 000 files')
+    (warning,) = warnings
+    assert warning == 'pkg/locked.py: file could not be read'
+    assert str(tmp_path) not in warning
+    # Collection continued: the following finding still has its evidence.
+    assert readable.head_occurrence.source_excerpt is not None
+
+
+def test_collect_symlink_loop_warns_instead_of_aborting(tmp_path: Path) -> None:
+    # Reporting §3.3: a self-referential symlink is bounded on every
+    # supported interpreter, however Path.resolve() reports it.
+    checkout = write_checkout(tmp_path)
+    (checkout / 'pkg' / 'loop.py').symlink_to(checkout / 'pkg' / 'loop.py')
+    entry = diff(DiffClass.NEW, 'a', path='pkg/loop.py', head=occurrence(1, 'm'))
+    (enriched,), warnings = collect_source_evidence((entry,), checkout=checkout, excerpt_lines=1)
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt is None
+    (warning,) = warnings
+    assert warning.startswith('pkg/loop.py: ')
+    assert str(tmp_path) not in warning
 
 
 def test_collect_rejects_traversal_paths(tmp_path: Path) -> None:

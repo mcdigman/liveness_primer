@@ -41,11 +41,14 @@ class TextRenderOptions:
         Whether generated OSC-8 hyperlinks are enabled.
     width : int
         Available display width in terminal cells.
+    source_urls : bool
+        Whether per-finding pinned URL continuation lines are printed.
     """
 
     color: bool = False
     hyperlinks: bool = False
     width: int = DEFAULT_REDIRECTED_WIDTH
+    source_urls: bool = False
 
 
 def resolve_color(mode: CapabilityMode, *, interactive: bool, env: Mapping[str, str]) -> bool:
@@ -132,6 +135,7 @@ def resolve_text_options(
     interactive: bool,
     env: Mapping[str, str],
     terminal_width: int | None,
+    source_urls: bool = False,
 ) -> TextRenderOptions:
     """Resolve the text renderer's presentation options (reporting §4.6, §6.3).
 
@@ -147,6 +151,8 @@ def resolve_text_options(
         Process environment.
     terminal_width : int | None
         Measured terminal width, when interactive output has one.
+    source_urls : bool
+        Whether ``--source-urls`` opted into per-finding URL lines.
 
     Returns
     -------
@@ -159,4 +165,5 @@ def resolve_text_options(
         color=resolve_color(color_mode, interactive=interactive, env=env),
         hyperlinks=resolve_hyperlinks(hyperlink_mode, interactive=interactive, env=env),
         width=width,
+        source_urls=source_urls,
     )

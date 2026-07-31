@@ -194,6 +194,16 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
         help='OSC-8 terminal hyperlinks in text output (reporting contract §6.3)',
     )
     run_parser.add_argument(
+        '--source-urls',
+        action='store_true',
+        help='print per-finding pinned URL lines in text output (reporting contract §5)',
+    )
+    run_parser.add_argument(
+        '--json-out',
+        type=Path,
+        help='also write the complete JSON report to this path (reporting contract §2)',
+    )
+    run_parser.add_argument(
         '--fail-on',
         action='append',
         default=[],
@@ -371,8 +381,35 @@ def _render_report(report: Report, args: argparse.Namespace) -> str:
         interactive=interactive,
         env=os.environ,
         terminal_width=_terminal_width() if interactive else DEFAULT_REDIRECTED_WIDTH,
+        source_urls=args.source_urls,
     )
     return render_text(report, options)
+
+
+def _write_json_report(report: Report, path: Path) -> None:
+    """Archive the complete JSON report alongside any output mode (§2).
+
+    Initial contract §9 makes the JSON artifact the CI-consumable product,
+    but ``--output`` selects one mode; a CI job must not have to pay for a
+    second complete corpus run to keep it.
+
+    Parameters
+    ----------
+    report : Report
+        The assembled report.
+    path : Path
+        Destination file.
+
+    Raises
+    ------
+    RunnerError
+        If the destination cannot be written.
+    """
+    try:
+        path.write_text(render_json(report), encoding='utf-8')
+    except OSError as error:
+        msg = f'could not write the JSON report to {path}: {error.strerror}'
+        raise RunnerError(msg) from error
 
 
 def _exit_code_for(report: Report, fail_on: tuple[str, ...]) -> int:
@@ -451,6 +488,8 @@ def _command_run(args: argparse.Namespace) -> int:
             head_ref=args.new,
             environments=environments,
         )
+    if args.json_out is not None:
+        _write_json_report(report, args.json_out)
     sys.stdout.write(_render_report(report, args))
     return _exit_code_for(report, options.fail_on)
 

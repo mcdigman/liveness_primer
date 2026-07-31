@@ -13,14 +13,19 @@ are applied by the emitter, outside untrusted text.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from rich.cells import cell_len, get_character_cell_size
 
 # Two-space padding separates columns; there are no vertical borders.
 COLUMN_SEPARATOR = '  '
 
-# The confidence column must fit `100%->100%` (reporting contract §4.3).
-CONFIDENCE_MIN_WIDTH = 10
+# The confidence column measures to the widest value actually present and
+# only reserves room for `NA` (reporting contract §4.3).
+CONFIDENCE_MIN_WIDTH = 2
+
+# How an over-wide flexible cell degrades (reporting contract §4.6).
+Degrade = Literal['wrap-words', 'truncate-middle', 'truncate-end']
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,25 +84,29 @@ class ColumnSpec:
     maximum : int | None
         Maximum display width for flexible columns; ``None`` sizes the
         column to its content.
+    degrade : Degrade | None
+        How an over-wide cell of a flexible column is fitted.
     """
 
     header: str
     role: str
     minimum: int
     maximum: int | None = None
+    degrade: Degrade | None = None
 
 
 # Semantic column order (reporting contract §4.2). The class, rule,
 # confidence, kind, and fields columns do not wrap; location, message, and
-# symbol are the flexible columns.
+# symbol are the flexible columns, each with its own declared degradation
+# (reporting contract §4.6).
 COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec(header='', role='plain', minimum=1),
     ColumnSpec(header='rule', role='rule', minimum=4),
     ColumnSpec(header='%', role='confidence', minimum=CONFIDENCE_MIN_WIDTH),
     ColumnSpec(header='kind', role='kind', minimum=4),
-    ColumnSpec(header='location', role='location', minimum=14, maximum=48),
-    ColumnSpec(header='message', role='message', minimum=16, maximum=64),
-    ColumnSpec(header='symbol', role='symbol', minimum=6, maximum=40),
+    ColumnSpec(header='location', role='location', minimum=14, maximum=48, degrade='truncate-middle'),
+    ColumnSpec(header='message', role='message', minimum=16, maximum=64, degrade='wrap-words'),
+    ColumnSpec(header='symbol', role='symbol', minimum=6, maximum=40, degrade='truncate-end'),
     ColumnSpec(header='fields', role='fields', minimum=6),
 )
 
@@ -136,6 +145,184 @@ def wrap_cells(text: str, width: int) -> tuple[str, ...]:
     if current:
         chunks.append(''.join(current))
     return tuple(chunks)
+
+
+def wrap_words(text: str, width: int) -> tuple[str, ...]:
+    """Wrap text at word boundaries (reporting contract §4.6).
+
+    Parameters
+    ----------
+    text : str
+        Sanitized text to wrap.
+    width : int
+        Maximum display width per line; positive.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The wrapped lines; a single word wider than ``width`` falls back to
+        cell chopping so no line ever exceeds the column.
+    """
+    lines: list[str] = []
+    current = ''
+    for word in text.split(' '):
+        candidate = f'{current} {word}' if current else word
+        if cell_len(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        chunks = wrap_cells(word, width) or ('',)
+        lines.extend(chunks[:-1])
+        current = chunks[-1]
+    if current:
+        lines.append(current)
+    return tuple(lines)
+
+
+def prefix_within(text: str, width: int) -> str:
+    """Take the longest prefix fitting in a display width.
+
+    Parameters
+    ----------
+    text : str
+        Sanitized text.
+    width : int
+        Available display cells.
+
+    Returns
+    -------
+    str
+        The prefix.
+    """
+    kept: list[str] = []
+    used = 0
+    for character in text:
+        size = get_character_cell_size(character)
+        if used + size > width:
+            break
+        kept.append(character)
+        used += size
+    return ''.join(kept)
+
+
+def suffix_within(text: str, width: int) -> str:
+    """Take the longest suffix fitting in a display width.
+
+    Parameters
+    ----------
+    text : str
+        Sanitized text.
+    width : int
+        Available display cells.
+
+    Returns
+    -------
+    str
+        The suffix.
+    """
+    kept: list[str] = []
+    used = 0
+    for character in reversed(text):
+        size = get_character_cell_size(character)
+        if used + size > width:
+            break
+        kept.append(character)
+        used += size
+    return ''.join(reversed(kept))
+
+
+def truncate_end(text: str, width: int) -> str:
+    """Truncate at the end with a counted marker (reporting §4.6, §8).
+
+    Parameters
+    ----------
+    text : str
+        Sanitized text.
+    width : int
+        Available display cells.
+
+    Returns
+    -------
+    str
+        Text fitting the width.
+    """
+    if cell_len(text) <= width:
+        return text
+    # The marker width depends on the omitted count's digits, which depends
+    # on how much is kept: walk digit budgets upward until the count fits.
+    digits = 1
+    while True:
+        budget = width - (6 + digits)
+        if budget < 1:
+            return prefix_within(text, width)
+        head = prefix_within(text, budget)
+        omitted = len(text) - len(head)
+        if len(str(omitted)) <= digits:
+            return f'{head}...(+{omitted})'
+        digits += 1
+
+
+def truncate_middle(text: str, width: int) -> str:
+    """Truncate in the middle with a counted marker (reporting §4.6, §8).
+
+    The leading directories and the trailing file name and line span are the
+    identifying portions of a location, so both survive.
+
+    Parameters
+    ----------
+    text : str
+        Sanitized text.
+    width : int
+        Available display cells.
+
+    Returns
+    -------
+    str
+        Text fitting the width.
+    """
+    if cell_len(text) <= width:
+        return text
+    digits = 1
+    while True:
+        budget = width - (9 + digits)
+        if budget < 3:
+            # Too narrow to keep both ends: counted end truncation at least
+            # preserves the leading directories.
+            return truncate_end(text, width)
+        head = prefix_within(text, budget // 3)
+        tail = suffix_within(text, budget - cell_len(head))
+        omitted = len(text) - len(head) - len(tail)
+        if len(str(omitted)) <= digits:
+            return f'{head}...(+{omitted})...{tail}'
+        digits += 1
+
+
+def fit_cell(text: str, width: int, degrade: Degrade | None) -> tuple[str, ...]:
+    """Fit one cell into its measured column (reporting contract §4.6).
+
+    Parameters
+    ----------
+    text : str
+        Sanitized cell text.
+    width : int
+        Measured column width.
+    degrade : Degrade | None
+        The column's declared degradation; ``None`` chops by cells.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The physical lines of the cell; only ``wrap-words`` yields more
+        than one.
+    """
+    if degrade == 'wrap-words':
+        return wrap_words(text, width)
+    if degrade == 'truncate-middle':
+        return (truncate_middle(text, width),) if text else ()
+    if degrade == 'truncate-end':
+        return (truncate_end(text, width),) if text else ()
+    return wrap_cells(text, width)
 
 
 def measure_widths(rows: Sequence[Sequence[Cell]], *, total_width: int) -> tuple[int, ...] | None:
@@ -250,7 +437,7 @@ def finding_lines(row: Sequence[Cell], widths: Sequence[int]) -> tuple[Line, ...
     tuple[Line, ...]
         The physical lines of the row.
     """
-    wrapped = [wrap_cells(cell.text, widths[index]) for index, cell in enumerate(row)]
+    wrapped = [fit_cell(cell.text, widths[index], COLUMNS[index].degrade) for index, cell in enumerate(row)]
     height = max([1, *(len(chunks) for chunks in wrapped)])
     lines: list[Line] = []
     for line_index in range(height):
@@ -271,7 +458,7 @@ def finding_lines(row: Sequence[Cell], widths: Sequence[int]) -> tuple[Line, ...
 def continuation_lines(
     *,
     indent: int,
-    prefix: Segment | None,
+    prefix: Sequence[Segment] = (),
     body: Segment,
     total_width: int,
 ) -> tuple[Line, ...]:
@@ -281,8 +468,8 @@ def continuation_lines(
     ----------
     indent : int
         Leading display cells before the prefix.
-    prefix : Segment | None
-        Fixed prefix (e.g. a source line number gutter), when any.
+    prefix : Sequence[Segment]
+        Fixed prefix segments (e.g. a source line number and its gutter).
     body : Segment
         Body text, wrapped into the remaining width.
     total_width : int
@@ -293,18 +480,63 @@ def continuation_lines(
     tuple[Line, ...]
         The physical lines; continuations align beneath the body.
     """
-    prefix_width = cell_len(prefix.text) if prefix is not None else 0
+    prefix_width = sum(cell_len(segment.text) for segment in prefix)
     body_width = max(8, total_width - indent - prefix_width)
     chunks = wrap_cells(body.text, body_width) or ('',)
     lines: list[Line] = []
     for chunk_index, chunk in enumerate(chunks):
         segments: list[Segment] = [Segment(text=' ' * indent)]
-        if prefix is not None:
+        if prefix:
             if chunk_index == 0:
-                segments.append(Segment(text=prefix.text, role=prefix.role, link=prefix.link))
+                segments.extend(prefix)
             else:
                 segments.append(Segment(text=' ' * prefix_width))
         segments.append(Segment(text=chunk, role=body.role, link=body.link))
+        lines.append(_trimmed(segments))
+    return tuple(lines)
+
+
+def aligned_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Segment]],
+    *,
+    indent: int,
+    right_aligned: frozenset[int],
+) -> tuple[Line, ...]:
+    """Lay a small aligned table out (reporting contract §4.7).
+
+    Parameters
+    ----------
+    headers : Sequence[str]
+        Column headers.
+    rows : Sequence[Sequence[Segment]]
+        Row cells, one segment per column, already sanitized.
+    indent : int
+        Leading display cells.
+    right_aligned : frozenset[int]
+        Column indices padded on the left instead of the right.
+
+    Returns
+    -------
+    tuple[Line, ...]
+        The header line followed by one line per row.
+    """
+    widths = [cell_len(header) for header in headers]
+    for row in rows:
+        for index, segment in enumerate(row):
+            widths[index] = max(widths[index], cell_len(segment.text))
+    lines: list[Line] = []
+    for cells in ((Segment(text=header, role='header') for header in headers), *rows):
+        segments: list[Segment] = [Segment(text=' ' * indent)]
+        for index, segment in enumerate(cells):
+            if index:
+                segments.append(Segment(text=COLUMN_SEPARATOR))
+            pad = ' ' * (widths[index] - cell_len(segment.text))
+            if index in right_aligned and pad:
+                segments.append(Segment(text=pad))
+            segments.append(segment)
+            if index not in right_aligned and pad:
+                segments.append(Segment(text=pad))
         lines.append(_trimmed(segments))
     return tuple(lines)
 

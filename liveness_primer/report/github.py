@@ -19,6 +19,7 @@ from liveness_primer.findings import (
     ProjectReport,
     Report,
     RunManifest,
+    SourceExcerpt,
 )
 from liveness_primer.report.common import (
     CLASS_GLYPHS,
@@ -30,6 +31,7 @@ from liveness_primer.report.common import (
     confidence_text,
     displayed_text,
     excerpt_sides,
+    overall_summary,
     pin_for_project,
     rollup_lines,
     rule_text,
@@ -44,9 +46,12 @@ from liveness_primer.report.sanitize import code_span, escape_argv_text, sanitiz
 # meaning without emoji color.
 _CLASS_MARKERS = {'new': '\U0001f7e2', 'dropped': '\U0001f534', 'changed': '\U0001f7e1'}
 
-_MESSAGE_CAP = 200
-_VALUE_CAP = 120
-_SOURCE_CAP = 200
+# In-row caps are tighter than the terminal renderer's: a GitHub table has
+# no horizontal scroll of its own, so the physical row width is the binding
+# constraint at corpus scale (reporting contract §7).
+_MESSAGE_CAP = 120
+_VALUE_CAP = 80
+_SOURCE_CAP = 120
 _NAME_CAP = 120
 
 
@@ -134,6 +139,37 @@ def _location_cell(diff: FindingDiff, pin: CorpusPinRecord | None) -> str:
     return f'[{label}]({url})'
 
 
+def _excerpt_parts(excerpt: SourceExcerpt) -> list[str]:
+    """Render one excerpt's in-row fragments (reporting contract §7).
+
+    Only the first retained line goes in the row: a GitHub table has no
+    horizontal scroll of its own, and serializing a whole excerpt into one
+    cell forces the table sideways. The complete retained excerpt stays in
+    the JSON report, and the further retained and omitted line counts are
+    stated rather than dropped silently.
+
+    Parameters
+    ----------
+    excerpt : SourceExcerpt
+        Collected pinned-source evidence.
+
+    Returns
+    -------
+    list[str]
+        The escaped first source line and any count marker.
+    """
+    parts = [sanitize_cell(f'{excerpt.start_line} | {excerpt.lines[0]}', max_length=_SOURCE_CAP)]
+    notes: list[str] = []
+    remaining = len(excerpt.lines) - 1
+    if remaining:
+        notes.append(f'+{remaining} more retained line(s)')
+    if excerpt.omitted_lines:
+        notes.append(f'{excerpt.omitted_lines} reported-span line(s) omitted')
+    if notes:
+        parts.append(f'({"; ".join(notes)}; see the JSON report)')
+    return parts
+
+
 def _source_parts(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lines: int) -> list[str]:
     """Render the in-row source evidence of one finding (reporting §7).
 
@@ -168,12 +204,7 @@ def _source_parts(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lin
             if label is not None:
                 parts.append('(no source excerpt collected; see source warnings)')
             continue
-        parts.extend(
-            sanitize_cell(f'{excerpt.start_line + offset} | {line}', max_length=_SOURCE_CAP)
-            for offset, line in enumerate(excerpt.lines)
-        )
-        if excerpt.omitted_lines:
-            parts.append(f'({excerpt.omitted_lines} reported-span line(s) omitted)')
+        parts.extend(_excerpt_parts(excerpt))
     return parts
 
 
@@ -285,14 +316,13 @@ def render_github(report: Report) -> str:
         Markdown, newline-terminated; never ANSI styling or OSC-8 links.
     """
     lines = _manifest_lines(report.manifest)
-    base_findings = sum(project.base_findings for project in report.projects)
-    head_findings = sum(project.head_findings for project in report.projects)
+    summary = overall_summary(report)
     lines.extend(
         [
             '',
             '## Totals',
             '',
-            f'base findings {base_findings}, head findings {head_findings}',
+            f'base findings {summary.base_findings}, head findings {summary.head_findings}',
             '',
             '| new | dropped | changed | confidence changes | message-only |',
             '| --- | --- | --- | --- | --- |',
@@ -300,9 +330,19 @@ def render_github(report: Report) -> str:
                 f'| {report.totals.new} | {report.totals.dropped} | {report.totals.changed} '
                 f'| {report.totals.changed_confidence} | {report.totals.changed_message_only} |'
             ),
+            '',
         ]
     )
     lines.extend(f'- **rollup**: {sanitize_cell(rollup)}' for rollup in rollup_lines(report.rollups))
+    # The overall header states the same facts in every human output mode
+    # (reporting contract §4.1, acceptance 21).
+    lines.append(f'- **cost**: {summary.cost}')
+    if summary.errors:
+        lines.append(f'- **errors**: {summary.errors}')
+    if summary.integrity_warnings:
+        lines.append(f'- **corpus-integrity warnings**: {summary.integrity_warnings}')
+    if summary.source_warnings:
+        lines.append(f'- **source warnings**: {summary.source_warnings}')
     if report.truncated:
         lines.extend(('', 'Some project diffs were truncated by `--max-results`; totals reflect the full comparison.'))
     lines.extend(('', f'legend: {CLASS_LEGEND}'))

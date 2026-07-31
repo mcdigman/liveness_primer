@@ -11,16 +11,24 @@ import re
 import pytest
 from rich.cells import cell_len
 
+from liveness_primer.diffing import compute_rollups
 from liveness_primer.findings import DiffClass, DiffTotals, ProjectReport
 from liveness_primer.report import render_text
 from liveness_primer.report.table import (
+    CONFIDENCE_MIN_WIDTH,
     Cell,
     Segment,
     column_offset,
     continuation_lines,
     finding_lines,
+    fit_cell,
     measure_widths,
+    prefix_within,
+    suffix_within,
+    truncate_end,
+    truncate_middle,
     wrap_cells,
+    wrap_words,
 )
 from liveness_primer.report.terminal import (
     DEFAULT_REDIRECTED_WIDTH,
@@ -147,8 +155,13 @@ def test_hyperlinks_wrap_visible_location_labels() -> None:
     # representation of the target (reporting §5).
     assert 'pkg/mod.py:L9' in stripped
     assert 'url: https://github.com' not in stripped
+    # Without hyperlinks the copyable relative location and the project's
+    # corpus line remain; per-finding URL lines are opt-in (reporting §5).
     plain = render_text(report, TextRenderOptions(color=False, hyperlinks=False, width=160))
-    assert 'url: https://github.com' in plain
+    assert 'pkg/mod.py:L9' in plain
+    assert 'url: https://github.com' not in plain
+    opted_in = render_text(report, TextRenderOptions(color=False, hyperlinks=False, width=160, source_urls=True))
+    assert 'url: https://github.com' in opted_in
 
 
 def test_wrap_cells_respects_display_width() -> None:
@@ -167,13 +180,35 @@ def test_measure_widths_returns_none_when_minimums_cannot_fit() -> None:
     assert measure_widths(rows, total_width=30) is None
     widths = measure_widths(rows, total_width=200)
     assert widths is not None
-    assert widths[2] >= 10  # confidence column minimum (reporting §4.3)
+    assert widths[2] == CONFIDENCE_MIN_WIDTH  # `NA` fits; nothing is reserved (§4.3)
+
+
+def test_confidence_column_measures_to_its_widest_present_value() -> None:
+    # Reporting acceptance 26: no fixed ten-cell reservation.
+    def row(confidence: str) -> tuple[Cell, ...]:
+        return (
+            Cell(text='+'),
+            Cell(text='SKY-U001'),
+            Cell(text=confidence),
+            Cell(text='function'),
+            Cell(text='a/b.py:L1'),
+            Cell(text='message'),
+            Cell(text='symbol'),
+            Cell(text='-'),
+        )
+
+    narrow = measure_widths([row('90%'), row('80%')], total_width=200)
+    assert narrow is not None
+    assert narrow[2] == 3
+    wide = measure_widths([row('90%'), row('100%->100%')], total_width=200)
+    assert wide is not None
+    assert wide[2] == 10
 
 
 def test_continuation_lines_align_beneath_prefix() -> None:
     lines = continuation_lines(
         indent=4,
-        prefix=Segment(text='12 | ', role='source-number'),
+        prefix=(Segment(text='12'), Segment(text=' | ', role='gutter')),
         body=Segment(text='a' * 20, role='source'),
         total_width=4 + 5 + 12,
     )
@@ -213,6 +248,7 @@ def test_rows_align_at_visible_column_boundaries_with_unicode() -> None:
         project='alpha',
         diffs=entries,
         totals=DiffTotals(new=4),
+        rollups=compute_rollups(entries),
         truncated=False,
         base_findings=0,
         head_findings=4,
@@ -234,18 +270,26 @@ def test_rows_align_at_visible_column_boundaries_with_unicode() -> None:
 
 def test_narrow_output_uses_labelled_stacked_layout() -> None:
     # Reporting acceptance 8: no uncontrolled wrapping below minimum widths.
-    entry = diff(
-        DiffClass.NEW,
-        'stacked_symbol',
-        head=occurrence(1, 'stacked message', confidence=80, rule_id='SKY-U001', source=source_lines(1, 'x = 1')),
+    entries = (
+        diff(
+            DiffClass.NEW,
+            'stacked_symbol',
+            head=occurrence(1, 'stacked message', confidence=80, rule_id='SKY-U001', source=source_lines(1, 'x = 1')),
+        ),
+        diff(
+            DiffClass.NEW,
+            'second_symbol',
+            head=occurrence(2, 'second message', confidence=70, rule_id='SKY-U002', source=source_lines(2, 'y = 2')),
+        ),
     )
     project = ProjectReport(
         project='alpha',
-        diffs=(entry,),
-        totals=DiffTotals(new=1),
+        diffs=entries,
+        totals=DiffTotals(new=2),
+        rollups=compute_rollups(entries),
         truncated=False,
         base_findings=0,
-        head_findings=1,
+        head_findings=2,
         measured_cost_seconds=None,
     )
     report = build_report().model_copy(update={'projects': (project,), 'truncated': False})
@@ -261,6 +305,12 @@ def test_narrow_output_uses_labelled_stacked_layout() -> None:
     assert '1 | x = 1' in text
     header_rows = [line for line in text.splitlines() if 'location' in line and 'fields' in line]
     assert header_rows == []
+    # Stacked findings are separated by one blank line (reporting §4.5).
+    lines = text.splitlines()
+    glyphs = [index for index, line in enumerate(lines) if line == '+ new']
+    assert len(glyphs) == 2
+    assert not lines[glyphs[1] - 1]
+    assert lines[glyphs[1] - 2].endswith('1 | x = 1')
 
 
 def test_column_offset_matches_layout() -> None:
@@ -299,3 +349,84 @@ def test_finding_lines_trim_fully_blank_physical_lines() -> None:
     assert widths is not None
     (line,) = finding_lines(row, widths)
     assert line == ()
+
+
+def test_wrap_words_breaks_at_word_boundaries() -> None:
+    # Reporting acceptance 27: messages wrap on words, not mid-word.
+    assert wrap_words('unused function example here', 16) == ('unused function', 'example here')
+    assert wrap_words('', 10) == ()
+    # A single word wider than the column falls back to cell chopping so no
+    # line ever exceeds the measured width.
+    assert wrap_words('short aaaaaaaaaa bb', 4) == ('shor', 't', 'aaaa', 'aaaa', 'aa', 'bb')
+
+
+def test_truncate_end_counts_the_omitted_characters() -> None:
+    assert truncate_end('symbol', 10) == 'symbol'
+    assert truncate_end('s' * 30, 16) == 'ssssssss...(+22)'
+    assert truncate_end('s' * 30, 12) == 'ssss...(+26)'
+    # A cap too small for any marker degrades to a hard cut at the width.
+    assert truncate_end('s' * 30, 5) == 'sssss'
+    # Wide characters are counted in cells, not code points.
+    assert cell_len(truncate_end('模' * 20, 14)) <= 14
+
+
+def test_truncate_middle_preserves_both_ends_of_a_location() -> None:
+    # Reporting acceptance 27.
+    location = 'deep/' * 12 + 'leaf.py:L42'
+    truncated = truncate_middle(location, 30)
+    assert cell_len(truncated) <= 30
+    assert truncated.startswith('deep/')
+    assert truncated.endswith('leaf.py:L42')
+    assert '...(+' in truncated
+    assert truncate_middle('a/b.py:L1', 30) == 'a/b.py:L1'
+    # Too narrow for a middle marker: fall back to counted end truncation.
+    narrow = truncate_middle(location, 12)
+    assert narrow == 'deep...(+67)'
+
+
+def test_fit_cell_chops_columns_without_a_declared_degradation() -> None:
+    assert fit_cell('abcdef', 3, None) == ('abc', 'def')
+    assert fit_cell('', 8, 'truncate-end') == ()
+    assert fit_cell('', 8, 'truncate-middle') == ()
+
+
+def test_location_and_symbol_truncate_while_messages_wrap() -> None:
+    # Reporting acceptance 27 end to end: only the message column produces
+    # continuation lines.
+    entry = diff(
+        DiffClass.NEW,
+        'symbol_' + 'z' * 80,
+        path='deep/' * 20 + 'leaf.py',
+        head=occurrence(1, 'a wordy diagnostic message that will not fit on one physical line at all'),
+    )
+    project = ProjectReport(
+        project='alpha',
+        diffs=(entry,),
+        totals=DiffTotals(new=1),
+        rollups=compute_rollups((entry,)),
+        truncated=False,
+        base_findings=0,
+        head_findings=1,
+        measured_cost_seconds=None,
+    )
+    report = build_report().model_copy(update={'projects': (project,), 'truncated': False})
+    lines = render_text(report, TextRenderOptions(width=120)).splitlines()
+    row = next(line for line in lines if line.startswith('+'))
+    assert 'deep/' in row
+    assert 'leaf.py' in row
+    assert '...(+' in row
+    continuation = lines[lines.index(row) + 1]
+    # The continuation carries only the wrapped message.
+    assert continuation.strip()
+    assert 'deep/' not in continuation
+    assert 'symbol_' not in continuation
+
+
+def test_width_prefix_and_suffix_helpers_respect_cell_widths() -> None:
+    assert prefix_within('abcdef', 3) == 'abc'
+    assert prefix_within('abc', 10) == 'abc'
+    assert suffix_within('abcdef', 3) == 'def'
+    assert suffix_within('abc', 10) == 'abc'
+    # A wide character is never split across the boundary.
+    assert prefix_within('模块', 3) == '模'
+    assert suffix_within('模块', 3) == '块'

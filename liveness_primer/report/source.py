@@ -11,6 +11,7 @@ report trust boundary. Missing or out-of-range source produces no excerpt
 and a bounded report warning rather than fabricated text.
 """
 
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -21,6 +22,33 @@ from liveness_primer.report.common import excerpt_sides
 # Bounded warning budget per project: the report stays scannable even when a
 # corpus tree is missing wholesale (reporting contract §3.3).
 MAX_SOURCE_WARNINGS = 20
+
+# Source-location newline semantics (reporting contract §3.3): only LF, CRLF,
+# and CR end a line. ``str.splitlines`` additionally breaks on form feed,
+# vertical tab, NEL, and the Unicode separators, which Python and the
+# detectors count as ordinary in-line characters — splitting on them would
+# shift every following excerpt onto source that was never reported.
+_SOURCE_NEWLINE = re.compile(r'\r\n|\r|\n')
+
+
+def split_source_lines(text: str) -> tuple[str, ...]:
+    """Split decoded source using source-location newline semantics (§3.3).
+
+    Parameters
+    ----------
+    text : str
+        Decoded file contents.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The lines, without their terminators and without a spurious final
+        empty line for text ending in a newline.
+    """
+    lines = _SOURCE_NEWLINE.split(text)
+    if lines and not lines[-1]:
+        lines.pop()
+    return tuple(lines)
 
 
 def extract_excerpt(
@@ -136,7 +164,7 @@ class _SourceCache:
             text = read_small_text(resolved)
         except FilesystemPolicyError as error:
             return str(error).replace(f': {resolved}', '')
-        return tuple(text.splitlines())
+        return split_source_lines(text)
 
     def lines(self, path: str) -> tuple[str, ...] | str:
         """Fetch the decoded lines of one repository-relative file.

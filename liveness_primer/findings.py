@@ -8,6 +8,7 @@ Pydantic models are the source of truth (contract §7); JSON Schema files under
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Self
@@ -769,6 +770,38 @@ class DiffRollup(_FrozenModel):
         return self
 
 
+def _check_aggregates(totals: DiffTotals, rollups: Sequence[DiffRollup]) -> None:
+    """Reject rollups that disagree with their totals (reporting §3.2).
+
+    Stale aggregate data is an invalid report, so validation — not a
+    convention — is the transformation boundary a rewriting hook must pass.
+
+    Parameters
+    ----------
+    totals : DiffTotals
+        Complete pre-truncation totals.
+    rollups : Sequence[DiffRollup]
+        Complete pre-truncation rollups.
+
+    Raises
+    ------
+    ValueError
+        If any diff class's rollup counts do not sum to its total.
+    """
+    counts = dict.fromkeys(DiffClass, 0)
+    for rollup in rollups:
+        counts[rollup.diff_class] += rollup.count
+    expected = {
+        DiffClass.NEW: totals.new,
+        DiffClass.DROPPED: totals.dropped,
+        DiffClass.CHANGED: totals.changed,
+    }
+    stale = [diff_class.value for diff_class, total in expected.items() if counts[diff_class] != total]
+    if stale:
+        msg = f'rollups are stale: {", ".join(stale)} counts disagree with totals'
+        raise ValueError(msg)
+
+
 class ProjectReport(_FrozenModel):
     """Per-project slice of the blast radius (contract §8, §9).
 
@@ -803,7 +836,7 @@ class ProjectReport(_FrozenModel):
     project: str
     diffs: tuple[FindingDiff, ...]
     totals: DiffTotals
-    rollups: tuple[DiffRollup, ...] = ()
+    rollups: tuple[DiffRollup, ...]
     truncated: bool
     base_findings: int
     head_findings: int
@@ -811,6 +844,18 @@ class ProjectReport(_FrozenModel):
     errors: tuple[ToolError, ...] = ()
     integrity_warnings: tuple[CorpusIntegrityWarning, ...] = ()
     source_warnings: tuple[str, ...] = ()
+
+    @model_validator(mode='after')
+    def _check_rollups(self) -> Self:
+        """Reject rollups that disagree with the project totals (§3.2).
+
+        Returns
+        -------
+        Self
+            The validated model.
+        """
+        _check_aggregates(self.totals, self.rollups)
+        return self
 
 
 class Report(_FrozenModel):
@@ -837,8 +882,43 @@ class Report(_FrozenModel):
     manifest: RunManifest
     projects: tuple[ProjectReport, ...]
     totals: DiffTotals
-    rollups: tuple[DiffRollup, ...] = ()
+    rollups: tuple[DiffRollup, ...]
     truncated: bool
+
+    @model_validator(mode='after')
+    def _check_overall_aggregates(self) -> Self:
+        """Reject overall aggregates that are not the projects' sum (§3.2).
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If the overall totals or rollups are stale.
+        """
+        summed = DiffTotals(
+            new=sum(project.totals.new for project in self.projects),
+            dropped=sum(project.totals.dropped for project in self.projects),
+            changed=sum(project.totals.changed for project in self.projects),
+            changed_confidence=sum(project.totals.changed_confidence for project in self.projects),
+            changed_message_only=sum(project.totals.changed_message_only for project in self.projects),
+        )
+        if self.totals != summed:
+            msg = 'overall totals are stale: they are not the sum of the project totals'
+            raise ValueError(msg)
+        merged: dict[tuple[DiffClass, str | None, str | None], int] = {}
+        for project in self.projects:
+            for rollup in project.rollups:
+                key = (rollup.diff_class, rollup.rule_id, rollup.kind)
+                merged[key] = merged.get(key, 0) + rollup.count
+        overall = {(rollup.diff_class, rollup.rule_id, rollup.kind): rollup.count for rollup in self.rollups}
+        if overall != merged:
+            msg = 'overall rollups are stale: they are not the sum of the project rollups'
+            raise ValueError(msg)
+        return self
 
 
 class HookEnvelope(_FrozenModel):

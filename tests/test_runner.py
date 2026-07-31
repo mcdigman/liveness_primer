@@ -635,7 +635,7 @@ def test_rendered_finding_content_never_leaks_disposable_paths(tmp_path: Path, c
     markdown = render_github(report)
     for rendered, trusted_marker in ((text, 'command:'), (markdown, '**base command**')):
         for line in rendered.splitlines():
-            if 'command' in line or line.strip().startswith(('repo ', '- **corpus**')):
+            if 'command' in line or line.strip().startswith(('corpus:', '- **corpus**')):
                 continue
             assert str(tmp_path) not in line
             assert '/private/var/folders' not in line

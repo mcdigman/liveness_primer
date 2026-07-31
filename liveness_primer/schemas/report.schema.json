@@ -492,7 +492,6 @@
           "type": "string"
         },
         "rollups": {
-          "default": [],
           "items": {
             "$ref": "#/$defs/DiffRollup"
           },
@@ -519,6 +518,7 @@
         "project",
         "diffs",
         "totals",
+        "rollups",
         "truncated",
         "base_findings",
         "head_findings",
@@ -802,7 +802,6 @@
       "type": "array"
     },
     "rollups": {
-      "default": [],
       "items": {
         "$ref": "#/$defs/DiffRollup"
       },
@@ -827,6 +826,7 @@
     "manifest",
     "projects",
     "totals",
+    "rollups",
     "truncated"
   ],
   "title": "Report",

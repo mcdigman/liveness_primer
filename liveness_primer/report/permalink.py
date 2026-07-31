@@ -60,6 +60,27 @@ def _validated_repo(pin: CorpusPinRecord) -> tuple[str, str] | None:
     return owner_repo
 
 
+def tree_reference(pin: CorpusPinRecord) -> tuple[str, str] | None:
+    """Build the pinned corpus tree label and URL (reporting contract §4.1).
+
+    Parameters
+    ----------
+    pin : CorpusPinRecord
+        Resolved corpus pin of the project.
+
+    Returns
+    -------
+    tuple[str, str] | None
+        ``(owner/repository, pinned-tree URL)``, or ``None`` for a
+        non-GitHub ad-hoc project.
+    """
+    owner_repo = _validated_repo(pin)
+    if owner_repo is None:
+        return None
+    owner, repository = owner_repo
+    return f'{owner}/{repository}', f'https://github.com/{owner}/{repository}/tree/{pin.resolved_sha}'
+
+
 def tree_url(pin: CorpusPinRecord) -> str | None:
     """Build the pinned corpus tree URL for a project header (reporting §4.1).
 
@@ -73,11 +94,8 @@ def tree_url(pin: CorpusPinRecord) -> str | None:
     str | None
         The pinned-tree URL, or ``None`` for a non-GitHub ad-hoc project.
     """
-    owner_repo = _validated_repo(pin)
-    if owner_repo is None:
-        return None
-    owner, repository = owner_repo
-    return f'https://github.com/{owner}/{repository}/tree/{pin.resolved_sha}'
+    reference = tree_reference(pin)
+    return None if reference is None else reference[1]
 
 
 def source_url(pin: CorpusPinRecord, path: str, start_line: int, end_line: int) -> str | None:
