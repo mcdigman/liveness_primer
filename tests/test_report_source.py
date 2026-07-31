@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from liveness_primer.filesystem import atomic_write_text
 from liveness_primer.findings import ChangedField, DiffClass, SourceExcerpt
 from liveness_primer.report.source import (
     MAX_SOURCE_WARNINGS,
@@ -23,7 +24,7 @@ FILE_LINES = [f'line {number}' for number in range(1, 21)]
 def write_checkout(tmp_path: Path) -> Path:
     checkout = tmp_path / 'checkout'
     (checkout / 'pkg').mkdir(parents=True)
-    (checkout / 'pkg' / 'mod.py').write_text('\n'.join(FILE_LINES) + '\n', encoding='utf-8')
+    atomic_write_text(checkout / 'pkg' / 'mod.py', '\n'.join(FILE_LINES) + '\n')
     return checkout
 
 

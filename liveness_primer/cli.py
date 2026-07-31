@@ -24,6 +24,7 @@ from liveness_primer.config import CorpusProject, ad_hoc_project, load_corpus, s
 from liveness_primer.corpus import CheckoutStore, cache_root
 from liveness_primer.envcache import DetectorEnvironments, choose_installer
 from liveness_primer.errors import LivenessPrimerError
+from liveness_primer.filesystem import atomic_write_text
 from liveness_primer.findings import SCHEMA_VERSION, Report
 from liveness_primer.isolation import detect_isolation, require_isolation
 from liveness_primer.license_check import check_licenses
@@ -406,7 +407,7 @@ def _write_json_report(report: Report, path: Path) -> None:
         If the destination cannot be written.
     """
     try:
-        path.write_text(render_json(report), encoding='utf-8')
+        atomic_write_text(path, render_json(report))
     except OSError as error:
         msg = f'could not write the JSON report to {path}: {error.strerror}'
         raise RunnerError(msg) from error
