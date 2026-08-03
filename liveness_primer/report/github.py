@@ -282,17 +282,15 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str
         lines.append(f'- note: {capped.replace("--max-results", "`--max-results`")}')
     shown, suppressed = cap_message_only(project.diffs)
     if shown:
-        lines.extend(['', '|  | rule | % | location | symbol | message |', '|' + ' --- |' * 6])
+        lines.extend(['', '|  | rule | % | location | message |', '|' + ' --- |' * 5])
         excerpt_lines = manifest.settings.excerpt_lines
         for diff in shown:
-            symbol = sanitize_cell(diff.symbol) if diff.symbol is not None else '-'
             marker = _CLASS_MARKERS[diff.diff_class.value]
             lines.append(
                 f'| {marker} {CLASS_GLYPHS[diff.diff_class]} '
                 f'| {sanitize_cell(rule_text(diff))} '
                 f'| {confidence_text(diff)} '
                 f'| {_location_cell(diff, pin)} '
-                f'| {symbol} '
                 f'| {_message_cell(diff, pin, excerpt_lines=excerpt_lines)} |'
             )
     if suppressed:

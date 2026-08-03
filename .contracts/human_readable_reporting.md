@@ -26,10 +26,12 @@ The human report therefore must provide, for every displayed finding:
 - changed fields; and
 - a bounded excerpt of the pinned source at the reported location.
 
-GitHub output narrows the column set that carries these: §7 drops the `kind` and
-changed-field columns because a GitHub table cannot scroll horizontally on its own. Kind
-remains in text output and in JSON, and every changed field still appears in the row as an
-explicit base→head value, so this is a layout narrowing rather than a loss of observables.
+GitHub output narrows the column set that carries these: §7 drops the `kind`, `symbol`, and
+changed-field columns because a GitHub table cannot scroll horizontally on its own. Kind and
+symbol remain in text output and in JSON, the symbol is named by the normalized diagnostic
+message and located by the pinned link beside it, and every changed field still appears in
+the row as an explicit base→head value. This is a layout narrowing rather than a loss of
+observables.
 
 The report must remain compact enough to scan across a corpus. It must not reproduce raw
 structured detector records or expose temporary local paths through detector-derived finding
@@ -576,11 +578,13 @@ the link targets, set the rendered column width, because a Markdown link renders
 label. A row that serializes a whole excerpt into one cell violates this section.
 
 The width budget also decides the column set. GitHub output narrows the terminal renderer's
-columns to the blank class column, `rule`, `%`, `location`, `symbol`, and `message`, in that
-order. `kind` and the changed-field summary column are dropped: `kind` remains in the JSON
-report and in text output, and every changed field still appears in the row as an explicit
-base→head value beneath the diagnostic, so nothing observable is lost — only the two columns
-whose content is shortest and most repetitive across a corpus.
+columns to the blank class column, `rule`, `%`, `location`, and `message`, in that order.
+`kind`, `symbol`, and the changed-field summary column are dropped. `kind` remains in the
+JSON report and in text output; the symbol is already named inside the normalized diagnostic
+message and pinpointed by the pinned link in the location cell, so a dedicated column spends
+width on text the row states twice; and every changed field still appears beneath the
+diagnostic as an explicit base→head value. Nothing observable is lost — only the columns
+whose content is most repetitive or most redundant across a corpus.
 
 GitHub output keeps the class glyphs. It may add a colored status marker
 in the blank class header column because GitHub-rendered tables do not have terminal color:
@@ -598,7 +602,7 @@ marked rather than silent.
 
 GitHub table source may omit a leading and trailing `|`. GitHub's required separator row is
 not a user-facing semantic header. The first header cell is blank; the remaining headers are
-`rule`, `%`, `location`, `symbol`, and `message`.
+`rule`, `%`, `location`, and `message`.
 
 ## 8. Sanitization and truncation
 
@@ -704,7 +708,7 @@ Implementation is complete only when tests establish all of the following.
     rendering a zero baseline as `new` or `-`.
 30. No GitHub table row serializes more than the first retained source line of a side; the
     line renders as a code span, a continuing excerpt is marked `[...]`, and the header row
-    is exactly the blank class column, `rule`, `%`, `location`, `symbol`, and `message`.
+    is exactly the blank class column, `rule`, `%`, `location`, and `message`.
 31. `--json-out PATH` writes the byte-identical `--output json` payload for any `--output`
     mode without changing what reaches standard output.
 

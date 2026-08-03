@@ -634,7 +634,7 @@ def test_github_output_contains_no_ansi_and_keeps_glyphs() -> None:
     assert '\U0001f534 -' in markdown
     assert '\U0001f7e1 ~' in markdown
     header = next(line for line in markdown.splitlines() if line.startswith('|  | rule'))
-    assert header == '|  | rule | % | location | symbol | message |'
+    assert header == '|  | rule | % | location | message |'
 
 
 def test_github_source_evidence_is_in_row_not_collapsed() -> None:
@@ -684,8 +684,8 @@ def test_hostile_source_and_fields_cannot_break_structure() -> None:
     markdown = render_github(report)
     assert '\x1b' not in markdown
     finding_row = next(row for row in markdown.splitlines() if row.startswith('| ') and 'evil' in row)
-    # Escaped pipes only: the row still has exactly its 6 columns.
-    assert finding_row.count('|') - finding_row.count('\\|') == 7
+    # Escaped pipes only: the row still has exactly its 5 columns.
+    assert finding_row.count('|') - finding_row.count('\\|') == 6
     # Source text renders as a code span, where markdown structure and raw
     # HTML are inert, so the hostile tag stays literal text (reporting §7).
     source_span = finding_row.rsplit('<br>', maxsplit=1)[-1]
