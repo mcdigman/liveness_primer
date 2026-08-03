@@ -26,7 +26,6 @@ from liveness_primer.report.common import (
     CLASS_LEGEND,
     abbreviated_sha,
     cap_message_only,
-    changed_fields_text,
     changed_value_details,
     confidence_text,
     displayed_text,
@@ -39,7 +38,13 @@ from liveness_primer.report.common import (
     totals_text,
 )
 from liveness_primer.report.permalink import source_url, tree_url
-from liveness_primer.report.sanitize import code_span, escape_argv_text, sanitize_cell, sanitize_inline
+from liveness_primer.report.sanitize import (
+    code_cell,
+    code_span,
+    escape_argv_text,
+    sanitize_cell,
+    sanitize_inline,
+)
 
 # Colored status markers beside the mandatory class glyphs (reporting §7):
 # GitHub-rendered tables have no terminal color, and the glyph keeps the
@@ -144,9 +149,10 @@ def _excerpt_parts(excerpt: SourceExcerpt) -> list[str]:
 
     Only the first retained line goes in the row: a GitHub table has no
     horizontal scroll of its own, and serializing a whole excerpt into one
-    cell forces the table sideways. The complete retained excerpt stays in
-    the JSON report, and the further retained and omitted line counts are
-    stated rather than dropped silently.
+    cell forces the table sideways. The source itself renders as a code
+    span so it reads as code, and a compact ``[...]`` marks that the
+    excerpt continues. The complete retained excerpt, with its exact
+    retained and omitted line counts, stays in the JSON report.
 
     Parameters
     ----------
@@ -156,17 +162,11 @@ def _excerpt_parts(excerpt: SourceExcerpt) -> list[str]:
     Returns
     -------
     list[str]
-        The escaped first source line and any count marker.
+        The fenced first source line and any elision marker.
     """
-    parts = [sanitize_cell(f'{excerpt.start_line} | {excerpt.lines[0]}', max_length=_SOURCE_CAP)]
-    notes: list[str] = []
-    remaining = len(excerpt.lines) - 1
-    if remaining:
-        notes.append(f'+{remaining} more retained line(s)')
-    if excerpt.omitted_lines:
-        notes.append(f'{excerpt.omitted_lines} reported-span line(s) omitted')
-    if notes:
-        parts.append(f'({"; ".join(notes)}; see the JSON report)')
+    parts = [f'{excerpt.start_line} \\| {code_cell(excerpt.lines[0], max_length=_SOURCE_CAP)}']
+    if len(excerpt.lines) > 1 or excerpt.omitted_lines:
+        parts.append(sanitize_cell('[...]'))
     return parts
 
 
@@ -282,7 +282,7 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str
         lines.append(f'- note: {capped.replace("--max-results", "`--max-results`")}')
     shown, suppressed = cap_message_only(project.diffs)
     if shown:
-        lines.extend(['', '|  | rule | % | kind | location | message | symbol | fields |', '|' + ' --- |' * 8])
+        lines.extend(['', '|  | rule | % | location | symbol | message |', '|' + ' --- |' * 6])
         excerpt_lines = manifest.settings.excerpt_lines
         for diff in shown:
             symbol = sanitize_cell(diff.symbol) if diff.symbol is not None else '-'
@@ -291,11 +291,9 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str
                 f'| {marker} {CLASS_GLYPHS[diff.diff_class]} '
                 f'| {sanitize_cell(rule_text(diff))} '
                 f'| {confidence_text(diff)} '
-                f'| {sanitize_cell(diff.kind)} '
                 f'| {_location_cell(diff, pin)} '
-                f'| {_message_cell(diff, pin, excerpt_lines=excerpt_lines)} '
                 f'| {symbol} '
-                f'| {changed_fields_text(diff)} |'
+                f'| {_message_cell(diff, pin, excerpt_lines=excerpt_lines)} |'
             )
     if suppressed:
         lines.extend(('', f'({suppressed} more message-only change(s) not shown; the JSON report retains full detail)'))

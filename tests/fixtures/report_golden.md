@@ -48,17 +48,17 @@ base 12 findings, head 13; 2 new, 2 dropped, 8 changed (1 confidence, 5 message-
 - **warning[source]**: pkg/gone.py: not a regular non-symlink file
 - note: showing 11 of 12 finding diffs (truncated by `--max-results`)
 
-|  | rule | % | kind | location | message | symbol | fields |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 🟢 + | SKY-U001 | 100% | function | [pkg/mod.py:L9](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L9) | unused function with a very hostile excerpt<br>9 \| def fresh(request):<br>(+1 more retained line(s); see the JSON report) | fresh \| pipe\`tick\` | - |
-| 🔴 - | - | 60% | function | [pkg/mod.py:L5](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L5) | unused function 'goner'<br>5 \| def goner(): | goner | - |
-| 🟡 ~ | - | 60% | function | [pkg/mod.py:L10->L14](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L10) | unused function 'mover'<br>line: L10 -> L14<br>[base](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L10):<br>10 \| def mover():<br>[head](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L14):<br>14 \| def mover():  # moved | mover | line |
-| 🟡 ~ | - | 60%->90% | function | [pkg/mod.py:L21](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L21) | unused function 'flaky'<br>%: 60% -> 90%<br>21 \| def flaky(): | flaky | % |
-| 🟡 ~ | SKY-U001 | 60% | function | [pkg/mod.py:L40](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L40) | renumbered rule<br>rule: SKY-U001 -> SKY-U003<br>40 \| def renumbered(): | renumbered | rule |
-| 🔴 - | - | NA | function | [pkg/mod.py:L50-57](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L50-L57) | multi-line span with an omitted tail<br>50 \| class Span:<br>(+1 more retained line(s); 6 reported-span line(s) omitted; see the JSON report) | span | - |
-| 🟡 ~ | - | 60% | function | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | old wording for reworded-1<br>message: old wording for reworded-1 -> new wording for reworded-1 | reworded-1 | message |
-| 🟡 ~ | - | 60% | function | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | old wording for reworded-2<br>message: old wording for reworded-2 -> new wording for reworded-2 | reworded-2 | message |
-| 🟡 ~ | - | 60% | function | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | old wording for reworded-3<br>message: old wording for reworded-3 -> new wording for reworded-3 | reworded-3 | message |
+|  | rule | % | location | symbol | message |
+| --- | --- | --- | --- | --- | --- |
+| 🟢 + | SKY-U001 | 100% | [pkg/mod.py:L9](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L9) | fresh \| pipe\`tick\` | unused function with a very hostile excerpt<br>9 \| `def fresh(request):`<br>\[...\] |
+| 🔴 - | - | 60% | [pkg/mod.py:L5](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L5) | goner | unused function 'goner'<br>5 \| `def goner():` |
+| 🟡 ~ | - | 60% | [pkg/mod.py:L10->L14](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L10) | mover | unused function 'mover'<br>line: L10 -> L14<br>[base](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L10):<br>10 \| `def mover():`<br>[head](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L14):<br>14 \| `def mover():  # moved` |
+| 🟡 ~ | - | 60%->90% | [pkg/mod.py:L21](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L21) | flaky | unused function 'flaky'<br>%: 60% -> 90%<br>21 \| `def flaky():` |
+| 🟡 ~ | SKY-U001 | 60% | [pkg/mod.py:L40](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L40) | renumbered | renumbered rule<br>rule: SKY-U001 -> SKY-U003<br>40 \| `def renumbered():` |
+| 🔴 - | - | NA | [pkg/mod.py:L50-57](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L50-L57) | span | multi-line span with an omitted tail<br>50 \| `class Span:`<br>\[...\] |
+| 🟡 ~ | - | 60% | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | reworded-1 | old wording for reworded-1<br>message: old wording for reworded-1 -> new wording for reworded-1 |
+| 🟡 ~ | - | 60% | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | reworded-2 | old wording for reworded-2<br>message: old wording for reworded-2 -> new wording for reworded-2 |
+| 🟡 ~ | - | 60% | [pkg/mod.py:L30](https://github.com/example/alpha/blob/3333333333333333333333333333333333333333/pkg/mod.py#L30) | reworded-3 | old wording for reworded-3<br>message: old wording for reworded-3 -> new wording for reworded-3 |
 
 (2 more message-only change(s) not shown; the JSON report retains full detail)
 
@@ -69,10 +69,10 @@ base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidence, 0 message-on
 - **rollup**: new 1: kind:function 1
 - **rollup**: changed 1: kind:function 1
 
-|  | rule | % | kind | location | message | symbol | fields |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 🟢 + | - | NA | function | lib/util.py:L3 | no permalink for ad-hoc hosts<br>3 \| x = 1 | unlinked | - |
-| 🟡 ~ | - | NA | function | lib/move.py:L7->L11 | moved without a permalink<br>line: L7 -> L11<br>base:<br>7 \| old = 7<br>head:<br>11 \| new = 11 | wanderer | line |
+|  | rule | % | location | symbol | message |
+| --- | --- | --- | --- | --- | --- |
+| 🟢 + | - | NA | lib/util.py:L3 | unlinked | no permalink for ad-hoc hosts<br>3 \| `x = 1` |
+| 🟡 ~ | - | NA | lib/move.py:L7->L11 | wanderer | moved without a permalink<br>line: L7 -> L11<br>base:<br>7 \| `old = 7`<br>head:<br>11 \| `new = 11` |
 
 ## `gamma`
 

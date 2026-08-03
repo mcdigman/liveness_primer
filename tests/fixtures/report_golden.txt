@@ -29,41 +29,41 @@ project alpha - base 12 findings, head 13; 2 new, 2 dropped, 8 changed (1 confid
   warning[corpus-integrity]: expected-clean base side reported 12 finding(s) and exit code 3
   warning[source]: pkg/gone.py: not a regular non-symlink file
   showing 11 of 12 finding diffs (truncated by --max-results)
-   rule      %         kind      location             message                                      symbol              fields
-+  SKY-U001  100%      function  pkg/mod.py:L9        unused function with a very hostile excerpt  fresh | pipe`tick`  -
+   rule      %         kind      location             symbol              message                                      fields
++  SKY-U001  100%      function  pkg/mod.py:L9        fresh | pipe`tick`  unused function with a very hostile excerpt  -
    9 | def fresh(request):
   10 |     return request
 
--  -         60%       function  pkg/mod.py:L5        unused function 'goner'                      goner               -
+-  -         60%       function  pkg/mod.py:L5        goner               unused function 'goner'                      -
   5 | def goner():
 
-~  -         60%       function  pkg/mod.py:L10->L14  unused function 'mover'                      mover               line
+~  -         60%       function  pkg/mod.py:L10->L14  mover               unused function 'mover'                      line
   line: L10 -> L14
   base:
   10 | def mover():
   head:
   14 | def mover():  # moved
 
-~  -         60%->90%  function  pkg/mod.py:L21       unused function 'flaky'                      flaky               %
+~  -         60%->90%  function  pkg/mod.py:L21       flaky               unused function 'flaky'                      %
   %: 60% -> 90%
   21 | def flaky():
 
-~  SKY-U001  60%       function  pkg/mod.py:L40       renumbered rule                              renumbered          rule
+~  SKY-U001  60%       function  pkg/mod.py:L40       renumbered          renumbered rule                              rule
   rule: SKY-U001 -> SKY-U003
   40 | def renumbered():
 
--  -         NA        function  pkg/mod.py:L50-57    multi-line span with an omitted tail         span                -
+-  -         NA        function  pkg/mod.py:L50-57    span                multi-line span with an omitted tail         -
   50 | class Span:
   51 |     a = 1
   (6 reported-span line(s) omitted)
 
-~  -         60%       function  pkg/mod.py:L30       old wording for reworded-1                   reworded-1          message
+~  -         60%       function  pkg/mod.py:L30       reworded-1          old wording for reworded-1                   message
   message: old wording for reworded-1 -> new wording for reworded-1
 
-~  -         60%       function  pkg/mod.py:L30       old wording for reworded-2                   reworded-2          message
+~  -         60%       function  pkg/mod.py:L30       reworded-2          old wording for reworded-2                   message
   message: old wording for reworded-2 -> new wording for reworded-2
 
-~  -         60%       function  pkg/mod.py:L30       old wording for reworded-3                   reworded-3          message
+~  -         60%       function  pkg/mod.py:L30       reworded-3          old wording for reworded-3                   message
   message: old wording for reworded-3 -> new wording for reworded-3
 
   (2 more message-only change(s) not shown; the JSON report retains full detail)
@@ -72,11 +72,11 @@ project beta - base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidenc
   corpus: ssh://git@internal.invalid/beta.git @ 444444444444
   new 1: kind:function 1
   changed 1: kind:function 1
-   rule  %   kind      location             message                        symbol    fields
-+  -     NA  function  lib/util.py:L3       no permalink for ad-hoc hosts  unlinked  -
+   rule  %   kind      location             symbol    message                        fields
++  -     NA  function  lib/util.py:L3       unlinked  no permalink for ad-hoc hosts  -
   3 | x = 1
 
-~  -     NA  function  lib/move.py:L7->L11  moved without a permalink      wanderer  line
+~  -     NA  function  lib/move.py:L7->L11  wanderer  moved without a permalink      line
   line: L7 -> L11
   base:
   7 | old = 7

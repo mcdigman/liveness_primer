@@ -158,6 +158,55 @@ def sanitize_cell(text: str, *, max_length: int = DEFAULT_INLINE_CAP) -> str:
     return escape_markdown(sanitize_inline(text, max_length=max_length))
 
 
+def code_span(text: str) -> str:
+    """Quote one already-escaped line as a markdown inline code span.
+
+    The backtick fence is longer than any backtick run in the content, so
+    the content cannot terminate the span (contract §9).
+
+    Parameters
+    ----------
+    text : str
+        Control-free single-line text.
+
+    Returns
+    -------
+    str
+        An inline code span containing the text verbatim.
+    """
+    longest_run = 0
+    run = 0
+    for ch in text:
+        run = run + 1 if ch == '`' else 0
+        longest_run = max(longest_run, run)
+    fence = '`' * max(1, longest_run + 1)
+    if text.startswith('`') or text.endswith('`') or not text:
+        return f'{fence} {text} {fence}'
+    return f'{fence}{text}{fence}'
+
+
+def code_cell(text: str, *, max_length: int = DEFAULT_INLINE_CAP) -> str:
+    """Sanitize untrusted text as a code span inside a table cell (§8).
+
+    A code span renders its content literally, so markdown structure, raw
+    HTML, and link syntax inside it are inert; only the table's own cell
+    separator still needs escaping, which GitHub honors inside code spans.
+
+    Parameters
+    ----------
+    text : str
+        Untrusted text.
+    max_length : int
+        Maximum rendered length before fencing.
+
+    Returns
+    -------
+    str
+        An inline code span safe to place in a markdown table cell.
+    """
+    return code_span(sanitize_inline(text, max_length=max_length).replace('|', '\\|'))
+
+
 def escape_argv_text(text: str) -> str:
     """Escape control characters in trusted manifest argv text (reporting §3.5).
 
@@ -184,30 +233,3 @@ def escape_argv_text(text: str) -> str:
         else:
             escaped.append(f'\\u{ord(ch):04x}')
     return ''.join(escaped)
-
-
-def code_span(text: str) -> str:
-    """Quote one already-escaped line as a markdown inline code span.
-
-    The backtick fence is longer than any backtick run in the content, so
-    the content cannot terminate the span (contract §9).
-
-    Parameters
-    ----------
-    text : str
-        Control-free single-line text.
-
-    Returns
-    -------
-    str
-        An inline code span containing the text verbatim.
-    """
-    longest_run = 0
-    run = 0
-    for ch in text:
-        run = run + 1 if ch == '`' else 0
-        longest_run = max(longest_run, run)
-    fence = '`' * max(1, longest_run + 1)
-    if text.startswith('`') or text.endswith('`') or not text:
-        return f'{fence} {text} {fence}'
-    return f'{fence}{text}{fence}'

@@ -105,8 +105,8 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec(header='%', role='confidence', minimum=CONFIDENCE_MIN_WIDTH),
     ColumnSpec(header='kind', role='kind', minimum=4),
     ColumnSpec(header='location', role='location', minimum=14, maximum=48, degrade='truncate-middle'),
-    ColumnSpec(header='message', role='message', minimum=16, maximum=64, degrade='wrap-words'),
     ColumnSpec(header='symbol', role='symbol', minimum=6, maximum=40, degrade='truncate-end'),
+    ColumnSpec(header='message', role='message', minimum=16, maximum=64, degrade='wrap-words'),
     ColumnSpec(header='fields', role='fields', minimum=6),
 )
 

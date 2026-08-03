@@ -366,8 +366,8 @@ def _row_cells(diff: FindingDiff, *, url: str | None, options: TextRenderOptions
         Cell(text=confidence_text(diff), role='confidence'),
         Cell(text=sanitize_inline(diff.kind, max_length=_KIND_CAP), role='kind'),
         Cell(text=location, role='location-link' if linked else 'location', link=url if linked else None),
-        Cell(text=sanitize_inline(diff.reference_occurrence.message, max_length=_MESSAGE_CAP), role='message'),
         Cell(text=symbol, role='symbol'),
+        Cell(text=sanitize_inline(diff.reference_occurrence.message, max_length=_MESSAGE_CAP), role='message'),
         Cell(text=changed_fields_text(diff), role='fields'),
     )
 
@@ -555,7 +555,7 @@ def _stacked_finding_lines(
             Segment(text=f' {diff.diff_class.value}'),
         )
     ]
-    labels = ('rule', '%', 'kind', 'location', 'message', 'symbol', 'fields')
+    labels = ('rule', '%', 'kind', 'location', 'symbol', 'message', 'fields')
     for label, cell in zip(labels, cells[1:], strict=True):
         lines.extend(
             continuation_lines(

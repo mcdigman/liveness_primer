@@ -393,8 +393,8 @@ def test_text_report_shows_required_finding_columns() -> None:
     assert 'legend: + new; - dropped; ~ changed' in text
     header_row = next(line for line in text.splitlines() if 'rule' in line and 'fields' in line)
     assert header_row.index('rule') < header_row.index('%') < header_row.index('kind')
-    assert header_row.index('kind') < header_row.index('location') < header_row.index('message')
-    assert header_row.index('message') < header_row.index('symbol') < header_row.index('fields')
+    assert header_row.index('kind') < header_row.index('location') < header_row.index('symbol')
+    assert header_row.index('symbol') < header_row.index('message') < header_row.index('fields')
     assert 'SKY-U001' in text
     assert 'pkg/mod.py:L9' in text
     assert 'NA' in text
@@ -634,14 +634,14 @@ def test_github_output_contains_no_ansi_and_keeps_glyphs() -> None:
     assert '\U0001f534 -' in markdown
     assert '\U0001f7e1 ~' in markdown
     header = next(line for line in markdown.splitlines() if line.startswith('|  | rule'))
-    assert header == '|  | rule | % | kind | location | message | symbol | fields |'
+    assert header == '|  | rule | % | location | symbol | message |'
 
 
 def test_github_source_evidence_is_in_row_not_collapsed() -> None:
     markdown = render_github(build_report())
     assert '<details>' not in markdown
     row = next(line for line in markdown.splitlines() if 'fresh' in line and line.startswith('|'))
-    assert '9 \\| def fresh(request):' in row
+    assert '9 \\| `def fresh(request):`' in row
 
 
 def test_github_escapes_untrusted_error_details() -> None:
@@ -684,9 +684,14 @@ def test_hostile_source_and_fields_cannot_break_structure() -> None:
     markdown = render_github(report)
     assert '\x1b' not in markdown
     finding_row = next(row for row in markdown.splitlines() if row.startswith('| ') and 'evil' in row)
-    # Escaped pipes only: the row still has exactly its 8 columns.
-    assert finding_row.count('|') - finding_row.count('\\|') == 9
-    assert markdown.count('<img') == markdown.count('\\<img')
+    # Escaped pipes only: the row still has exactly its 6 columns.
+    assert finding_row.count('|') - finding_row.count('\\|') == 7
+    # Source text renders as a code span, where markdown structure and raw
+    # HTML are inert, so the hostile tag stays literal text (reporting §7).
+    source_span = finding_row.rsplit('<br>', maxsplit=1)[-1]
+    assert source_span.startswith('2 \\| `')
+    assert '<img src=x>' in source_span
+    assert markdown.count('<img') == 1
 
 
 def test_sanitize_inline_strips_and_caps_with_counts() -> None:
@@ -852,13 +857,13 @@ def test_github_rows_carry_only_the_first_retained_source_line() -> None:
     markdown = render_github(build_report())
     rows = [line for line in markdown.splitlines() if line.startswith(('| \U0001f7e2', '| \U0001f534'))]
     fresh = next(row for row in rows if 'hostile excerpt' in row)
-    assert '9 \\| def fresh(request):' in fresh
+    assert '9 \\| `def fresh(request):`' in fresh
     assert 'return request' not in fresh
-    assert '(+1 more retained line(s); see the JSON report)' in fresh
+    assert fresh.endswith('<br>\\[...\\] |')
     span = next(row for row in rows if 'omitted tail' in row)
-    assert '50 \\| class Span:' in span
+    assert '50 \\| `class Span:`' in span
     assert 'a = 1' not in span
-    assert '+1 more retained line(s); 6 reported-span line(s) omitted' in span
+    assert span.endswith('<br>\\[...\\] |')
     # The complete retained excerpt is still in JSON (§7).
     assert '    a = 1' in render_json(build_report())
     # No row serializes a whole excerpt into one cell.

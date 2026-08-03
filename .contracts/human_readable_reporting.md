@@ -26,6 +26,11 @@ The human report therefore must provide, for every displayed finding:
 - changed fields; and
 - a bounded excerpt of the pinned source at the reported location.
 
+GitHub output narrows the column set that carries these: §7 drops the `kind` and
+changed-field columns because a GitHub table cannot scroll horizontally on its own. Kind
+remains in text output and in JSON, and every changed field still appears in the row as an
+explicit base→head value, so this is a layout narrowing rather than a loss of observables.
+
 The report must remain compact enough to scan across a corpus. It must not reproduce raw
 structured detector records or expose temporary local paths through detector-derived finding
 content. Trusted manifest commands remain reproducibility data (§3.5).
@@ -272,10 +277,10 @@ mode that omits cost or the warning summaries is incomplete, not merely styled d
 Findings render in a compact, aligned table with this exact semantic column order:
 
 ```text
-  rule       %          kind       location                    message                        symbol               fields
-+ SKY-U001   90%        function   httpx/_auth.py:L225         unused function 'example'      httpx._auth.example  -
-- SKY-U002   NA         import     httpx/_client.py:L14        unused import 'typing'         typing               -
-~ SKY-U003   60%->90%   variable   httpx/_config.py:L81        unused variable 'DEFAULT'      DEFAULT              %
+  rule       %          kind       location                    symbol               message                        fields
++ SKY-U001   90%        function   httpx/_auth.py:L225         httpx._auth.example  unused function 'example'      -
+- SKY-U002   NA         import     httpx/_client.py:L14        typing               unused import 'typing'         -
+~ SKY-U003   60%->90%   variable   httpx/_config.py:L81        DEFAULT              unused variable 'DEFAULT'      %
 ```
 
 The first column has a blank header. There is no left border and no vertical border in text
@@ -339,11 +344,11 @@ complete finding block from the next one, so it is unambiguous where a diagnosti
 its evidence begins:
 
 ```text
-+ SKY-U001  90%  function  httpx/_auth.py:L225  unused function 'example'  httpx._auth.example  -
++ SKY-U001  90%  function  httpx/_auth.py:L225   httpx._auth.example  unused function 'example'  -
   225 | def example(request):
   226 |     return request
 
-- SKY-U002  NA   import    httpx/_client.py:L14  unused import 'typing'    typing               -
+- SKY-U002  NA   import    httpx/_client.py:L14  typing               unused import 'typing'     -
    14 | import typing
 ```
 
@@ -558,16 +563,26 @@ forces the whole table sideways and destroys the scannability §1 requires. At c
 report carries well over a hundred findings, so the per-row budget is the binding constraint,
 not the per-finding one.
 
-GitHub rows therefore carry the **first retained source line only**, followed by a marker
-counting the source lines not shown, exactly satisfying this section's requirement that a
-reviewer see the first retained line without expanding anything. The complete retained
-excerpt stays in the JSON report, which is the CI-consumable product. In-row caps for the
-message, changed values, and source text are tighter than the terminal renderer's for the
-same reason: those caps, not the link targets, set the rendered column width, because a
-Markdown link renders as its short label. A row that serializes a whole excerpt into one cell
-violates this section.
+GitHub rows therefore carry the **first retained source line only**, rendered as a Markdown
+code span so it reads as code, followed by a bare `[...]` when the excerpt continues. That
+satisfies this section's requirement that a reviewer see the first retained line without
+expanding anything, while spending the fewest cells on the fact that more exists; the exact
+retained and omitted line counts stay in the JSON report, which is the CI-consumable product.
+A code span also renders its content literally, so Markdown structure, raw HTML, and link
+syntax inside pinned source are inert there; only the table's own `|` separator still needs
+escaping, which GitHub honors inside code spans. In-row caps for the message, changed values,
+and source text are tighter than the terminal renderer's for the same reason: those caps, not
+the link targets, set the rendered column width, because a Markdown link renders as its short
+label. A row that serializes a whole excerpt into one cell violates this section.
 
-GitHub output uses the same column order and class glyphs. It may add a colored status marker
+The width budget also decides the column set. GitHub output narrows the terminal renderer's
+columns to the blank class column, `rule`, `%`, `location`, `symbol`, and `message`, in that
+order. `kind` and the changed-field summary column are dropped: `kind` remains in the JSON
+report and in text output, and every changed field still appears in the row as an explicit
+base→head value beneath the diagnostic, so nothing observable is lost — only the two columns
+whose content is shortest and most repetitive across a corpus.
+
+GitHub output keeps the class glyphs. It may add a colored status marker
 in the blank class header column because GitHub-rendered tables do not have terminal color:
 
 - `🟢 +` for `new`;
@@ -578,12 +593,12 @@ The `+`, `-`, and `~` remain mandatory so color is not the only carrier of meani
 GitHub-hosted corpus project, the location is a Markdown link to the pinned source line. For
 a non-GitHub ad-hoc project, it is escaped plain text. Source evidence appears in the same row
 beneath the diagnostic using escaped inline or preformatted text; a reviewer must not have
-to expand a collapsed section to see the first retained source line, and the count of
-further retained and omitted lines is explicit rather than silent.
+to expand a collapsed section to see the first retained source line, and continuation is
+marked rather than silent.
 
 GitHub table source may omit a leading and trailing `|`. GitHub's required separator row is
 not a user-facing semantic header. The first header cell is blank; the remaining headers are
-`rule`, `%`, `kind`, `location`, `message`, `symbol`, and `fields`.
+`rule`, `%`, `location`, `symbol`, and `message`.
 
 ## 8. Sanitization and truncation
 
@@ -594,7 +609,8 @@ untrusted. Human renderers must:
 - prevent Rich-markup interpretation;
 - escape Markdown and HTML metacharacters at the GitHub structural boundary;
 - apply independent per-cell length caps;
-- show how many characters or lines were omitted;
+- show how many characters or lines were omitted, the one exception being §7's in-row source
+  elision marker, which is deliberately bare because the exact counts remain in JSON;
 - preserve the beginning and identifying portion of locations and rule IDs;
 - prevent any one field from consuming another field's display budget; and
 - apply generated ANSI or hyperlink control sequences only outside untrusted text.
@@ -614,7 +630,7 @@ are not normalized or suppressed as detector-derived data.
 | ANSI color | capability-dependent | explicit only | never | never |
 | colored fallback marker | not required | no | yes | no |
 | source location/link | pinned OSC-8 when available, plus visible fallback | plain location; pinned URL only under `--source-urls` | pinned Markdown link when available, otherwise plain location | structured/derivable |
-| bounded source excerpt | yes | yes | first retained line plus a count of the rest | complete retained excerpt |
+| bounded source excerpt | yes | yes | first retained line as a code span plus `[...]` | complete retained excerpt |
 | end-of-report summary | yes | yes | no (header only) | no |
 | raw detector record | no | no | no | when retained |
 | temporary paths in detector-derived finding content | never | never | never | never in normalized locations |
@@ -686,8 +702,9 @@ Implementation is complete only when tests establish all of the following.
 29. The text report ends with the repeated overall summary and the per-project impact table,
     ordered by descending absolute delta, showing signed delta and ratio together and
     rendering a zero baseline as `new` or `-`.
-30. No GitHub table row serializes more than the first retained source line of a side, and
-    the further retained and omitted line counts are stated.
+30. No GitHub table row serializes more than the first retained source line of a side; the
+    line renders as a code span, a continuing excerpt is marked `[...]`, and the header row
+    is exactly the blank class column, `rule`, `%`, `location`, `symbol`, and `message`.
 31. `--json-out PATH` writes the byte-identical `--output json` payload for any `--output`
     mode without changing what reaches standard output.
 

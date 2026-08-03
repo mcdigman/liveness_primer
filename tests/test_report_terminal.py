@@ -327,8 +327,8 @@ def test_finding_lines_pad_and_wrap_preserving_boundaries() -> None:
         Cell(text='NA'),
         Cell(text='kindx'),
         Cell(text='a/b.py:L1'),
-        Cell(text='m' * 40),
         Cell(text='sym'),
+        Cell(text='m' * 40),
         Cell(text='-'),
     )
     widths = measure_widths([row], total_width=90)
@@ -336,7 +336,7 @@ def test_finding_lines_pad_and_wrap_preserving_boundaries() -> None:
     lines = finding_lines(row, widths)
     assert len(lines) > 1
     rendered = [''.join(segment.text for segment in line) for line in lines]
-    message_offset = column_offset(widths, 5)
+    message_offset = column_offset(widths, 6)
     assert rendered[0][message_offset:].startswith('m')
     # Continuation lines keep every other column blank.
     assert not rendered[1].strip().strip('m')
