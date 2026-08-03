@@ -95,7 +95,7 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
     if manifest.isolation_enforced:
         lines.append('- **isolation**: enforced')
     else:
-        lines.append('- **isolation**: :warning: **NOT ENFORCED** - no network sandbox (contract §11)')
+        lines.append('- **isolation**: :warning: **NOT ENFORCED** - no network sandbox')
     if manifest.installer is not None:
         lines.append(f'- **installer**: {manifest.installer}')
     if manifest.environment_delta:
@@ -104,7 +104,7 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
                 '',
                 '## :warning: Environment delta',
                 '',
-                'Non-detector dependencies differ between the sides (contract §3):',
+                'Non-detector dependencies differ between the sides:',
                 '',
                 '| package | base | head |',
                 '| --- | --- | --- |',
@@ -299,7 +299,7 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str
 
 
 def render_github(report: Report) -> str:
-    """Render the report as a GitHub step summary (contract §9, reporting §7).
+    """Render the report as a GitHub step summary.
 
     Parameters
     ----------

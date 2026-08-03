@@ -160,17 +160,11 @@ def _manifest_lines(manifest: RunManifest) -> list[Line]:
     if manifest.isolation_enforced:
         lines.append(_plain_line('isolation: enforced'))
     else:
-        lines.append(
-            _plain_line(
-                'isolation: NOT ENFORCED - build/analysis ran without a network sandbox (contract §11)', 'warning'
-            )
-        )
+        lines.append(_plain_line('isolation: NOT ENFORCED - build/analysis ran without a network sandbox', 'warning'))
     if manifest.installer is not None:
         lines.append(_plain_line(f'installer: {manifest.installer}'))
     if manifest.environment_delta:
-        lines.append(
-            _plain_line('environment delta - non-detector dependencies differ between the sides (contract §3):')
-        )
+        lines.append(_plain_line('environment delta - non-detector dependencies differ between the sides:'))
         for delta in manifest.environment_delta:
             base = delta.base_version if delta.base_version is not None else 'absent'
             head = delta.head_version if delta.head_version is not None else 'absent'
@@ -789,7 +783,7 @@ def _emit(lines: list[Line], options: TextRenderOptions) -> str:
 
 
 def render_text(report: Report, options: TextRenderOptions | None = None) -> str:
-    """Render the report for terminal consumption (contract §9, reporting §4-§6).
+    """Render the report for terminal consumption.
 
     Parameters
     ----------

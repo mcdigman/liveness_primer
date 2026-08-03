@@ -2,7 +2,7 @@
 
 Copyright (C) 2026 Matthew C. Digman
 
-Pydantic models are the source of truth (contract §7); JSON Schema files under
+Pydantic models are the source of truth; JSON Schema files under
 ``liveness_primer/schemas/`` are exported from them by ``schema export``.
 """
 
@@ -23,7 +23,7 @@ SCHEMA_VERSION = '1.1.0'
 
 
 def _validated_schema_version(value: str) -> str:
-    """Constrain a payload's schema version to the supported one (contract §7).
+    """Constrain a payload's schema version to the supported one.
 
     Parameters
     ----------
@@ -55,7 +55,7 @@ SchemaVersion = Annotated[
 
 
 class DiffClass(StrEnum):
-    """Classification of one finding diff (contract §8).
+    """Classification of one finding diff.
 
     Attributes
     ----------
@@ -73,7 +73,7 @@ class DiffClass(StrEnum):
 
 
 class ChangedField(StrEnum):
-    """Observable occurrence field that may differ within a ``changed`` diff (contract §8).
+    """Observable occurrence field that may differ within a ``changed`` diff.
 
     Attributes
     ----------
@@ -84,7 +84,7 @@ class ChangedField(StrEnum):
     CONFIDENCE
         The confidence value changed (only for tools declaring the capability).
     RULE
-        The detector rule ID changed (reporting contract §3.1).
+        The detector rule ID changed.
     """
 
     LINE_SPAN = 'line-span'
@@ -94,7 +94,7 @@ class ChangedField(StrEnum):
 
 
 class BindingPoint(StrEnum):
-    """Hook binding point (contract §10).
+    """Hook binding point.
 
     Attributes
     ----------
@@ -112,7 +112,7 @@ class BindingPoint(StrEnum):
 
 
 class Verdict(StrEnum):
-    """Annotation verdict for internal-corpus entries (contract §13).
+    """Annotation verdict for internal-corpus entries.
 
     Attributes
     ----------
@@ -133,7 +133,7 @@ class Verdict(StrEnum):
 
 
 class EvidenceKind(StrEnum):
-    """Kind of evidence backing an annotation (contract §13).
+    """Kind of evidence backing an annotation.
 
     Attributes
     ----------
@@ -160,7 +160,7 @@ class _FrozenModel(BaseModel):
 
 
 def finding_identity(tool: str, project: str, path: str, symbol: str | None, kind: str) -> str:
-    """Compute the stable identity hash naming a finding across runs (contract §7).
+    """Compute the stable identity hash naming a finding across runs.
 
     The hash covers (tool, project, path, symbol, kind) and excludes line and
     confidence; it carries no positional ordinal.
@@ -191,7 +191,7 @@ def finding_identity(tool: str, project: str, path: str, symbol: str | None, kin
 
 
 class SourceExcerpt(_FrozenModel):
-    """Bounded pinned-source evidence for one occurrence (reporting contract §3.3).
+    """Bounded pinned-source evidence for one occurrence.
 
     The excerpt is derived review context read from the byte-identical
     pinned corpus checkout; it never participates in finding identity, the
@@ -214,15 +214,15 @@ class SourceExcerpt(_FrozenModel):
 
 
 class FindingOccurrence(_FrozenModel):
-    """One occurrence of a finding identity in a report (contract §7).
+    """One occurrence of a finding identity in a report.
 
     A report holds a multiset of occurrences per identity; the canonical
-    occurrence key (contract §8) orders them deterministically.
+    occurrence key orders them deterministically.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     start_line : int
         First line of the reported span (1-based).
     end_line : int
@@ -233,11 +233,11 @@ class FindingOccurrence(_FrozenModel):
         Confidence percentage, for tools declaring the capability.
     rule_id : str | None
         Detector rule ID, when the detector or its documented output
-        category supplies one (reporting contract §3.1).
+        category supplies one.
     raw_excerpt : str | None
         Untrusted raw detector output for this occurrence; sanitized on render.
     source_excerpt : SourceExcerpt | None
-        Bounded pinned-source evidence (reporting contract §3.3).
+        Bounded pinned-source evidence.
     """
 
     schema_version: SchemaVersion = SCHEMA_VERSION
@@ -270,13 +270,13 @@ class FindingOccurrence(_FrozenModel):
 
 
 def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, str, int, int, int, str]:
-    """Compute the canonical occurrence key governing all diff-engine ordering (contract §8).
+    """Compute the canonical occurrence key governing all diff-engine ordering.
 
     The key is the complete normalized occurrence tuple in fixed field order:
-    start line, end line, message, confidence, rule ID (reporting contract
-    §3.1). Each presence component is 0 when its field is absent and 1 when
-    present, so absent sorts before present. Derived source evidence and the
-    raw excerpt never participate.
+    start line, end line, message, confidence, rule ID. Each presence
+    component is 0 when its field is absent and 1 when present, so absent
+    sorts before present. Derived source evidence and the raw excerpt never
+    participate.
 
     Parameters
     ----------
@@ -301,12 +301,12 @@ def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, s
 
 
 class Finding(_FrozenModel):
-    """One normalized detector report item (contract §7).
+    """One normalized detector report item.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     tool : str
         Adapter name of the reporting detector.
     project : str
@@ -327,7 +327,7 @@ class Finding(_FrozenModel):
         Confidence percentage, for tools declaring the capability.
     rule_id : str | None
         Detector rule ID, when the detector or its documented output
-        category supplies one (reporting contract §3.1).
+        category supplies one.
     raw_excerpt : str | None
         Untrusted raw detector output for this finding; sanitized on render.
     """
@@ -366,7 +366,7 @@ class Finding(_FrozenModel):
 
     @property
     def identity(self) -> str:
-        """Stable identity hash of this finding (contract §7).
+        """Stable identity hash of this finding.
 
         Returns
         -------
@@ -395,12 +395,12 @@ class Finding(_FrozenModel):
 
 
 class FindingDiff(_FrozenModel):
-    """One classified difference between the base and head reports (contract §8).
+    """One classified difference between the base and head reports.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     diff_class : DiffClass
         ``new``, ``dropped``, or ``changed``.
     identity : str
@@ -469,7 +469,7 @@ class FindingDiff(_FrozenModel):
 
     @property
     def reference_occurrence(self) -> FindingOccurrence:
-        """Occurrence on the diff class's reference side (contract §12).
+        """Occurrence on the diff class's reference side.
 
         The reference side is head for ``new``, base for ``dropped`` and
         ``changed``.
@@ -492,7 +492,7 @@ class FindingDiff(_FrozenModel):
 
 
 class FetchRecord(_FrozenModel):
-    """Record of one network fetch performed during the fetch step (contract §3).
+    """Record of one network fetch performed during the fetch step.
 
     Attributes
     ----------
@@ -513,7 +513,7 @@ class FetchRecord(_FrozenModel):
 
 
 class EnvironmentRecord(_FrozenModel):
-    """Record of one resolved detector environment (contract §3).
+    """Record of one resolved detector environment.
 
     Attributes
     ----------
@@ -540,7 +540,7 @@ class EnvironmentRecord(_FrozenModel):
 
 
 class DependencyDelta(_FrozenModel):
-    """One surviving non-detector dependency difference between environments (contract §3).
+    """One surviving non-detector dependency difference between environments.
 
     Attributes
     ----------
@@ -558,7 +558,7 @@ class DependencyDelta(_FrozenModel):
 
 
 class CorpusPinRecord(_FrozenModel):
-    """Resolved pin for one corpus project in one run (contract §3).
+    """Resolved pin for one corpus project in one run.
 
     Attributes
     ----------
@@ -579,7 +579,7 @@ class CorpusPinRecord(_FrozenModel):
 
 
 class RunSettings(_FrozenModel):
-    """Effective settings of one run, recorded for reproducibility (contract §3).
+    """Effective settings of one run, recorded for reproducibility.
 
     Attributes
     ----------
@@ -591,7 +591,7 @@ class RunSettings(_FrozenModel):
         Cap on rendered finding diffs.
     excerpt_lines : int
         Pinned-source evidence lines stored and rendered per occurrence;
-        ``0`` disables source excerpts (reporting contract §3.3).
+        ``0`` disables source excerpts.
     fail_on : tuple[str, ...]
         Enabled ``--fail-on`` gates.
     selection : tuple[str, ...]
@@ -607,12 +607,12 @@ class RunSettings(_FrozenModel):
 
 
 class RunManifest(_FrozenModel):
-    """Record of resolved refs, versions, environments, and settings for one run (contract §2).
+    """Record of resolved refs, versions, environments, and settings for one run.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     created_at : datetime
         UTC timestamp of manifest assembly.
     tool : str
@@ -628,11 +628,11 @@ class RunManifest(_FrozenModel):
     head_cmd : tuple[str, ...] | None
         Escape-hatch head command (``--new-cmd``), if used.
     comparable : bool
-        False only for unmanaged escape-hatch runs (contract §3).
+        False only for unmanaged escape-hatch runs.
     environment_delta : tuple[DependencyDelta, ...]
         Non-detector dependency differences surviving paired resolution.
     isolation_enforced : bool
-        Whether build/analysis sandboxing was enforced (contract §11).
+        Whether build/analysis sandboxing was enforced.
     platform : str
         Platform tag of the run host.
     python_version : str
@@ -667,7 +667,7 @@ class RunManifest(_FrozenModel):
 
 
 class ToolError(_FrozenModel):
-    """Failure of one detector invocation on one project side (contract §9).
+    """Failure of one detector invocation on one project side.
 
     Attributes
     ----------
@@ -685,7 +685,7 @@ class ToolError(_FrozenModel):
 
 
 class CorpusIntegrityWarning(_FrozenModel):
-    """Corpus-integrity warning for an expected-clean pair (contract §5).
+    """Corpus-integrity warning for an expected-clean pair.
 
     Attributes
     ----------
@@ -703,7 +703,7 @@ class CorpusIntegrityWarning(_FrozenModel):
 
 
 class DiffTotals(_FrozenModel):
-    """Diff totals before truncation (contract §8).
+    """Diff totals before truncation.
 
     Attributes
     ----------
@@ -727,7 +727,7 @@ class DiffTotals(_FrozenModel):
 
 
 class DiffRollup(_FrozenModel):
-    """One complete pre-truncation rollup group (reporting contract §3.2).
+    """One complete pre-truncation rollup group.
 
     Exactly one of ``rule_id`` and ``kind`` is non-null: a finding with a
     rule ID groups by rule ID regardless of kind; otherwise it groups by
@@ -771,7 +771,7 @@ class DiffRollup(_FrozenModel):
 
 
 def _check_aggregates(totals: DiffTotals, rollups: Sequence[DiffRollup]) -> None:
-    """Reject rollups that disagree with their totals (reporting §3.2).
+    """Reject rollups that disagree with their totals.
 
     Stale aggregate data is an invalid report, so validation — not a
     convention — is the transformation boundary a rewriting hook must pass.
@@ -803,7 +803,7 @@ def _check_aggregates(totals: DiffTotals, rollups: Sequence[DiffRollup]) -> None
 
 
 class ProjectReport(_FrozenModel):
-    """Per-project slice of the blast radius (contract §8, §9).
+    """Per-project slice of the blast radius.
 
     Attributes
     ----------
@@ -815,7 +815,7 @@ class ProjectReport(_FrozenModel):
         Totals before truncation.
     rollups : tuple[DiffRollup, ...]
         Complete pre-truncation rollups by diff class and rule ID with kind
-        fallback, deterministically ordered (reporting contract §3.2).
+        fallback, deterministically ordered.
     truncated : bool
         Whether ``diffs`` was truncated by the results cap.
     base_findings : int
@@ -829,8 +829,7 @@ class ProjectReport(_FrozenModel):
     integrity_warnings : tuple[CorpusIntegrityWarning, ...]
         Expected-clean violations observed on the base side.
     source_warnings : tuple[str, ...]
-        Bounded warnings from pinned-source evidence collection (reporting
-        contract §3.3).
+        Bounded warnings from pinned-source evidence collection.
     """
 
     project: str
@@ -847,7 +846,7 @@ class ProjectReport(_FrozenModel):
 
     @model_validator(mode='after')
     def _check_rollups(self) -> Self:
-        """Reject rollups that disagree with the project totals (§3.2).
+        """Reject rollups that disagree with the project totals.
 
         Returns
         -------
@@ -859,12 +858,12 @@ class ProjectReport(_FrozenModel):
 
 
 class Report(_FrozenModel):
-    """The blast radius: all finding diffs plus summary totals (contract §2, §9).
+    """The blast radius: all finding diffs plus summary totals.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     manifest : RunManifest
         Run manifest for reproducibility.
     projects : tuple[ProjectReport, ...]
@@ -873,7 +872,7 @@ class Report(_FrozenModel):
         Overall totals before truncation.
     rollups : tuple[DiffRollup, ...]
         Overall rollups: the sum of the complete project rollups,
-        deterministically ordered (reporting contract §3.2).
+        deterministically ordered.
     truncated : bool
         Whether any project's diffs were truncated.
     """
@@ -887,7 +886,7 @@ class Report(_FrozenModel):
 
     @model_validator(mode='after')
     def _check_overall_aggregates(self) -> Self:
-        """Reject overall aggregates that are not the projects' sum (§3.2).
+        """Reject overall aggregates that are not the projects' sum.
 
         Returns
         -------
@@ -922,12 +921,12 @@ class Report(_FrozenModel):
 
 
 class HookEnvelope(_FrozenModel):
-    """Versioned JSON envelope spoken by the subprocess hook bridge (contract §10).
+    """Versioned JSON envelope spoken by the subprocess hook bridge.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     binding_point : BindingPoint
         Hook binding point the payload targets.
     report : Report
@@ -940,7 +939,7 @@ class HookEnvelope(_FrozenModel):
 
 
 class AnnotationTarget(_FrozenModel):
-    """Target of an internal-corpus annotation (contract §13).
+    """Target of an internal-corpus annotation.
 
     Attributes
     ----------
@@ -958,7 +957,7 @@ class AnnotationTarget(_FrozenModel):
 
 
 class AnnotationProvenance(_FrozenModel):
-    """Provenance of an internal-corpus annotation (contract §13).
+    """Provenance of an internal-corpus annotation.
 
     Attributes
     ----------
@@ -976,12 +975,12 @@ class AnnotationProvenance(_FrozenModel):
 
 
 class Annotation(_FrozenModel):
-    """One internal-corpus annotation with sidecar evidence (contract §13).
+    """One internal-corpus annotation with sidecar evidence.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     target : AnnotationTarget
         Annotated path/symbol/line.
     verdict : Verdict
@@ -1003,7 +1002,7 @@ class Annotation(_FrozenModel):
 
     @model_validator(mode='after')
     def _check_coverage_rule(self) -> Self:
-        """Enforce that coverage evidence never supports a ``dead`` verdict (contract §13).
+        """Enforce that coverage evidence never supports a ``dead`` verdict.
 
         Returns
         -------

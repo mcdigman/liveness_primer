@@ -12,11 +12,11 @@ in the way.
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 
 CapabilityMode = Literal['auto', 'always', 'never']
 
-CAPABILITY_CHOICES: tuple[CapabilityMode, ...] = ('auto', 'always', 'never')
+CAPABILITY_CHOICES: tuple[CapabilityMode, ...] = get_args(CapabilityMode)
 
 # Deterministic fallback width for redirected text: output must not depend
 # on ambient developer terminal size (reporting contract §4.6).

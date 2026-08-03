@@ -1,7 +1,7 @@
 {
   "$defs": {
     "ChangedField": {
-      "description": "Observable occurrence field that may differ within a ``changed`` diff (contract \u00a78).\n\nAttributes\n----------\nLINE_SPAN\n    The start/end line span moved.\nMESSAGE\n    The message text changed.\nCONFIDENCE\n    The confidence value changed (only for tools declaring the capability).\nRULE\n    The detector rule ID changed (reporting contract \u00a73.1).",
+      "description": "Observable occurrence field that may differ within a ``changed`` diff.\n\nAttributes\n----------\nLINE_SPAN\n    The start/end line span moved.\nMESSAGE\n    The message text changed.\nCONFIDENCE\n    The confidence value changed (only for tools declaring the capability).\nRULE\n    The detector rule ID changed.",
       "enum": [
         "line-span",
         "message",
@@ -12,7 +12,7 @@
       "type": "string"
     },
     "DiffClass": {
-      "description": "Classification of one finding diff (contract \u00a78).\n\nAttributes\n----------\nNEW\n    Present on the head side only.\nDROPPED\n    Present on the base side only.\nCHANGED\n    Present on both sides with at least one observable field changed.",
+      "description": "Classification of one finding diff.\n\nAttributes\n----------\nNEW\n    Present on the head side only.\nDROPPED\n    Present on the base side only.\nCHANGED\n    Present on both sides with at least one observable field changed.",
       "enum": [
         "new",
         "dropped",
@@ -23,7 +23,7 @@
     },
     "FindingOccurrence": {
       "additionalProperties": false,
-      "description": "One occurrence of a finding identity in a report (contract \u00a77).\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key (contract \u00a78) orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one (reporting contract \u00a73.1).\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.\nsource_excerpt : SourceExcerpt | None\n    Bounded pinned-source evidence (reporting contract \u00a73.3).",
+      "description": "One occurrence of a finding identity in a report.\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.\nsource_excerpt : SourceExcerpt | None\n    Bounded pinned-source evidence.",
       "properties": {
         "confidence": {
           "anyOf": [
@@ -105,7 +105,7 @@
     },
     "SourceExcerpt": {
       "additionalProperties": false,
-      "description": "Bounded pinned-source evidence for one occurrence (reporting contract \u00a73.3).\n\nThe excerpt is derived review context read from the byte-identical\npinned corpus checkout; it never participates in finding identity, the\ncanonical occurrence key, or changed-field classification.\n\nAttributes\n----------\nstart_line : int\n    Line number of the first retained line (1-based); always the\n    occurrence's reported ``start_line``.\nlines : tuple[str, ...]\n    Retained consecutive source lines, starting at ``start_line``.\nomitted_lines : int\n    Existing reported-span lines dropped by the evidence budget.",
+      "description": "Bounded pinned-source evidence for one occurrence.\n\nThe excerpt is derived review context read from the byte-identical\npinned corpus checkout; it never participates in finding identity, the\ncanonical occurrence key, or changed-field classification.\n\nAttributes\n----------\nstart_line : int\n    Line number of the first retained line (1-based); always the\n    occurrence's reported ``start_line``.\nlines : tuple[str, ...]\n    Retained consecutive source lines, starting at ``start_line``.\nomitted_lines : int\n    Existing reported-span lines dropped by the evidence budget.",
       "properties": {
         "lines": {
           "items": {
@@ -136,7 +136,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One classified difference between the base and head reports (contract \u00a78).\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\ndiff_class : DiffClass\n    ``new``, ``dropped``, or ``changed``.\nidentity : str\n    Stable identity hash shared by the paired occurrences.\ntool : str\n    Adapter name of the reporting detector.\nproject : str\n    Corpus project name.\npath : str\n    Repo-relative POSIX path of the reported file.\nsymbol : str | None\n    Reported symbol, when the detector names one.\nkind : str\n    Normalized finding kind.\nbase_occurrence : FindingOccurrence | None\n    Base-side occurrence; absent for ``new``.\nhead_occurrence : FindingOccurrence | None\n    Head-side occurrence; absent for ``dropped``.\nchanged_fields : tuple[ChangedField, ...]\n    Fields differing within a ``changed`` pair; empty otherwise.",
+  "description": "One classified difference between the base and head reports.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\ndiff_class : DiffClass\n    ``new``, ``dropped``, or ``changed``.\nidentity : str\n    Stable identity hash shared by the paired occurrences.\ntool : str\n    Adapter name of the reporting detector.\nproject : str\n    Corpus project name.\npath : str\n    Repo-relative POSIX path of the reported file.\nsymbol : str | None\n    Reported symbol, when the detector names one.\nkind : str\n    Normalized finding kind.\nbase_occurrence : FindingOccurrence | None\n    Base-side occurrence; absent for ``new``.\nhead_occurrence : FindingOccurrence | None\n    Head-side occurrence; absent for ``dropped``.\nchanged_fields : tuple[ChangedField, ...]\n    Fields differing within a ``changed`` pair; empty otherwise.",
   "properties": {
     "base_occurrence": {
       "anyOf": [

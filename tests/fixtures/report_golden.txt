@@ -4,9 +4,9 @@ detector: https://github.com/jendrikseipp/vulture
   base: main @ 111111111111 (cached)
   head: pr-branch @ 222222222222 (rebuilt)
 comparable: yes
-isolation: NOT ENFORCED - build/analysis ran without a network sandbox (contract §11)
+isolation: NOT ENFORCED - build/analysis ran without a network sandbox
 installer: pip 26.0
-environment delta - non-detector dependencies differ between the sides (contract §3):
+environment delta - non-detector dependencies differ between the sides:
   tomli: 2.4.0 -> 2.5.0
 base findings 13, head findings 15
 totals: 3 new, 2 dropped, 9 changed (1 confidence, 5 message-only)

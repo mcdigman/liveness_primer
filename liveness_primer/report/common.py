@@ -10,6 +10,7 @@ in structure and styling.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from liveness_primer.findings import (
     ChangedField,
@@ -203,8 +204,26 @@ def changed_fields_text(diff: FindingDiff) -> str:
     return ','.join(_FIELD_TOKENS[field] for field in diff.changed_fields)
 
 
-def changed_value_details(diff: FindingDiff) -> tuple[tuple[str, str, str], ...]:
-    """List base and head values for each changed field (reporting §4.4).
+class ChangedValue(NamedTuple):
+    """One changed field's compact token and its base and head values.
+
+    Attributes
+    ----------
+    token : str
+        Compact changed-field token, in canonical field order.
+    base : str
+        Raw base-side value; sanitize before display.
+    head : str
+        Raw head-side value; sanitize before display.
+    """
+
+    token: str
+    base: str
+    head: str
+
+
+def changed_value_details(diff: FindingDiff) -> tuple[ChangedValue, ...]:
+    """List base and head values for each changed field.
 
     Listing only the field names is not sufficient evidence; renderers show
     these pairs as continuation lines beneath the summary row.
@@ -216,9 +235,8 @@ def changed_value_details(diff: FindingDiff) -> tuple[tuple[str, str, str], ...]
 
     Returns
     -------
-    tuple[tuple[str, str, str], ...]
-        ``(token, base value, head value)`` per changed field; values are
-        raw and must be sanitized before display.
+    tuple[ChangedValue, ...]
+        One entry per changed field.
     """
     base = diff.base_occurrence
     head = diff.head_occurrence
@@ -233,7 +251,7 @@ def changed_value_details(diff: FindingDiff) -> tuple[tuple[str, str, str], ...]
             head.rule_id if head.rule_id is not None else '-',
         ),
     }
-    return tuple((_FIELD_TOKENS[field], *values[field]) for field in diff.changed_fields)
+    return tuple(ChangedValue(_FIELD_TOKENS[field], *values[field]) for field in diff.changed_fields)
 
 
 def rollup_label(rollup: DiffRollup) -> str:

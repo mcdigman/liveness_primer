@@ -186,23 +186,23 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
         '--color',
         choices=CAPABILITY_CHOICES,
         default='auto',
-        help='ANSI styling in text output (reporting contract §6.3)',
+        help='ANSI styling in text output',
     )
     run_parser.add_argument(
         '--hyperlinks',
         choices=CAPABILITY_CHOICES,
         default='auto',
-        help='OSC-8 terminal hyperlinks in text output (reporting contract §6.3)',
+        help='OSC-8 terminal hyperlinks in text output',
     )
     run_parser.add_argument(
         '--source-urls',
         action='store_true',
-        help='print per-finding pinned URL lines in text output (reporting contract §5)',
+        help='print per-finding pinned URL lines in text output',
     )
     run_parser.add_argument(
         '--json-out',
         type=Path,
-        help='also write the complete JSON report to this path (reporting contract §2)',
+        help='also write the complete JSON report to this path',
     )
     run_parser.add_argument(
         '--fail-on',

@@ -5,12 +5,12 @@
 - **base**: `main` @ `111111111111` (cached)
 - **head**: `pr-branch` @ `222222222222` (rebuilt)
 - **comparable**: yes
-- **isolation**: :warning: **NOT ENFORCED** - no network sandbox (contract §11)
+- **isolation**: :warning: **NOT ENFORCED** - no network sandbox
 - **installer**: pip 26.0
 
 ## :warning: Environment delta
 
-Non-detector dependencies differ between the sides (contract §3):
+Non-detector dependencies differ between the sides:
 
 | package | base | head |
 | --- | --- | --- |
