@@ -1,21 +1,63 @@
-"""The GitHub step-summary (markdown) report renderer (contract §9).
+"""The GitHub step-summary (markdown) report renderer (contract §9, reporting §7).
 
 Copyright (C) 2026 Matthew C. Digman
 
-PR-comment posting is out of core; this markdown targets
-``GITHUB_STEP_SUMMARY`` and the JSON artifact remains the CI-consumable
-product.
+GitHub does not interpret ANSI styling, and markdown links do not work
+inside fenced ``diff`` blocks: exact pinned source links and readable
+evidence take precedence over whole-line diff color. The table keeps the
+semantic column order and class glyphs of the terminal report, adds a
+colored status marker beside the mandatory glyph, and shows source
+evidence in the same row beneath the diagnostic — never behind a
+collapsed section.
 """
 
-from liveness_primer.findings import ProjectReport, Report, RunManifest
+import shlex
+
+from liveness_primer.findings import (
+    CorpusPinRecord,
+    FindingDiff,
+    ProjectReport,
+    Report,
+    RunManifest,
+    SourceExcerpt,
+)
 from liveness_primer.report.common import (
+    CLASS_GLYPHS,
+    CLASS_LEGEND,
+    abbreviated_sha,
     cap_message_only,
-    changed_fields_text,
+    changed_value_details,
     confidence_text,
+    displayed_text,
+    excerpt_sides,
+    overall_summary,
+    pin_for_project,
+    rollup_lines,
+    rule_text,
     span_text,
     totals_text,
 )
-from liveness_primer.report.sanitize import fenced_block, sanitize_cell, sanitize_excerpt, sanitize_inline
+from liveness_primer.report.permalink import source_url, tree_url
+from liveness_primer.report.sanitize import (
+    code_cell,
+    code_span,
+    escape_argv_text,
+    sanitize_cell,
+    sanitize_inline,
+)
+
+# Colored status markers beside the mandatory class glyphs (reporting §7):
+# GitHub-rendered tables have no terminal color, and the glyph keeps the
+# meaning without emoji color.
+_CLASS_MARKERS = {'new': '\U0001f7e2', 'dropped': '\U0001f534', 'changed': '\U0001f7e1'}
+
+# In-row caps are tighter than the terminal renderer's: a GitHub table has
+# no horizontal scroll of its own, so the physical row width is the binding
+# constraint at corpus scale (reporting contract §7).
+_MESSAGE_CAP = 120
+_VALUE_CAP = 80
+_SOURCE_CAP = 120
+_NAME_CAP = 120
 
 
 def _manifest_lines(manifest: RunManifest) -> list[str]:
@@ -30,10 +72,12 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
     -------
     list[str]
         Markdown lines, with unenforced isolation and any environment
-        delta rendered prominently (contract §3, §11).
+        delta rendered prominently (contract §3, §11). Trusted
+        escape-hatch argv render shell-quoted and structurally escaped,
+        never path-shortened (reporting contract §3.5).
     """
     lines = [
-        f'# liveness primer report - `{manifest.tool}`',
+        f'# liveness primer report - `{sanitize_inline(manifest.tool, max_length=_NAME_CAP)}`',
         '',
         f'- **schema**: {manifest.schema_version}; **created**: {manifest.created_at.isoformat()}',
     ]
@@ -45,13 +89,13 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
             lines.append(f'- **{side_name}**: `{record.ref}` @ `{record.sha[:12]}` ({provenance})')
     for side_name, command in (('base', manifest.base_cmd), ('head', manifest.head_cmd)):
         if command is not None:
-            lines.append(f'- **{side_name} command**: `{" ".join(command)}`')
+            lines.append(f'- **{side_name} command**: {code_span(escape_argv_text(shlex.join(command)))}')
     comparable = 'yes' if manifest.comparable else 'no (escape-hatch run; gating refused)'
     lines.append(f'- **comparable**: {comparable}')
     if manifest.isolation_enforced:
         lines.append('- **isolation**: enforced')
     else:
-        lines.append('- **isolation**: :warning: **NOT ENFORCED** - no network sandbox (contract §11)')
+        lines.append('- **isolation**: :warning: **NOT ENFORCED** - no network sandbox')
     if manifest.installer is not None:
         lines.append(f'- **installer**: {manifest.installer}')
     if manifest.environment_delta:
@@ -60,7 +104,7 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
                 '',
                 '## :warning: Environment delta',
                 '',
-                'Non-detector dependencies differ between the sides (contract §3):',
+                'Non-detector dependencies differ between the sides:',
                 '',
                 '| package | base | head |',
                 '| --- | --- | --- |',
@@ -74,72 +118,188 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
     return lines
 
 
-def _project_lines(project: ProjectReport, *, excerpt_lines: int) -> list[str]:
-    """Render one project section as markdown.
+def _location_cell(diff: FindingDiff, pin: CorpusPinRecord | None) -> str:
+    """Render the location cell: pinned markdown link or escaped plain text.
+
+    Parameters
+    ----------
+    diff : FindingDiff
+        The diff to locate.
+    pin : CorpusPinRecord | None
+        Resolved corpus pin of the project, when any.
+
+    Returns
+    -------
+    str
+        The cell text; a moved ``changed`` span links its base side
+        (reporting contract §5).
+    """
+    label = sanitize_cell(f'{diff.path}:{span_text(diff)}')
+    if pin is None:
+        return label
+    reference = diff.reference_occurrence
+    url = source_url(pin, diff.path, reference.start_line, reference.end_line)
+    if url is None:
+        return label
+    return f'[{label}]({url})'
+
+
+def _excerpt_parts(excerpt: SourceExcerpt) -> list[str]:
+    """Render one excerpt's in-row fragments (reporting contract §7).
+
+    Only the first retained line goes in the row: a GitHub table has no
+    horizontal scroll of its own, and serializing a whole excerpt into one
+    cell forces the table sideways. The source itself renders as a code
+    span so it reads as code, and a compact ``[...]`` marks that the
+    excerpt continues. The complete retained excerpt, with its exact
+    retained and omitted line counts, stays in the JSON report.
+
+    Parameters
+    ----------
+    excerpt : SourceExcerpt
+        Collected pinned-source evidence.
+
+    Returns
+    -------
+    list[str]
+        The fenced first source line and any elision marker.
+    """
+    parts = [f'{excerpt.start_line} \\| {code_cell(excerpt.lines[0], max_length=_SOURCE_CAP)}']
+    if len(excerpt.lines) > 1 or excerpt.omitted_lines:
+        parts.append(sanitize_cell('[...]'))
+    return parts
+
+
+def _source_parts(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lines: int) -> list[str]:
+    """Render the in-row source evidence of one finding (reporting §7).
+
+    Parameters
+    ----------
+    diff : FindingDiff
+        The diff to render.
+    pin : CorpusPinRecord | None
+        Resolved corpus pin of the project, when any.
+    excerpt_lines : int
+        Source-evidence budget from the run settings; ``0`` disables.
+
+    Returns
+    -------
+    list[str]
+        Escaped evidence fragments joined beneath the diagnostic.
+    """
+    if excerpt_lines == 0:
+        return []
+    parts: list[str] = []
+    for label, occurrence in excerpt_sides(diff):
+        if label is not None:
+            side_url = None
+            if pin is not None:
+                side_url = source_url(pin, diff.path, occurrence.start_line, occurrence.end_line)
+            if side_url is not None:
+                parts.append(f'[{label}]({side_url}):')
+            else:
+                parts.append(f'{label}:')
+        excerpt = occurrence.source_excerpt
+        if excerpt is None:
+            if label is not None:
+                parts.append('(no source excerpt collected; see source warnings)')
+            continue
+        parts.extend(_excerpt_parts(excerpt))
+    return parts
+
+
+def _message_cell(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lines: int) -> str:
+    """Render the message cell: diagnostic, changed values, then evidence.
+
+    Parameters
+    ----------
+    diff : FindingDiff
+        The diff to render.
+    pin : CorpusPinRecord | None
+        Resolved corpus pin of the project, when any.
+    excerpt_lines : int
+        Source-evidence budget from the run settings.
+
+    Returns
+    -------
+    str
+        The composite cell text.
+    """
+    parts = [sanitize_cell(diff.reference_occurrence.message, max_length=_MESSAGE_CAP)]
+    parts.extend(
+        f'{token}: {sanitize_cell(base_value, max_length=_VALUE_CAP)} '
+        f'-> {sanitize_cell(head_value, max_length=_VALUE_CAP)}'
+        for token, base_value, head_value in changed_value_details(diff)
+    )
+    parts.extend(_source_parts(diff, pin, excerpt_lines=excerpt_lines))
+    return '<br>'.join(parts)
+
+
+def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str]:
+    """Render one project section as markdown (reporting contract §4, §7).
 
     Parameters
     ----------
     project : ProjectReport
         The per-project report.
-    excerpt_lines : int
-        Excerpt line cap from the run settings.
+    manifest : RunManifest
+        The run manifest supplying the corpus pin and evidence budget.
 
     Returns
     -------
     list[str]
-        Markdown lines with all untrusted text sanitized and excerpts
-        fenced as data (contract §9).
+        Markdown lines with all untrusted text sanitized.
     """
+    pin = pin_for_project(manifest, project.project)
     cost = f'{project.measured_cost_seconds:.2f}s' if project.measured_cost_seconds is not None else 'n/a'
     lines = [
         '',
-        f'## `{project.project}`',
+        f'## `{sanitize_inline(project.project, max_length=_NAME_CAP)}`',
         '',
         (
             f'base {project.base_findings} findings, head {project.head_findings}; '
             f'{totals_text(project.totals)}; cost {cost}'
         ),
     ]
+    if pin is not None:
+        pinned_tree = tree_url(pin)
+        repo_label = sanitize_cell(pin.repo, max_length=_NAME_CAP)
+        sha_label = sanitize_cell(abbreviated_sha(pin.resolved_sha))
+        if pinned_tree is not None:
+            lines.append(f'- **corpus**: [{repo_label} @ {sha_label}]({pinned_tree})')
+        else:
+            lines.append(f'- **corpus**: {repo_label} @ {sha_label}')
+    lines.extend(f'- **rollup**: {sanitize_cell(rollup)}' for rollup in rollup_lines(project.rollups))
     # Error details quote detector stderr — attacker-influenced text that
     # must not reach markdown unescaped (contract §9).
     lines.extend(f'- **error[{error.side}]**: {sanitize_cell(error.detail)}' for error in project.errors)
     lines.extend(
         f'- **warning[corpus-integrity]**: {sanitize_cell(warning.detail)}' for warning in project.integrity_warnings
     )
-    if project.truncated:
-        lines.append('- note: diffs below are truncated by `--max-results`; totals reflect the full comparison')
+    lines.extend(f'- **warning[source]**: {sanitize_cell(warning)}' for warning in project.source_warnings)
+    capped = displayed_text(len(project.diffs), project.totals)
+    if capped is not None:
+        lines.append(f'- note: {capped.replace("--max-results", "`--max-results`")}')
     shown, suppressed = cap_message_only(project.diffs)
     if shown:
-        lines.extend(['', '| class | location | kind | symbol | fields | confidence | message |', '|' + ' --- |' * 7])
+        lines.extend(['', '|  | rule | % | location | message |', '|' + ' --- |' * 5])
+        excerpt_lines = manifest.settings.excerpt_lines
         for diff in shown:
-            symbol = sanitize_cell(diff.symbol) if diff.symbol is not None else '-'
+            marker = _CLASS_MARKERS[diff.diff_class.value]
             lines.append(
-                f'| {diff.diff_class.value} '
-                f'| {sanitize_cell(diff.path)}:{span_text(diff)} '
-                f'| {sanitize_cell(diff.kind)} '
-                f'| {symbol} '
-                f'| {changed_fields_text(diff)} '
+                f'| {marker} {CLASS_GLYPHS[diff.diff_class]} '
+                f'| {sanitize_cell(rule_text(diff))} '
                 f'| {confidence_text(diff)} '
-                f'| {sanitize_cell(diff.reference_occurrence.message)} |'
+                f'| {_location_cell(diff, pin)} '
+                f'| {_message_cell(diff, pin, excerpt_lines=excerpt_lines)} |'
             )
     if suppressed:
         lines.extend(('', f'({suppressed} more message-only change(s) not shown; the JSON report retains full detail)'))
-    excerpts: list[str] = []
-    for diff in shown:
-        raw = diff.reference_occurrence.raw_excerpt
-        if raw is not None:
-            location = sanitize_inline(diff.path) + ':' + span_text(diff)
-            excerpts.append(f'[{diff.diff_class.value}] {location}')
-            excerpts.extend(sanitize_excerpt(raw, max_lines=excerpt_lines))
-    if excerpts:
-        lines.extend(
-            ['', '<details><summary>excerpts (untrusted data)</summary>', '', fenced_block(excerpts), '', '</details>']
-        )
     return lines
 
 
 def render_github(report: Report) -> str:
-    """Render the report as a GitHub step summary (contract §9).
+    """Render the report as a GitHub step summary.
 
     Parameters
     ----------
@@ -149,13 +309,16 @@ def render_github(report: Report) -> str:
     Returns
     -------
     str
-        Markdown, newline-terminated.
+        Markdown, newline-terminated; never ANSI styling or OSC-8 links.
     """
     lines = _manifest_lines(report.manifest)
+    summary = overall_summary(report)
     lines.extend(
         [
             '',
             '## Totals',
+            '',
+            f'base findings {summary.base_findings}, head findings {summary.head_findings}',
             '',
             '| new | dropped | changed | confidence changes | message-only |',
             '| --- | --- | --- | --- | --- |',
@@ -163,10 +326,22 @@ def render_github(report: Report) -> str:
                 f'| {report.totals.new} | {report.totals.dropped} | {report.totals.changed} '
                 f'| {report.totals.changed_confidence} | {report.totals.changed_message_only} |'
             ),
+            '',
         ]
     )
+    lines.extend(f'- **rollup**: {sanitize_cell(rollup)}' for rollup in rollup_lines(report.rollups))
+    # The overall header states the same facts in every human output mode
+    # (reporting contract §4.1, acceptance 21).
+    lines.append(f'- **cost**: {summary.cost}')
+    if summary.errors:
+        lines.append(f'- **errors**: {summary.errors}')
+    if summary.integrity_warnings:
+        lines.append(f'- **corpus-integrity warnings**: {summary.integrity_warnings}')
+    if summary.source_warnings:
+        lines.append(f'- **source warnings**: {summary.source_warnings}')
     if report.truncated:
         lines.extend(('', 'Some project diffs were truncated by `--max-results`; totals reflect the full comparison.'))
+    lines.extend(('', f'legend: {CLASS_LEGEND}'))
     for project in report.projects:
-        lines.extend(_project_lines(project, excerpt_lines=report.manifest.settings.excerpt_lines))
+        lines.extend(_project_lines(project, manifest=report.manifest))
     return '\n'.join(line.rstrip() for line in lines) + '\n'

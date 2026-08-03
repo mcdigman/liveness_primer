@@ -2,7 +2,7 @@
   "$defs": {
     "CorpusPinRecord": {
       "additionalProperties": false,
-      "description": "Resolved pin for one corpus project in one run (contract \u00a73).\n\nAttributes\n----------\nname : str\n    Corpus project name.\nrepo : str\n    Repository URL.\nrequested : str\n    The pin SHA or ``branch:<name>`` selector from the corpus file.\nresolved_sha : str\n    Commit SHA both revisions analyzed.",
+      "description": "Resolved pin for one corpus project in one run.\n\nAttributes\n----------\nname : str\n    Corpus project name.\nrepo : str\n    Repository URL.\nrequested : str\n    The pin SHA or ``branch:<name>`` selector from the corpus file.\nresolved_sha : str\n    Commit SHA both revisions analyzed.",
       "properties": {
         "name": {
           "title": "Name",
@@ -32,7 +32,7 @@
     },
     "DependencyDelta": {
       "additionalProperties": false,
-      "description": "One surviving non-detector dependency difference between environments (contract \u00a73).\n\nAttributes\n----------\npackage : str\n    Canonical distribution name.\nbase_version : str | None\n    Version in the base environment; absent if not installed there.\nhead_version : str | None\n    Version in the head environment; absent if not installed there.",
+      "description": "One surviving non-detector dependency difference between environments.\n\nAttributes\n----------\npackage : str\n    Canonical distribution name.\nbase_version : str | None\n    Version in the base environment; absent if not installed there.\nhead_version : str | None\n    Version in the head environment; absent if not installed there.",
       "properties": {
         "base_version": {
           "anyOf": [
@@ -71,7 +71,7 @@
     },
     "EnvironmentRecord": {
       "additionalProperties": false,
-      "description": "Record of one resolved detector environment (contract \u00a73).\n\nAttributes\n----------\nref : str\n    Detector ref as requested on the CLI.\nsha : str\n    Resolved commit SHA.\nfingerprint : str\n    Full cache fingerprint key of the environment.\nfreeze : tuple[str, ...]\n    Resolved dependency freeze (``name==version`` lines).\nfrom_cache : bool\n    Whether the environment was reused directly from cache.\nrebuilt : bool\n    Whether the environment was rebuilt in this run.",
+      "description": "Record of one resolved detector environment.\n\nAttributes\n----------\nref : str\n    Detector ref as requested on the CLI.\nsha : str\n    Resolved commit SHA.\nfingerprint : str\n    Full cache fingerprint key of the environment.\nfreeze : tuple[str, ...]\n    Resolved dependency freeze (``name==version`` lines).\nfrom_cache : bool\n    Whether the environment was reused directly from cache.\nrebuilt : bool\n    Whether the environment was rebuilt in this run.",
       "properties": {
         "fingerprint": {
           "title": "Fingerprint",
@@ -114,7 +114,7 @@
     },
     "FetchRecord": {
       "additionalProperties": false,
-      "description": "Record of one network fetch performed during the fetch step (contract \u00a73).\n\nAttributes\n----------\nkind : str\n    Fetch kind: ``git`` or ``wheel``.\nname : str\n    Repository URL for ``git`` fetches; distribution filename for ``wheel``.\nresolved : str\n    Resolved commit SHA (``git``) or version (``wheel``).\ndigest : str | None\n    Hex SHA-256 of the fetched artifact, when applicable.",
+      "description": "Record of one network fetch performed during the fetch step.\n\nAttributes\n----------\nkind : str\n    Fetch kind: ``git`` or ``wheel``.\nname : str\n    Repository URL for ``git`` fetches; distribution filename for ``wheel``.\nresolved : str\n    Resolved commit SHA (``git``) or version (``wheel``).\ndigest : str | None\n    Hex SHA-256 of the fetched artifact, when applicable.",
       "properties": {
         "digest": {
           "anyOf": [
@@ -151,7 +151,7 @@
     },
     "RunSettings": {
       "additionalProperties": false,
-      "description": "Effective settings of one run, recorded for reproducibility (contract \u00a73).\n\nAttributes\n----------\njobs : int\n    Maximum concurrent per-project subprocesses.\ntimeout : float\n    Default per-(project, tool) timeout in seconds.\nmax_results : int\n    Cap on rendered finding diffs.\nexcerpt_lines : int\n    Cap on rendered excerpt lines.\nfail_on : tuple[str, ...]\n    Enabled ``--fail-on`` gates.\nselection : tuple[str, ...]\n    Selected corpus project names, in run order.",
+      "description": "Effective settings of one run, recorded for reproducibility.\n\nAttributes\n----------\njobs : int\n    Maximum concurrent per-project subprocesses.\ntimeout : float\n    Default per-(project, tool) timeout in seconds.\nmax_results : int\n    Cap on rendered finding diffs.\nexcerpt_lines : int\n    Pinned-source evidence lines stored and rendered per occurrence;\n    ``0`` disables source excerpts.\nfail_on : tuple[str, ...]\n    Enabled ``--fail-on`` gates.\nselection : tuple[str, ...]\n    Selected corpus project names, in run order.",
       "properties": {
         "excerpt_lines": {
           "title": "Excerpt Lines",
@@ -197,7 +197,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Record of resolved refs, versions, environments, and settings for one run (contract \u00a72).\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver (contract \u00a77).\ncreated_at : datetime\n    UTC timestamp of manifest assembly.\ntool : str\n    Adapter name of the detector under test.\ndetector_repo : str | None\n    Detector repository URL; absent for escape-hatch runs.\nbase : EnvironmentRecord | None\n    Base-side environment; absent for escape-hatch runs.\nhead : EnvironmentRecord | None\n    Head-side environment; absent for escape-hatch runs.\nbase_cmd : tuple[str, ...] | None\n    Escape-hatch base command (``--old-cmd``), if used.\nhead_cmd : tuple[str, ...] | None\n    Escape-hatch head command (``--new-cmd``), if used.\ncomparable : bool\n    False only for unmanaged escape-hatch runs (contract \u00a73).\nenvironment_delta : tuple[DependencyDelta, ...]\n    Non-detector dependency differences surviving paired resolution.\nisolation_enforced : bool\n    Whether build/analysis sandboxing was enforced (contract \u00a711).\nplatform : str\n    Platform tag of the run host.\npython_version : str\n    Python version running the detectors.\ninstaller : str | None\n    Installer name and version used to build environments.\nfetches : tuple[FetchRecord, ...]\n    Every fetch performed during the fetch step.\ncorpus_pins : tuple[CorpusPinRecord, ...]\n    Resolved corpus pins for the run.\nsettings : RunSettings\n    Effective run settings.",
+  "description": "Record of resolved refs, versions, environments, and settings for one run.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\ncreated_at : datetime\n    UTC timestamp of manifest assembly.\ntool : str\n    Adapter name of the detector under test.\ndetector_repo : str | None\n    Detector repository URL; absent for escape-hatch runs.\nbase : EnvironmentRecord | None\n    Base-side environment; absent for escape-hatch runs.\nhead : EnvironmentRecord | None\n    Head-side environment; absent for escape-hatch runs.\nbase_cmd : tuple[str, ...] | None\n    Escape-hatch base command (``--old-cmd``), if used.\nhead_cmd : tuple[str, ...] | None\n    Escape-hatch head command (``--new-cmd``), if used.\ncomparable : bool\n    False only for unmanaged escape-hatch runs.\nenvironment_delta : tuple[DependencyDelta, ...]\n    Non-detector dependency differences surviving paired resolution.\nisolation_enforced : bool\n    Whether build/analysis sandboxing was enforced.\nplatform : str\n    Platform tag of the run host.\npython_version : str\n    Python version running the detectors.\ninstaller : str | None\n    Installer name and version used to build environments.\nfetches : tuple[FetchRecord, ...]\n    Every fetch performed during the fetch step.\ncorpus_pins : tuple[CorpusPinRecord, ...]\n    Resolved corpus pins for the run.\nsettings : RunSettings\n    Effective run settings.",
   "properties": {
     "base": {
       "anyOf": [
@@ -312,8 +312,8 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
+      "const": "1.1.0",
+      "default": "1.1.0",
       "title": "Schema Version",
       "type": "string"
     },

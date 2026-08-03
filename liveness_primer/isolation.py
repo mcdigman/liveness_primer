@@ -199,8 +199,8 @@ def require_isolation(
     if platform_name == 'linux' and not isolation.enforced:
         msg = (
             'network isolation is required on Linux but no rootless unshare '
-            'strategy works here; refusing to execute untrusted detector code '
-            '(contract §11). Pre-built trusted commands via --old-cmd/--new-cmd '
+            'strategy works here; refusing to execute untrusted detector code. '
+            'Pre-built trusted commands via --old-cmd/--new-cmd '
             'remain available.'
         )
         raise IsolationError(msg)

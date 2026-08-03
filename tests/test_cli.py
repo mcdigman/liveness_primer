@@ -3,7 +3,10 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+import os
 import shlex
+import shutil
+import sys
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
@@ -11,11 +14,12 @@ import pytest
 
 import liveness_primer.cli
 from liveness_primer.cli import EXIT_FAILURE, EXIT_GATE, EXIT_OK, main
-from liveness_primer.findings import Report
+from liveness_primer.filesystem import atomic_write_text, read_small_text
+from liveness_primer.findings import SCHEMA_VERSION, Report
 from liveness_primer.isolation import UNENFORCED, Isolation, IsolationError
 from liveness_primer.license_check import LicenseCheckResult
+from liveness_primer.report import render_json
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
-from liveness_primer.testing.filesystem import atomic_write_text
 from tests.test_runner import ScriptedEnvInstaller, fake_detector_repo
 
 __all__ = ['fake_detector_repo']
@@ -93,6 +97,58 @@ def test_run_github_output(tmp_path: Path, project_url: str, capsys: pytest.Capt
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert captured.out.startswith('# liveness primer report')
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_json_out_archives_the_report_beside_any_output_mode(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reporting acceptance 31: a CI job renders the human report and keeps
+    # the CI-consumable JSON product from the same corpus run.
+    destination = tmp_path / 'report.json'
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW], '--output', 'github', '--json-out', str(destination)))
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert captured.out.startswith('# liveness primer report')
+    archived = read_small_text(destination)
+    report = Report.model_validate_json(archived)
+    assert report.totals.new == 1
+    # Byte-identical to what `--output json` would have written.
+    assert archived == render_json(report)
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_json_out_reports_an_unwritable_destination(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    destination = tmp_path / 'missing-directory' / 'report.json'
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW], '--json-out', str(destination)))
+    captured = capsys.readouterr()
+    assert code == EXIT_FAILURE
+    assert 'could not write the JSON report' in captured.err
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_source_urls_is_opt_in(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reporting acceptance 28: the flag is accepted and the default text
+    # report carries no per-finding url continuation lines.
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW]))
+    assert code == EXIT_OK
+    assert 'url: ' not in capsys.readouterr().out
+    code = main(escape_argv(tmp_path, project_url, [BASE], [NEW], '--source-urls'))
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    # The ad-hoc local project is not GitHub-hosted, so no URL exists to
+    # print; the flag must still be accepted and change nothing else.
+    assert 'url: ' not in captured.out
 
 
 @pytest.mark.usefixtures('_isolated_cache')
@@ -242,7 +298,7 @@ def test_version_prints_package_and_schema_versions(
     assert excinfo.value.code == 0
     out = capsys.readouterr().out
     assert '9.9.9' in out
-    assert 'schema 1.0.0' in out
+    assert f'schema {SCHEMA_VERSION}' in out
 
 
 def test_version_tolerates_uninstalled_package(
@@ -447,3 +503,95 @@ def test_managed_run_without_firing_gates_exits_zero(
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert 'installer: fake 1.0' in captured.out
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_redirected_auto_text_output_has_no_ansi(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reporting acceptance 14: redirected `auto` output contains no ANSI
+    # escapes and no OSC-8 hyperlinks.
+    code = main(escape_argv(tmp_path, project_url, [BASE], [MOVED, NEW]))
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert '\x1b' not in captured.out
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_color_always_styles_text_output(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A local fake project is not GitHub-hosted, so no permalink exists to
+    # hyperlink even under --hyperlinks always; OSC-8 emission is covered by
+    # the renderer tests against a GitHub-hosted pin.
+    argv = escape_argv(tmp_path, project_url, [BASE], [MOVED, NEW], '--color', 'always', '--hyperlinks', 'always')
+    code = main(argv)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert '\x1b[' in captured.out
+    assert '\x1b]8;' not in captured.out
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_color_never_is_respected(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(escape_argv(tmp_path, project_url, [BASE], [MOVED, NEW], '--color', 'never'))
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert '\x1b' not in captured.out
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_json_and_github_output_never_carry_ansi(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reporting §6.3: JSON and GitHub output never contain ANSI styling
+    # regardless of --color.
+    for output in ('json', 'github'):
+        code = main(
+            escape_argv(
+                tmp_path, project_url, [BASE], [NEW], '--output', output, '--color', 'always', '--hyperlinks', 'always'
+            )
+        )
+        captured = capsys.readouterr()
+        assert code == EXIT_OK
+        assert '\x1b' not in captured.out
+
+
+def test_invalid_capability_modes_are_usage_errors() -> None:
+    for flag in ('--color', '--hyperlinks'):
+        with pytest.raises(SystemExit) as excinfo:
+            main(['run', '--tool', 'vulture', '--repo', 'r', '--old', 'a', '--new', 'b', flag, 'maybe'])
+        assert excinfo.value.code == 2
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_interactive_terminal_width_resolution(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Interactive output uses the measured terminal width; a zero-width
+    # answer falls back to the deterministic redirected width.
+    monkeypatch.setenv('TERM', 'dumb')
+    monkeypatch.setattr(sys.stdout, 'isatty', lambda: True)
+    for columns in (111, 0):
+        monkeypatch.setattr(
+            shutil,
+            'get_terminal_size',
+            lambda *_args, _columns=columns, **_kwargs: os.terminal_size((_columns, 24)),
+        )
+        code = main(escape_argv(tmp_path, project_url, [BASE], [BASE]))
+        captured = capsys.readouterr()
+        assert code == EXIT_OK
+        assert 'liveness primer report' in captured.out

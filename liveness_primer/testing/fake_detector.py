@@ -2,10 +2,11 @@
 
 Copyright (C) 2026 Matthew C. Digman
 
-The fake detector reads a JSON script and emits vulture-format report lines,
-so runs parse through the real ``vulture`` adapter. Pointing the escape
-hatch (``--old-cmd``/``--new-cmd``) at two different scripts simulates two
-fake pinned detector commits.
+The fake detector reads a JSON script and emits vulture-format report lines
+or a skylos-format JSON document, so runs parse through the real adapters.
+Pointing the escape hatch (``--old-cmd``/``--new-cmd``) at two different
+scripts simulates two fake pinned detector commits; the skylos format can
+carry explicit rule IDs (reporting contract §3.1).
 """
 
 import json
@@ -14,8 +15,11 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
-from liveness_primer.testing.filesystem import atomic_write_text
+from liveness_primer.filesystem import atomic_write_text
+
+FakeFormat = Literal['vulture', 'skylos']
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,9 +35,13 @@ class FakeFinding:
     symbol : str
         Symbol name to report.
     kind : str
-        Vulture kind (``function``, ``import``, ...).
+        Finding kind (``function``, ``import``, ...).
     confidence : int
         Confidence percentage.
+    bucket : str
+        Skylos dead-code array the finding lands in (skylos format only).
+    rule_id : str | None
+        Explicit detector rule ID (skylos format only).
     """
 
     path: str
@@ -41,6 +49,8 @@ class FakeFinding:
     symbol: str
     kind: str = 'function'
     confidence: int = 60
+    bucket: str = 'unused_functions'
+    rule_id: str | None = None
 
     def report_line(self) -> str:
         """Format the finding as a vulture report line.
@@ -51,6 +61,26 @@ class FakeFinding:
             ``path:line: unused kind 'symbol' (NN% confidence)``.
         """
         return f"{self.path}:{self.line}: unused {self.kind} '{self.symbol}' ({self.confidence}% confidence)"
+
+    def skylos_entry(self) -> dict[str, object]:
+        """Format the finding as a skylos JSON array entry.
+
+        Returns
+        -------
+        dict[str, object]
+            The entry, with ``rule_id`` present only when scripted.
+        """
+        entry: dict[str, object] = {
+            'name': self.symbol,
+            'full_name': self.symbol,
+            'type': self.kind,
+            'file': self.path,
+            'line': self.line,
+            'confidence': self.confidence,
+        }
+        if self.rule_id is not None:
+            entry['rule_id'] = self.rule_id
+        return entry
 
 
 def fake_detector_command(script_path: Path) -> list[str]:
@@ -84,6 +114,7 @@ def write_fake_detector_script(
     script_path: Path,
     findings: Sequence[FakeFinding],
     *,
+    output_format: FakeFormat = 'vulture',
     exit_code: int | None = None,
     stderr: str = '',
     raw_lines: Sequence[str] = (),
@@ -97,9 +128,11 @@ def write_fake_detector_script(
         Where to write the JSON script.
     findings : Sequence[FakeFinding]
         Findings to report.
+    output_format : FakeFormat
+        Report format: vulture text lines or a skylos JSON document.
     exit_code : int | None
-        Exit code override; defaults to vulture semantics (3 with findings,
-        0 when clean).
+        Exit code override; defaults to the format's own semantics
+        (vulture: 3 with findings, 0 when clean; skylos: 0).
     stderr : str
         Text to emit on standard error.
     raw_lines : Sequence[str]
@@ -113,6 +146,7 @@ def write_fake_detector_script(
         Argv prefix suitable for ``--old-cmd``/``--new-cmd``.
     """
     script = {
+        'format': output_format,
         'findings': [
             {
                 'path': finding.path,
@@ -120,6 +154,8 @@ def write_fake_detector_script(
                 'symbol': finding.symbol,
                 'kind': finding.kind,
                 'confidence': finding.confidence,
+                'bucket': finding.bucket,
+                'rule_id': finding.rule_id,
             }
             for finding in findings
         ],
@@ -130,6 +166,81 @@ def write_fake_detector_script(
     }
     atomic_write_text(script_path, json.dumps(script, indent=2))
     return fake_detector_command(script_path)
+
+
+def _scripted_findings(script: dict[str, object]) -> list[FakeFinding]:
+    """Rebuild the scripted findings from the parsed JSON script.
+
+    Parameters
+    ----------
+    script : dict[str, object]
+        The parsed script document.
+
+    Returns
+    -------
+    list[FakeFinding]
+        The scripted findings.
+    """
+    entries = script.get('findings', [])
+    findings: list[FakeFinding] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, dict):
+                rule_id = entry.get('rule_id')
+                findings.append(
+                    FakeFinding(
+                        path=str(entry['path']),
+                        line=int(str(entry['line'])),
+                        symbol=str(entry['symbol']),
+                        kind=str(entry['kind']),
+                        confidence=int(str(entry['confidence'])),
+                        bucket=str(entry.get('bucket', 'unused_functions')),
+                        rule_id=str(rule_id) if rule_id is not None else None,
+                    )
+                )
+    return findings
+
+
+def _emit_vulture(findings: Sequence[FakeFinding], raw_lines: Sequence[str]) -> int:
+    """Emit the vulture-format report.
+
+    Parameters
+    ----------
+    findings : Sequence[FakeFinding]
+        Findings to report.
+    raw_lines : Sequence[str]
+        Extra raw stdout lines.
+
+    Returns
+    -------
+    int
+        The default vulture exit code: 3 with output, 0 when clean.
+    """
+    lines = [finding.report_line() for finding in findings]
+    lines.extend(str(raw) for raw in raw_lines)
+    for line in lines:
+        sys.stdout.write(line + '\n')
+    return 3 if lines else 0
+
+
+def _emit_skylos(findings: Sequence[FakeFinding]) -> int:
+    """Emit the skylos-format JSON document.
+
+    Parameters
+    ----------
+    findings : Sequence[FakeFinding]
+        Findings to report.
+
+    Returns
+    -------
+    int
+        The default skylos exit code: 0.
+    """
+    document: dict[str, list[dict[str, object]]] = {}
+    for finding in findings:
+        document.setdefault(finding.bucket, []).append(finding.skylos_entry())
+    sys.stdout.write(json.dumps(document, indent=2) + '\n')
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -147,7 +258,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns
     -------
     int
-        The scripted exit code; vulture semantics by default.
+        The scripted exit code; format-default semantics otherwise.
     """
     arguments = list(sys.argv[1:] if argv is None else argv)
     if not arguments:
@@ -157,23 +268,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     sleep_seconds = float(script.get('sleep_seconds', 0.0))
     if sleep_seconds > 0:
         time.sleep(sleep_seconds)
-    lines = [
-        FakeFinding(
-            path=str(entry['path']),
-            line=int(entry['line']),
-            symbol=str(entry['symbol']),
-            kind=str(entry['kind']),
-            confidence=int(entry['confidence']),
-        ).report_line()
-        for entry in script.get('findings', [])
-    ]
-    lines.extend(str(raw) for raw in script.get('raw_lines', []))
-    for line in lines:
-        sys.stdout.write(line + '\n')
+    findings = _scripted_findings(script)
+    if script.get('format', 'vulture') == 'skylos':
+        default_exit = _emit_skylos(findings)
+    else:
+        default_exit = _emit_vulture(findings, [str(raw) for raw in script.get('raw_lines', [])])
     stderr_text = str(script.get('stderr', ''))
     if stderr_text:
         sys.stderr.write(stderr_text)
     exit_code = script.get('exit_code')
     if exit_code is None:
-        return 3 if lines else 0
+        return default_exit
     return int(exit_code)

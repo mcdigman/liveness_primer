@@ -14,8 +14,8 @@ from filelock import FileLock
 
 from liveness_primer.config import CorpusProject
 from liveness_primer.corpus import CheckoutError, CheckoutStore, cache_root
+from liveness_primer.filesystem import atomic_write_text, read_small_text
 from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
-from liveness_primer.testing.filesystem import atomic_write_text, contained_path, read_small_text
 
 PIN_MISSING = 'd' * 40
 
@@ -193,9 +193,10 @@ def test_materialize_rebuilds_interrupted_checkouts(store: CheckoutStore, origin
     assert read_small_text(rebuilt / 'module.py') == 'FIRST = 1\n'
 
 
-def test_materialize_rebuilds_when_the_tree_vanished(store: CheckoutStore, origin: RepoFixture) -> None:
+def test_materialize_rebuilds_when_the_tree_vanished(tmp_path: Path, origin: RepoFixture) -> None:
+    store = CheckoutStore(tmp_path / 'cache')
     checkout = store.materialize(origin.url, origin.first_sha)
-    shutil.rmtree(path=contained_path(store.checkout_root, checkout.name))
+    shutil.rmtree(store.checkout_root / Path(checkout).name)
     rebuilt = store.materialize(origin.url, origin.first_sha)
     assert (rebuilt / 'module.py').exists()
 

@@ -2,12 +2,13 @@
 
 Copyright (C) 2026 Matthew C. Digman
 
-Pydantic models are the source of truth (contract §7); JSON Schema files under
+Pydantic models are the source of truth; JSON Schema files under
 ``liveness_primer/schemas/`` are exported from them by ``schema export``.
 """
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Self
@@ -16,11 +17,13 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 
 # Package-wide semver embedded in every serialized payload (contract §7).
 # Minor versions are additive-only; breaking changes require a major bump.
-SCHEMA_VERSION = '1.0.0'
+# 1.1.0 adds nullable rule IDs, nullable source excerpts, aggregate rollups,
+# and the additive `rule` changed-field value (reporting contract §3.6).
+SCHEMA_VERSION = '1.1.0'
 
 
 def _validated_schema_version(value: str) -> str:
-    """Constrain a payload's schema version to the supported one (contract §7).
+    """Constrain a payload's schema version to the supported one.
 
     Parameters
     ----------
@@ -52,7 +55,7 @@ SchemaVersion = Annotated[
 
 
 class DiffClass(StrEnum):
-    """Classification of one finding diff (contract §8).
+    """Classification of one finding diff.
 
     Attributes
     ----------
@@ -70,7 +73,7 @@ class DiffClass(StrEnum):
 
 
 class ChangedField(StrEnum):
-    """Observable occurrence field that may differ within a ``changed`` diff (contract §8).
+    """Observable occurrence field that may differ within a ``changed`` diff.
 
     Attributes
     ----------
@@ -80,15 +83,18 @@ class ChangedField(StrEnum):
         The message text changed.
     CONFIDENCE
         The confidence value changed (only for tools declaring the capability).
+    RULE
+        The detector rule ID changed.
     """
 
     LINE_SPAN = 'line-span'
     MESSAGE = 'message'
     CONFIDENCE = 'confidence'
+    RULE = 'rule'
 
 
 class BindingPoint(StrEnum):
-    """Hook binding point (contract §10).
+    """Hook binding point.
 
     Attributes
     ----------
@@ -106,7 +112,7 @@ class BindingPoint(StrEnum):
 
 
 class Verdict(StrEnum):
-    """Annotation verdict for internal-corpus entries (contract §13).
+    """Annotation verdict for internal-corpus entries.
 
     Attributes
     ----------
@@ -127,7 +133,7 @@ class Verdict(StrEnum):
 
 
 class EvidenceKind(StrEnum):
-    """Kind of evidence backing an annotation (contract §13).
+    """Kind of evidence backing an annotation.
 
     Attributes
     ----------
@@ -154,7 +160,7 @@ class _FrozenModel(BaseModel):
 
 
 def finding_identity(tool: str, project: str, path: str, symbol: str | None, kind: str) -> str:
-    """Compute the stable identity hash naming a finding across runs (contract §7).
+    """Compute the stable identity hash naming a finding across runs.
 
     The hash covers (tool, project, path, symbol, kind) and excludes line and
     confidence; it carries no positional ordinal.
@@ -184,16 +190,39 @@ def finding_identity(tool: str, project: str, path: str, symbol: str | None, kin
     return hashlib.sha256(material.encode('utf-8')).hexdigest()
 
 
+class SourceExcerpt(_FrozenModel):
+    """Bounded pinned-source evidence for one occurrence.
+
+    The excerpt is derived review context read from the byte-identical
+    pinned corpus checkout; it never participates in finding identity, the
+    canonical occurrence key, or changed-field classification.
+
+    Attributes
+    ----------
+    start_line : int
+        Line number of the first retained line (1-based); always the
+        occurrence's reported ``start_line``.
+    lines : tuple[str, ...]
+        Retained consecutive source lines, starting at ``start_line``.
+    omitted_lines : int
+        Existing reported-span lines dropped by the evidence budget.
+    """
+
+    start_line: int = Field(ge=1)
+    lines: tuple[str, ...] = Field(min_length=1)
+    omitted_lines: int = Field(default=0, ge=0)
+
+
 class FindingOccurrence(_FrozenModel):
-    """One occurrence of a finding identity in a report (contract §7).
+    """One occurrence of a finding identity in a report.
 
     A report holds a multiset of occurrences per identity; the canonical
-    occurrence key (contract §8) orders them deterministically.
+    occurrence key orders them deterministically.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     start_line : int
         First line of the reported span (1-based).
     end_line : int
@@ -202,8 +231,13 @@ class FindingOccurrence(_FrozenModel):
         Normalized message text.
     confidence : int | None
         Confidence percentage, for tools declaring the capability.
+    rule_id : str | None
+        Detector rule ID, when the detector or its documented output
+        category supplies one.
     raw_excerpt : str | None
         Untrusted raw detector output for this occurrence; sanitized on render.
+    source_excerpt : SourceExcerpt | None
+        Bounded pinned-source evidence.
     """
 
     schema_version: SchemaVersion = SCHEMA_VERSION
@@ -211,7 +245,9 @@ class FindingOccurrence(_FrozenModel):
     end_line: int = Field(ge=1)
     message: str
     confidence: int | None = Field(default=None, ge=0, le=100)
+    rule_id: str | None = None
     raw_excerpt: str | None = None
+    source_excerpt: SourceExcerpt | None = None
 
     @model_validator(mode='after')
     def _check_span(self) -> Self:
@@ -233,11 +269,14 @@ class FindingOccurrence(_FrozenModel):
         return self
 
 
-def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, str, int, int]:
-    """Compute the canonical occurrence key governing all diff-engine ordering (contract §8).
+def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, str, int, int, int, str]:
+    """Compute the canonical occurrence key governing all diff-engine ordering.
 
     The key is the complete normalized occurrence tuple in fixed field order:
-    start line, end line, message, confidence (absent sorts first).
+    start line, end line, message, confidence, rule ID. Each presence
+    component is 0 when its field is absent and 1 when present, so absent
+    sorts before present. Derived source evidence and the raw excerpt never
+    participate.
 
     Parameters
     ----------
@@ -246,8 +285,9 @@ def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, s
 
     Returns
     -------
-    tuple[int, int, str, int, int]
-        Sort key: (start, end, message, confidence-presence, confidence).
+    tuple[int, int, str, int, int, int, str]
+        Sort key: (start, end, message, confidence-presence, confidence,
+        rule-presence, rule ID).
     """
     return (
         occurrence.start_line,
@@ -255,16 +295,18 @@ def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, s
         occurrence.message,
         0 if occurrence.confidence is None else 1,
         0 if occurrence.confidence is None else occurrence.confidence,
+        0 if occurrence.rule_id is None else 1,
+        '' if occurrence.rule_id is None else occurrence.rule_id,
     )
 
 
 class Finding(_FrozenModel):
-    """One normalized detector report item (contract §7).
+    """One normalized detector report item.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     tool : str
         Adapter name of the reporting detector.
     project : str
@@ -283,6 +325,9 @@ class Finding(_FrozenModel):
         Last line of the reported span (1-based, inclusive).
     confidence : int | None
         Confidence percentage, for tools declaring the capability.
+    rule_id : str | None
+        Detector rule ID, when the detector or its documented output
+        category supplies one.
     raw_excerpt : str | None
         Untrusted raw detector output for this finding; sanitized on render.
     """
@@ -297,6 +342,7 @@ class Finding(_FrozenModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     confidence: int | None = Field(default=None, ge=0, le=100)
+    rule_id: str | None = None
     raw_excerpt: str | None = None
 
     @model_validator(mode='after')
@@ -320,7 +366,7 @@ class Finding(_FrozenModel):
 
     @property
     def identity(self) -> str:
-        """Stable identity hash of this finding (contract §7).
+        """Stable identity hash of this finding.
 
         Returns
         -------
@@ -335,24 +381,26 @@ class Finding(_FrozenModel):
         Returns
         -------
         FindingOccurrence
-            The occurrence (line span, message, confidence, raw excerpt).
+            The occurrence (line span, message, confidence, rule ID, raw
+            excerpt).
         """
         return FindingOccurrence(
             start_line=self.start_line,
             end_line=self.end_line,
             message=self.message,
             confidence=self.confidence,
+            rule_id=self.rule_id,
             raw_excerpt=self.raw_excerpt,
         )
 
 
 class FindingDiff(_FrozenModel):
-    """One classified difference between the base and head reports (contract §8).
+    """One classified difference between the base and head reports.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     diff_class : DiffClass
         ``new``, ``dropped``, or ``changed``.
     identity : str
@@ -421,7 +469,7 @@ class FindingDiff(_FrozenModel):
 
     @property
     def reference_occurrence(self) -> FindingOccurrence:
-        """Occurrence on the diff class's reference side (contract §12).
+        """Occurrence on the diff class's reference side.
 
         The reference side is head for ``new``, base for ``dropped`` and
         ``changed``.
@@ -444,7 +492,7 @@ class FindingDiff(_FrozenModel):
 
 
 class FetchRecord(_FrozenModel):
-    """Record of one network fetch performed during the fetch step (contract §3).
+    """Record of one network fetch performed during the fetch step.
 
     Attributes
     ----------
@@ -465,7 +513,7 @@ class FetchRecord(_FrozenModel):
 
 
 class EnvironmentRecord(_FrozenModel):
-    """Record of one resolved detector environment (contract §3).
+    """Record of one resolved detector environment.
 
     Attributes
     ----------
@@ -492,7 +540,7 @@ class EnvironmentRecord(_FrozenModel):
 
 
 class DependencyDelta(_FrozenModel):
-    """One surviving non-detector dependency difference between environments (contract §3).
+    """One surviving non-detector dependency difference between environments.
 
     Attributes
     ----------
@@ -510,7 +558,7 @@ class DependencyDelta(_FrozenModel):
 
 
 class CorpusPinRecord(_FrozenModel):
-    """Resolved pin for one corpus project in one run (contract §3).
+    """Resolved pin for one corpus project in one run.
 
     Attributes
     ----------
@@ -531,7 +579,7 @@ class CorpusPinRecord(_FrozenModel):
 
 
 class RunSettings(_FrozenModel):
-    """Effective settings of one run, recorded for reproducibility (contract §3).
+    """Effective settings of one run, recorded for reproducibility.
 
     Attributes
     ----------
@@ -542,7 +590,8 @@ class RunSettings(_FrozenModel):
     max_results : int
         Cap on rendered finding diffs.
     excerpt_lines : int
-        Cap on rendered excerpt lines.
+        Pinned-source evidence lines stored and rendered per occurrence;
+        ``0`` disables source excerpts.
     fail_on : tuple[str, ...]
         Enabled ``--fail-on`` gates.
     selection : tuple[str, ...]
@@ -558,12 +607,12 @@ class RunSettings(_FrozenModel):
 
 
 class RunManifest(_FrozenModel):
-    """Record of resolved refs, versions, environments, and settings for one run (contract §2).
+    """Record of resolved refs, versions, environments, and settings for one run.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     created_at : datetime
         UTC timestamp of manifest assembly.
     tool : str
@@ -579,11 +628,11 @@ class RunManifest(_FrozenModel):
     head_cmd : tuple[str, ...] | None
         Escape-hatch head command (``--new-cmd``), if used.
     comparable : bool
-        False only for unmanaged escape-hatch runs (contract §3).
+        False only for unmanaged escape-hatch runs.
     environment_delta : tuple[DependencyDelta, ...]
         Non-detector dependency differences surviving paired resolution.
     isolation_enforced : bool
-        Whether build/analysis sandboxing was enforced (contract §11).
+        Whether build/analysis sandboxing was enforced.
     platform : str
         Platform tag of the run host.
     python_version : str
@@ -618,7 +667,7 @@ class RunManifest(_FrozenModel):
 
 
 class ToolError(_FrozenModel):
-    """Failure of one detector invocation on one project side (contract §9).
+    """Failure of one detector invocation on one project side.
 
     Attributes
     ----------
@@ -636,7 +685,7 @@ class ToolError(_FrozenModel):
 
 
 class CorpusIntegrityWarning(_FrozenModel):
-    """Corpus-integrity warning for an expected-clean pair (contract §5).
+    """Corpus-integrity warning for an expected-clean pair.
 
     Attributes
     ----------
@@ -654,7 +703,7 @@ class CorpusIntegrityWarning(_FrozenModel):
 
 
 class DiffTotals(_FrozenModel):
-    """Diff totals before truncation (contract §8).
+    """Diff totals before truncation.
 
     Attributes
     ----------
@@ -677,8 +726,84 @@ class DiffTotals(_FrozenModel):
     changed_message_only: int = 0
 
 
+class DiffRollup(_FrozenModel):
+    """One complete pre-truncation rollup group.
+
+    Exactly one of ``rule_id`` and ``kind`` is non-null: a finding with a
+    rule ID groups by rule ID regardless of kind; otherwise it groups by
+    kind. A ``changed`` pair groups by its reference-side occurrence.
+
+    Attributes
+    ----------
+    diff_class : DiffClass
+        ``new``, ``dropped``, or ``changed``.
+    rule_id : str | None
+        Rule ID of the group, when its findings carry one.
+    kind : str | None
+        Kind fallback of the group, when its findings carry no rule ID.
+    count : int
+        Number of findings in the group; positive.
+    """
+
+    diff_class: DiffClass
+    rule_id: str | None
+    kind: str | None
+    count: int = Field(ge=1)
+
+    @model_validator(mode='after')
+    def _check_group_key(self) -> Self:
+        """Require exactly one of ``rule_id`` and ``kind``.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If neither or both of ``rule_id`` and ``kind`` are set.
+        """
+        if (self.rule_id is None) == (self.kind is None):
+            msg = 'exactly one of rule_id and kind must be non-null'
+            raise ValueError(msg)
+        return self
+
+
+def _check_aggregates(totals: DiffTotals, rollups: Sequence[DiffRollup]) -> None:
+    """Reject rollups that disagree with their totals.
+
+    Stale aggregate data is an invalid report, so validation — not a
+    convention — is the transformation boundary a rewriting hook must pass.
+
+    Parameters
+    ----------
+    totals : DiffTotals
+        Complete pre-truncation totals.
+    rollups : Sequence[DiffRollup]
+        Complete pre-truncation rollups.
+
+    Raises
+    ------
+    ValueError
+        If any diff class's rollup counts do not sum to its total.
+    """
+    counts = dict.fromkeys(DiffClass, 0)
+    for rollup in rollups:
+        counts[rollup.diff_class] += rollup.count
+    expected = {
+        DiffClass.NEW: totals.new,
+        DiffClass.DROPPED: totals.dropped,
+        DiffClass.CHANGED: totals.changed,
+    }
+    stale = [diff_class.value for diff_class, total in expected.items() if counts[diff_class] != total]
+    if stale:
+        msg = f'rollups are stale: {", ".join(stale)} counts disagree with totals'
+        raise ValueError(msg)
+
+
 class ProjectReport(_FrozenModel):
-    """Per-project slice of the blast radius (contract §8, §9).
+    """Per-project slice of the blast radius.
 
     Attributes
     ----------
@@ -688,6 +813,9 @@ class ProjectReport(_FrozenModel):
         Classified diffs, canonically ordered, possibly truncated.
     totals : DiffTotals
         Totals before truncation.
+    rollups : tuple[DiffRollup, ...]
+        Complete pre-truncation rollups by diff class and rule ID with kind
+        fallback, deterministically ordered.
     truncated : bool
         Whether ``diffs`` was truncated by the results cap.
     base_findings : int
@@ -700,32 +828,51 @@ class ProjectReport(_FrozenModel):
         Detector invocation failures for this project.
     integrity_warnings : tuple[CorpusIntegrityWarning, ...]
         Expected-clean violations observed on the base side.
+    source_warnings : tuple[str, ...]
+        Bounded warnings from pinned-source evidence collection.
     """
 
     project: str
     diffs: tuple[FindingDiff, ...]
     totals: DiffTotals
+    rollups: tuple[DiffRollup, ...]
     truncated: bool
     base_findings: int
     head_findings: int
     measured_cost_seconds: float | None
     errors: tuple[ToolError, ...] = ()
     integrity_warnings: tuple[CorpusIntegrityWarning, ...] = ()
+    source_warnings: tuple[str, ...] = ()
+
+    @model_validator(mode='after')
+    def _check_rollups(self) -> Self:
+        """Reject rollups that disagree with the project totals.
+
+        Returns
+        -------
+        Self
+            The validated model.
+        """
+        _check_aggregates(self.totals, self.rollups)
+        return self
 
 
 class Report(_FrozenModel):
-    """The blast radius: all finding diffs plus summary totals (contract §2, §9).
+    """The blast radius: all finding diffs plus summary totals.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     manifest : RunManifest
         Run manifest for reproducibility.
     projects : tuple[ProjectReport, ...]
         Per-project reports, in run order.
     totals : DiffTotals
         Overall totals before truncation.
+    rollups : tuple[DiffRollup, ...]
+        Overall rollups: the sum of the complete project rollups,
+        deterministically ordered.
     truncated : bool
         Whether any project's diffs were truncated.
     """
@@ -734,16 +881,52 @@ class Report(_FrozenModel):
     manifest: RunManifest
     projects: tuple[ProjectReport, ...]
     totals: DiffTotals
+    rollups: tuple[DiffRollup, ...]
     truncated: bool
+
+    @model_validator(mode='after')
+    def _check_overall_aggregates(self) -> Self:
+        """Reject overall aggregates that are not the projects' sum.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If the overall totals or rollups are stale.
+        """
+        summed = DiffTotals(
+            new=sum(project.totals.new for project in self.projects),
+            dropped=sum(project.totals.dropped for project in self.projects),
+            changed=sum(project.totals.changed for project in self.projects),
+            changed_confidence=sum(project.totals.changed_confidence for project in self.projects),
+            changed_message_only=sum(project.totals.changed_message_only for project in self.projects),
+        )
+        if self.totals != summed:
+            msg = 'overall totals are stale: they are not the sum of the project totals'
+            raise ValueError(msg)
+        merged: dict[tuple[DiffClass, str | None, str | None], int] = {}
+        for project in self.projects:
+            for rollup in project.rollups:
+                key = (rollup.diff_class, rollup.rule_id, rollup.kind)
+                merged[key] = merged.get(key, 0) + rollup.count
+        overall = {(rollup.diff_class, rollup.rule_id, rollup.kind): rollup.count for rollup in self.rollups}
+        if overall != merged:
+            msg = 'overall rollups are stale: they are not the sum of the project rollups'
+            raise ValueError(msg)
+        return self
 
 
 class HookEnvelope(_FrozenModel):
-    """Versioned JSON envelope spoken by the subprocess hook bridge (contract §10).
+    """Versioned JSON envelope spoken by the subprocess hook bridge.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     binding_point : BindingPoint
         Hook binding point the payload targets.
     report : Report
@@ -756,7 +939,7 @@ class HookEnvelope(_FrozenModel):
 
 
 class AnnotationTarget(_FrozenModel):
-    """Target of an internal-corpus annotation (contract §13).
+    """Target of an internal-corpus annotation.
 
     Attributes
     ----------
@@ -774,7 +957,7 @@ class AnnotationTarget(_FrozenModel):
 
 
 class AnnotationProvenance(_FrozenModel):
-    """Provenance of an internal-corpus annotation (contract §13).
+    """Provenance of an internal-corpus annotation.
 
     Attributes
     ----------
@@ -792,12 +975,12 @@ class AnnotationProvenance(_FrozenModel):
 
 
 class Annotation(_FrozenModel):
-    """One internal-corpus annotation with sidecar evidence (contract §13).
+    """One internal-corpus annotation with sidecar evidence.
 
     Attributes
     ----------
     schema_version : SchemaVersion
-        Package-wide schema semver (contract §7).
+        Package-wide schema semver.
     target : AnnotationTarget
         Annotated path/symbol/line.
     verdict : Verdict
@@ -819,7 +1002,7 @@ class Annotation(_FrozenModel):
 
     @model_validator(mode='after')
     def _check_coverage_rule(self) -> Self:
-        """Enforce that coverage evidence never supports a ``dead`` verdict (contract §13).
+        """Enforce that coverage evidence never supports a ``dead`` verdict.
 
         Returns
         -------

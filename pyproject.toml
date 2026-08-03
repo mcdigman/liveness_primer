@@ -29,13 +29,17 @@ keywords = [
 ]
 
 dependencies = [
-    # Contract §17 pins pydantic>=2; the floor is 2.5 because it is the first
-    # release shipping pydantic-core wheels for Python 3.12, which the
-    # lowest-direct-resolution CI jobs install on 3.12.
-    "pydantic>=2.5",
+    # Contract §17 pins pydantic>=2; 2.8 supports the project Python 3.13
+    # and continues to support the 3.12 lowest-direct-resolution CI job.
+    "pydantic>=2.8",
     "platformdirs>=4",
     "filelock>=3.20.3",
     "packaging>=24",
+    # The human-readable reporting contract §6.1 amends initial contract §17:
+    # the terminal renderer uses Rich for Unicode width, ANSI styling, and
+    # OSC-8 links rather than implementing them independently. The floor is
+    # installed and tested by the lowest-direct-resolution CI jobs.
+    "rich>=13",
 ]
 requires-python = ">=3.12"
 

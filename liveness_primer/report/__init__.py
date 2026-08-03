@@ -1,4 +1,4 @@
-"""Report renderers: CLI text, JSON, and GitHub step summary (contract §9).
+"""Report renderers: CLI text, JSON, and GitHub step summary.
 
 Copyright (C) 2026 Matthew C. Digman
 """

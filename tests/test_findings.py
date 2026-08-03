@@ -16,15 +16,18 @@ from liveness_primer.findings import (
     ChangedField,
     CorpusPinRecord,
     DiffClass,
+    DiffRollup,
     DiffTotals,
     EvidenceKind,
     FetchRecord,
     Finding,
     FindingDiff,
     FindingOccurrence,
+    ProjectReport,
     Report,
     RunManifest,
     RunSettings,
+    SourceExcerpt,
     Verdict,
     canonical_occurrence_key,
     finding_identity,
@@ -122,12 +125,13 @@ def test_occurrence_rejects_inverted_span() -> None:
 
 
 def test_occurrence_projection_carries_all_fields() -> None:
-    occurrence = make_finding().occurrence()
+    occurrence = make_finding(rule_id='SKY-U001').occurrence()
     assert occurrence == FindingOccurrence(
         start_line=10,
         end_line=10,
         message="unused function 'unused_fn'",
         confidence=60,
+        rule_id='SKY-U001',
         raw_excerpt="pkg/mod.py:10: unused function 'unused_fn' (60% confidence)",
     )
 
@@ -139,8 +143,103 @@ def test_canonical_key_orders_missing_confidence_first() -> None:
 
 
 def test_canonical_key_field_order() -> None:
-    occurrence = FindingOccurrence(start_line=3, end_line=4, message='m', confidence=80)
-    assert canonical_occurrence_key(occurrence) == (3, 4, 'm', 1, 80)
+    occurrence = FindingOccurrence(start_line=3, end_line=4, message='m', confidence=80, rule_id='SKY-U001')
+    assert canonical_occurrence_key(occurrence) == (3, 4, 'm', 1, 80, 1, 'SKY-U001')
+
+
+def test_canonical_key_orders_missing_rule_id_first() -> None:
+    # Reporting contract §3.1: rule_id is appended after confidence with a
+    # presence component, so absent sorts before present.
+    with_rule = FindingOccurrence(start_line=1, end_line=1, message='m', rule_id='A')
+    without_rule = FindingOccurrence(start_line=1, end_line=1, message='m', rule_id=None)
+    assert canonical_occurrence_key(without_rule) < canonical_occurrence_key(with_rule)
+    assert canonical_occurrence_key(without_rule) == (1, 1, 'm', 0, 0, 0, '')
+
+
+def test_rule_id_stays_outside_finding_identity() -> None:
+    # Reporting contract §3.1: a rule-code change on the same target must
+    # pair as one `changed` diff, so identity excludes the rule ID.
+    assert make_finding(rule_id='SKY-U001').identity == make_finding(rule_id='SKY-U999').identity
+
+
+def test_source_excerpt_shape_is_validated() -> None:
+    excerpt = SourceExcerpt(start_line=4, lines=('def f():', '    pass'), omitted_lines=1)
+    assert excerpt.start_line == 4
+    with pytest.raises(ValidationError, match='at least 1'):
+        SourceExcerpt(start_line=4, lines=(), omitted_lines=0)
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        SourceExcerpt.model_validate({'start_line': 0, 'lines': ('x',), 'omitted_lines': 0})
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        SourceExcerpt.model_validate({'start_line': 1, 'lines': ('x',), 'omitted_lines': -1})
+
+
+def test_diff_rollup_requires_exactly_one_group_key() -> None:
+    rollup = DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=2)
+    assert rollup.count == 2
+    fallback = DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind='function', count=1)
+    assert fallback.kind == 'function'
+    with pytest.raises(ValidationError, match='exactly one of rule_id and kind'):
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind='function', count=1)
+    with pytest.raises(ValidationError, match='exactly one of rule_id and kind'):
+        DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind=None, count=1)
+    with pytest.raises(ValidationError, match='greater than or equal'):
+        DiffRollup.model_validate({'diff_class': DiffClass.NEW, 'rule_id': 'SKY-U001', 'kind': None, 'count': 0})
+
+
+def project_report(totals: DiffTotals, rollups: tuple[DiffRollup, ...]) -> ProjectReport:
+    return ProjectReport(
+        project='alpha',
+        diffs=(),
+        totals=totals,
+        rollups=rollups,
+        truncated=False,
+        base_findings=0,
+        head_findings=0,
+        measured_cost_seconds=None,
+    )
+
+
+def test_project_rollups_are_required_and_must_match_the_totals() -> None:
+    # Reporting acceptance 25: stale aggregate data is an invalid report,
+    # and validation is where a rewriting hook fails.
+    group = DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1)
+    assert project_report(DiffTotals(new=1), (group,)).rollups == (group,)
+    with pytest.raises(ValidationError, match='Field required'):
+        ProjectReport.model_validate(
+            {
+                'project': 'alpha',
+                'diffs': (),
+                'totals': DiffTotals(new=1),
+                'truncated': False,
+                'base_findings': 0,
+                'head_findings': 0,
+                'measured_cost_seconds': None,
+            }
+        )
+    with pytest.raises(ValidationError, match='rollups are stale: new counts disagree'):
+        project_report(DiffTotals(new=1), ())
+    with pytest.raises(ValidationError, match='rollups are stale: dropped, changed counts disagree'):
+        project_report(
+            DiffTotals(new=1),
+            (
+                group,
+                DiffRollup(diff_class=DiffClass.DROPPED, rule_id=None, kind='function', count=2),
+                DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=3),
+            ),
+        )
+
+
+def test_overall_aggregates_must_be_the_sum_of_the_projects() -> None:
+    # Reporting acceptance 25.
+    group = DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1)
+    project = project_report(DiffTotals(new=1), (group,))
+    manifest = make_manifest()
+    report = Report(manifest=manifest, projects=(project,), totals=DiffTotals(new=1), rollups=(group,), truncated=False)
+    assert report.rollups == (group,)
+    with pytest.raises(ValidationError, match='overall totals are stale'):
+        Report(manifest=manifest, projects=(project,), totals=DiffTotals(new=2), rollups=(group,), truncated=False)
+    with pytest.raises(ValidationError, match='overall rollups are stale'):
+        Report(manifest=manifest, projects=(project,), totals=DiffTotals(new=1), rollups=(), truncated=False)
 
 
 def occurrence_at(line: int) -> FindingOccurrence:
@@ -218,7 +317,7 @@ def test_diff_reference_side_rejects_invalidly_constructed_diff() -> None:
 
 
 def test_report_embeds_schema_version() -> None:
-    report = Report(manifest=make_manifest(), projects=(), totals=DiffTotals(), truncated=False)
+    report = Report(manifest=make_manifest(), projects=(), totals=DiffTotals(), rollups=(), truncated=False)
     assert report.schema_version == SCHEMA_VERSION
     assert report.manifest.schema_version == SCHEMA_VERSION
     payload = report.model_dump_json()
@@ -252,7 +351,7 @@ def test_schema_version_is_constrained_to_the_supported_version() -> None:
         FindingOccurrence(schema_version='2.0.0', start_line=1, end_line=1, message='m')
     manifest = make_manifest()
     with pytest.raises(ValidationError, match='is not the supported'):
-        Report(schema_version='1.0.1', manifest=manifest, projects=(), totals=DiffTotals(), truncated=False)
+        Report(schema_version='1.0.1', manifest=manifest, projects=(), totals=DiffTotals(), rollups=(), truncated=False)
 
 
 def test_annotation_coverage_rule() -> None:

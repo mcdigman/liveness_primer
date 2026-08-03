@@ -30,10 +30,10 @@ from liveness_primer.envcache import (
     parse_freeze,
     parse_static_metadata,
 )
+from liveness_primer.filesystem import atomic_write_bytes, atomic_write_text
 from liveness_primer.findings import DependencyDelta
 from liveness_primer.isolation import UNENFORCED, Isolation
 from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
-from liveness_primer.testing.filesystem import atomic_write_bytes, atomic_write_text
 from liveness_primer.tools.vulture import VultureAdapter
 
 PYPROJECT = """

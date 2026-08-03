@@ -177,6 +177,36 @@ def test_skylos_parses_recorded_fixture() -> None:
     excerpt = by_symbol['pkg.mod.orphan'].raw_excerpt
     assert excerpt is not None
     assert json.loads(excerpt)['name'] == 'orphan'
+    # Reporting contract §3.1: the documented bucket mapping supplies the
+    # canonical rule ID for every ingested category.
+    assert by_symbol['pkg.mod.orphan'].rule_id == 'SKY-U001'
+    assert by_symbol['pkg.mod.Greeter.farewell'].rule_id == 'SKY-U001'
+    assert by_symbol['pkg.mod.os'].rule_id == 'SKY-U002'
+    assert by_symbol['pkg.consts.LEGACY_LIMIT'].rule_id == 'SKY-U003'
+    assert by_symbol['pkg.shapes.Hexagon'].rule_id == 'SKY-U004'
+    assert by_symbol['pkg.mod.orphan.flag'].rule_id == 'SKY-U006'
+
+
+def test_skylos_explicit_rule_id_takes_precedence_over_bucket_mapping() -> None:
+    # Reporting contract §3.1 precedence: a rule ID explicitly present on
+    # the detector finding wins over the documented bucket mapping.
+    document = {
+        'unused_functions': [
+            {'name': 'a', 'type': 'function', 'file': 'a.py', 'line': 1, 'rule_id': 'SKY-U777'},
+            {'name': 'b', 'type': 'function', 'file': 'a.py', 'line': 2},
+        ]
+    }
+    explicit, mapped = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert explicit.rule_id == 'SKY-U777'
+    assert mapped.rule_id == 'SKY-U001'
+
+
+def test_vulture_findings_carry_no_invented_rule_id() -> None:
+    # Reporting contract §3.1 and acceptance 4: a detector without a native
+    # rule ID yields None, never an invented tool-specific code.
+    output = raw("clean.py:3: unused function 'f' (60% confidence)\n", returncode=3)
+    (finding,) = VultureAdapter.parse(output, project='demo', root=ROOT)
+    assert finding.rule_id is None
 
 
 def test_skylos_ignores_non_dead_code_categories() -> None:

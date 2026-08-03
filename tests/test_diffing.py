@@ -7,8 +7,8 @@ from collections.abc import Iterable, Sequence
 
 import pytest
 
-from liveness_primer.diffing import DiffEngineError, diff_findings
-from liveness_primer.findings import ChangedField, DiffClass, DiffTotals, Finding, FindingOccurrence
+from liveness_primer.diffing import DiffEngineError, compute_rollups, diff_findings, merge_rollups
+from liveness_primer.findings import ChangedField, DiffClass, DiffRollup, DiffTotals, Finding, FindingOccurrence
 
 
 def mk(
@@ -22,6 +22,7 @@ def mk(
     kind: str = 'function',
     tool: str = 'vulture',
     project: str = 'demo',
+    rule_id: str | None = None,
 ) -> Finding:
     return Finding(
         tool=tool,
@@ -33,6 +34,7 @@ def mk(
         start_line=start_line,
         end_line=end_line if end_line is not None else start_line,
         confidence=confidence,
+        rule_id=rule_id,
         raw_excerpt=f'{path}:{start_line}: {message}',
     )
 
@@ -211,3 +213,106 @@ def test_excerpt_differences_alone_do_not_survive_stage_one() -> None:
     head_finding = mk(5).model_copy(update={'raw_excerpt': 'different raw text'})
     result = diff_findings(base, [head_finding], confidence_capable=False)
     assert result.diffs == ()
+
+
+def test_rule_id_change_pairs_as_one_changed_diff() -> None:
+    # Reporting contract §3.1 and acceptance 3: identical identity fields
+    # with different explicit rule IDs become one `changed` finding with
+    # `rule` in changed_fields — the change never leaves the blast radius.
+    result = diff_findings([mk(5, rule_id='SKY-U001')], [mk(5, rule_id='SKY-U003')], confidence_capable=False)
+    (diff,) = result.diffs
+    assert diff.diff_class is DiffClass.CHANGED
+    assert diff.changed_fields == (ChangedField.RULE,)
+    assert result.totals == DiffTotals(changed=1)
+
+
+def test_rule_id_appearing_or_disappearing_is_a_rule_change() -> None:
+    result = diff_findings([mk(5, rule_id=None)], [mk(5, rule_id='SKY-U001')], confidence_capable=False)
+    (diff,) = result.diffs
+    assert diff.changed_fields == (ChangedField.RULE,)
+
+
+def test_kind_change_stays_new_plus_dropped() -> None:
+    # A bucket move that also changes kind changes identity: it remains a
+    # `new` plus a `dropped` finding (reporting acceptance 3).
+    result = diff_findings(
+        [mk(5, kind='variable', rule_id='SKY-U003')],
+        [mk(5, kind='parameter', rule_id='SKY-U006')],
+        confidence_capable=False,
+    )
+    assert {diff.diff_class for diff in result.diffs} == {DiffClass.NEW, DiffClass.DROPPED}
+    assert result.totals == DiffTotals(new=1, dropped=1)
+
+
+def test_canonical_key_orders_rule_ids_after_confidence() -> None:
+    # Same line and message; the rule ID is the deciding key component, and
+    # absent sorts before present (reporting contract §3.1).
+    base = [mk(5, rule_id='SKY-U001'), mk(5, rule_id=None)]
+    head = [mk(5, rule_id='SKY-U002'), mk(5, rule_id='SKY-U009')]
+    result = diff_findings(base, head, confidence_capable=False)
+    pairs = [
+        (diff.base_occurrence.rule_id, diff.head_occurrence.rule_id)
+        for diff in result.diffs
+        if diff.base_occurrence is not None and diff.head_occurrence is not None
+    ]
+    assert pairs == [(None, 'SKY-U002'), ('SKY-U001', 'SKY-U009')]
+
+
+def test_rollups_group_by_rule_with_kind_fallback() -> None:
+    base = [mk(1, symbol='a', rule_id='SKY-U001'), mk(2, symbol='b', kind='variable')]
+    head = [
+        mk(3, symbol='c', rule_id='SKY-U001'),
+        mk(4, symbol='d', rule_id='SKY-U001'),
+        mk(5, symbol='e', rule_id='SKY-U002'),
+        mk(6, symbol='f', message='x'),
+    ]
+    result = diff_findings(base, head, confidence_capable=False)
+    assert result.rollups == (
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=2),
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U002', kind=None, count=1),
+        DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind='function', count=1),
+        DiffRollup(diff_class=DiffClass.DROPPED, rule_id='SKY-U001', kind=None, count=1),
+        DiffRollup(diff_class=DiffClass.DROPPED, rule_id=None, kind='variable', count=1),
+    )
+
+
+def test_rollups_changed_pairs_group_by_reference_side() -> None:
+    # A `changed` pair groups by its reference-side (base) occurrence.
+    result = diff_findings([mk(5, rule_id='SKY-U001')], [mk(5, rule_id='SKY-U003')], confidence_capable=False)
+    assert result.rollups == (DiffRollup(diff_class=DiffClass.CHANGED, rule_id='SKY-U001', kind=None, count=1),)
+
+
+def test_rollup_ordering_is_class_then_count_then_label() -> None:
+    rollups = compute_rollups(
+        diff_findings(
+            [],
+            [
+                mk(1, symbol='a', rule_id='SKY-U009'),
+                mk(2, symbol='b', rule_id='SKY-U001'),
+                mk(3, symbol='c', rule_id='SKY-U001'),
+                mk(4, symbol='d', rule_id='SKY-U005'),
+            ],
+            confidence_capable=False,
+        ).diffs
+    )
+    assert [(rollup.rule_id, rollup.count) for rollup in rollups] == [
+        ('SKY-U001', 2),
+        ('SKY-U005', 1),
+        ('SKY-U009', 1),
+    ]
+
+
+def test_merge_rollups_sums_and_reorders() -> None:
+    alpha = (
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1),
+        DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=2),
+    )
+    beta = (
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U002', kind=None, count=4),
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=2),
+    )
+    assert merge_rollups([alpha, beta]) == (
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U002', kind=None, count=4),
+        DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=3),
+        DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=2),
+    )

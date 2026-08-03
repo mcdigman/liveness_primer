@@ -26,6 +26,13 @@ The human report therefore must provide, for every displayed finding:
 - changed fields; and
 - a bounded excerpt of the pinned source at the reported location.
 
+GitHub output narrows the column set that carries these: §7 drops the `kind`, `symbol`, and
+changed-field columns because a GitHub table cannot scroll horizontally on its own. Kind and
+symbol remain in text output and in JSON, the symbol is named by the normalized diagnostic
+message and located by the pinned link beside it, and every changed field still appears in
+the row as an explicit base→head value. This is a layout narrowing rather than a loss of
+observables.
+
 The report must remain compact enough to scan across a corpus. It must not reproduce raw
 structured detector records or expose temporary local paths through detector-derived finding
 content. Trusted manifest commands remain reproducibility data (§3.5).
@@ -34,6 +41,19 @@ content. Trusted manifest commands remain reproducibility data (§3.5).
 
 This contract covers `--output text` and `--output github`. JSON remains the complete,
 unstyled machine-readable `Report` serialization.
+
+Initial contract §9 makes the JSON artifact the CI-consumable product, but `--output` selects
+exactly one mode, so a CI job that publishes the human report cannot also archive the JSON
+without paying for a second complete corpus run. That is not an acceptable price for the
+product the contract calls canonical. `liveness-primer run` therefore additionally accepts
+`--json-out PATH`, which writes the complete JSON `Report` to `PATH` for any `--output` mode.
+The written payload is byte-identical to `--output json` on the same report; the selected
+`--output` mode still goes to standard output unchanged.
+
+A CI job that renders `--output github` is expected to append that rendering to
+`$GITHUB_STEP_SUMMARY` — writing it only to a file leaves the job log showing raw Markdown
+and the run summary empty — and to archive the `--json-out` payload as the machine-readable
+artifact.
 
 This contract does not:
 
@@ -124,6 +144,14 @@ by rule ID or kind — the display ordering below without the top-five cap. Over
 the sum of the complete project rollups. A hook that filters or replaces diffs must recompute totals and rollups before the
 final report is truncated or serialized; stale aggregate data is an invalid report.
 
+`rollups` is a required field of both models rather than a defaulted one, so the generated
+schemas demand it. Because "stale aggregate data is an invalid report" must be enforced and
+not merely asserted, both models reject, at validation time, a value whose per-diff-class
+rollup counts disagree with the corresponding `DiffTotals` counts, and `Report` additionally
+rejects overall totals or rollups that are not the sum of its projects'. Validation is the
+transformation boundary: a hook that rewrites diffs without recomputing aggregates fails
+there instead of producing a silently stale report.
+
 Human renderers show nonzero diff classes as one line each. They display at most the five
 largest groups, ordered by descending count and then lexicographically by rule ID or kind. An
 omitted tail is explicit and gives both its finding count and group count:
@@ -150,8 +178,16 @@ omitted_lines: int
 ```
 
 The line numbers represented by `lines` are consecutive and begin at `start_line`. The first
-line must be the reported `start_line`. `--excerpt-lines N` controls the maximum number of
-source lines stored and rendered per occurrence:
+line must be the reported `start_line`.
+
+Decoded source is divided into lines using source-location newline semantics: `\n`, `\r\n`,
+and `\r` are the only line boundaries. Form feed, vertical tab, the C1 `NEL` character, and
+the Unicode line and paragraph separators are ordinary characters inside a line, because
+Python and the detectors do not count them when numbering source lines. Splitting on them
+would silently shift every subsequent excerpt and present source the detector never reported.
+
+`--excerpt-lines N` controls the maximum number of source lines stored and rendered per
+occurrence:
 
 - `N = 0` disables source excerpts;
 - a point finding begins at the reported line and may use following existing lines to fill the
@@ -175,6 +211,14 @@ existing line-span field.
 Source extraction must use the repository's bounded, containment-enforcing filesystem
 helpers. Corpus-controlled symlinks, special files, oversized files, undecodable bytes, and
 control characters must not bypass the report trust boundary.
+
+Those helpers must normalize *every* expected filesystem failure into their own bounded
+policy error. Path resolution and file reads raise operating-system errors that a narrow
+`except` on the policy error would miss — an unreadable regular file raises `PermissionError`,
+and on the supported Python floor a self-referential symlink raises `RuntimeError` out of
+`Path.resolve()`. A corpus-controlled file must never terminate report assembly: each such
+failure becomes one bounded per-project warning, whose text carries the repository-relative
+path only and never the disposable local checkout prefix.
 
 ### 3.4 Raw detector records
 
@@ -215,18 +259,30 @@ detector repository, the corpus default branch, a cache directory, or a disposab
 For a non-GitHub ad-hoc project, the renderer shows the escaped repository string and corpus
 SHA separately without fabricating a pinned-tree URL.
 
+Corpus provenance occupies exactly one `corpus:` line per project. The repository must not be
+printed once as a bare string and then again inside a separate pinned-tree URL line: when a
+pinned-tree URL exists and can be attached as a terminal hyperlink, the line shows
+`owner/repository @ <abbreviated SHA>` carrying the link; when it exists but cannot be
+attached, the line is the pinned-tree URL itself, which already names both. A non-GitHub
+ad-hoc project shows the escaped repository string and the abbreviated SHA with no URL.
+
 The overall header and each project header include the aggregate rollup lines from §3.2. The
 overall header uses overall rollups; each project header uses only that project's rollups.
+
+The overall header carries the same facts in every human output mode. Text and GitHub output
+must both state overall base/head finding counts, complete totals, overall rollups, measured
+execution cost, and the counts of errors, corpus-integrity warnings, and source warnings. A
+mode that omits cost or the warning summaries is incomplete, not merely styled differently.
 
 ### 4.2 Borderless table
 
 Findings render in a compact, aligned table with this exact semantic column order:
 
 ```text
-  rule       %          kind       location                    message                        symbol               fields
-+ SKY-U001   90%        function   httpx/_auth.py:L225         unused function 'example'      httpx._auth.example  -
-- SKY-U002   NA         import     httpx/_client.py:L14        unused import 'typing'         typing               -
-~ SKY-U003   60%->90%   variable   httpx/_config.py:L81        unused variable 'DEFAULT'      DEFAULT              %
+  rule       %          kind       location                    symbol               message                        fields
++ SKY-U001   90%        function   httpx/_auth.py:L225         httpx._auth.example  unused function 'example'      -
+- SKY-U002   NA         import     httpx/_client.py:L14        typing               unused import 'typing'         -
+~ SKY-U003   60%->90%   variable   httpx/_config.py:L81        DEFAULT              unused variable 'DEFAULT'      %
 ```
 
 The first column has a blank header. There is no left border and no vertical border in text
@@ -251,8 +307,12 @@ The `%` column uses the following exact forms:
 - `XX%->NA` when confidence disappears; and
 - `XX%->YY%` when confidence changes.
 
-The column has a minimum display width of 10, sufficient for `100%->100%`. It must not emit
-ambiguous forms such as `-->90%`.
+The column is measured like any other: it sizes to the widest value actually present in the
+section and expands naturally when a paired form such as `100%->100%` occurs. It must never
+be padded to a fixed reservation for forms that no displayed finding uses — a section whose
+every value is `90%` gets a three-cell column, and the reclaimed cells go to the flexible
+columns. Its minimum is two cells, sufficient for `NA`. It must not emit ambiguous forms such
+as `-->90%`.
 
 ### 4.4 Fields column
 
@@ -278,13 +338,25 @@ side uses its own reported span and pinned permalink when one is available. If o
 cannot be collected, the available side remains visible with the bounded warning for the
 missing side.
 
-Each source line includes its real line number:
+A finding and its evidence must read as one visually coherent block. The continuation region
+is indented two cells from the left margin — not aligned under the location column, which
+pushes evidence far to the right and wastes the width the excerpt needs. Each source line
+carries its real line number followed by a `|` gutter, and one blank line separates a
+complete finding block from the next one, so it is unambiguous where a diagnostic ends and
+its evidence begins:
 
 ```text
-+ SKY-U001   90%        function   httpx/_auth.py:L225         unused function 'example'      httpx._auth.example  -
-                                                                  225 | def example(request):
-                                                                  226 |     return request
++ SKY-U001  90%  function  httpx/_auth.py:L225   httpx._auth.example  unused function 'example'  -
+  225 | def example(request):
+  226 |     return request
+
+- SKY-U002  NA   import    httpx/_client.py:L14  typing               unused import 'typing'     -
+   14 | import typing
 ```
+
+The line number is normal-contrast semantic data; only the `|` gutter itself may be styled as
+decoration. A finding with no continuation region is not followed by a blank line, so a
+report rendered with `--excerpt-lines 0` stays a dense table.
 
 The source is evidence, not another table record. Long excerpts end with an explicit omitted
 line count derived from `SourceExcerpt.omitted_lines` rather than an unexplained ellipsis. No
@@ -298,8 +370,20 @@ length, so combining and wide Unicode characters do not make the table ragged. S
 hyperlink escape sequences have zero display width.
 
 The class, rule, confidence, kind, and fields columns do not wrap. Location, message, and
-symbol are the flexible columns. They receive declared minimum and maximum widths and may
-wrap onto indented continuation lines. All continuation lines preserve the original column
+symbol are the flexible columns: they receive declared minimum and maximum widths and shrink
+toward the minimum only when the available width demands it.
+
+Flexible columns must not be chopped at arbitrary character boundaries. Each declares how it
+degrades:
+
+- `message` wraps onto indented continuation lines at word boundaries, falling back to cell
+  chopping only for a single word wider than the column;
+- `location` truncates in the middle, preserving its leading directories and its trailing
+  file name and line span; and
+- `symbol` truncates at the end.
+
+Truncation is deliberate and counted: a truncated cell states how many characters it omitted
+(§8). Only `message` produces continuation lines, and they preserve the original column
 boundaries.
 
 If the available width cannot satisfy the table's minimum widths, the renderer uses a
@@ -309,6 +393,39 @@ spaces or allow the host terminal's uncontrolled wrapping to create ragged colum
 Redirected text uses a deterministic fallback width when no terminal width is available.
 Tests may supply an explicit width; output must not depend on ambient developer terminal
 size.
+
+### 4.7 End-of-report summary
+
+A corpus report is long. After scrolling through every project section, the terminal sits at
+the bottom of the report with no decision surface, and the overall totals and rollups near
+the top are far out of view. Text output therefore repeats the overall summary at the end
+rather than moving it: the leading copy remains useful in a pager and in archived text, and
+the trailing copy is where the reviewer actually decides.
+
+The footer repeats the overall totals, rollups, measured cost, and error and warning counts,
+and adds an aligned per-project impact table with this exact column order:
+
+```text
+project | base -> head | delta | ratio | new | dropped | changed | cost | warnings
+```
+
+- `delta` is `head - base` with an explicit sign, so a shrinking corpus is legible.
+- `ratio` is `head / base` rendered as `N.NNx`. A zero baseline has no ratio: it renders
+  `new` when the head side found anything and `-` when both sides are empty. Absolute and
+  relative change always appear together, because a percentage alone misleads at small
+  baselines and an absolute count alone hides a blast radius.
+- `cost` is the project's measured wall-clock cost, or `n/a`.
+- `warnings` counts that project's errors, corpus-integrity warnings, and source warnings.
+
+Rows are ordered by descending absolute `delta`, then by project name, so the largest blast
+radius is surfaced first. This ordering is local to the footer: it must not reorder the
+detailed project sections, which stay in run order.
+
+A nonzero `delta` carries emphasis; the emphasis is a styling accent only, and the signed
+number and ratio remain fully legible without color.
+
+The footer is text-output structure. GitHub output already opens with the overall header on a
+page the reader can scroll back to, and repeats nothing.
 
 ## 5. Source permalinks
 
@@ -340,10 +457,15 @@ a source URL from an unvalidated repository string.
 In GitHub output, the visible `path:Lx` or `path:Lx-Ly` is the Markdown link label. A
 `changed` location with a moved span (`path:Lx->Ly`) links its base-side span; the head-side
 permalink accompanies the labelled head excerpt (§4.5). In text output with supported
-terminal hyperlinks, the same visible location is an OSC-8 link. When
-terminal hyperlinks are disabled or unsupported, the copyable relative location remains and
-the stable URL may be printed as a labelled continuation. A hidden terminal hyperlink must
-never be the only representation of the target.
+terminal hyperlinks, the same visible location is an OSC-8 link. A hidden terminal hyperlink
+must never be the only representation of the target.
+
+When terminal hyperlinks are disabled or unsupported, the copyable relative location and the
+project's `corpus:` pinned-tree line remain, and together they reconstruct the permalink. A
+full per-finding URL continuation line is therefore **not** printed by default: across a
+corpus-sized report those lines outnumber and visually dominate the findings themselves. They
+are available on request through `--source-urls` (§6.3), which prints the pinned URL as a
+labelled continuation for every finding side that has one.
 
 ## 6. Terminal rendering and color
 
@@ -363,22 +485,34 @@ applied only after sanitization and width calculation.
 
 ### 6.2 Style map
 
-The default terminal style map is:
+Semantic data must stay at normal contrast. `dim` is a legibility failure on real terminal
+themes: it renders semantic columns and project boundaries barely readable against common
+light and dark backgrounds, and it is reserved here for pure decoration that carries no
+information. Likewise, the `bright_*` variants are not a reliable contrast improvement — they
+wash out on light themes — so the class accent uses the standard palette entries, which every
+theme maps to a foreground legible against its own background.
+
+The class glyph is a high-contrast, bold treatment; its color is a secondary cue, and the
+same class accent is carried through the rule column so the eye can group findings by class
+without color being load-bearing. The default terminal style map is:
 
 | Element | Style |
 | --- | --- |
-| `+` | bold bright green |
-| `-` | bold bright red |
+| `+` | bold green |
+| `-` | bold red |
 | `~` | bold yellow |
-| rule ID | cyan |
-| confidence | magenta or bold default |
-| kind | dim cyan |
+| rule ID | the row's class accent: green, red, or yellow |
+| confidence | magenta |
+| kind | cyan |
 | linked location | blue and underlined |
 | message | default foreground |
-| symbol | dim |
+| symbol | default foreground |
 | changed fields | yellow |
-| headers and source line numbers | bold dim |
-| errors | bold bright red |
+| headers and project headers | bold |
+| source line numbers | default foreground |
+| source gutter (`|`) | dim |
+| footer impact emphasis | bold yellow |
+| errors | bold red |
 | warnings | bold yellow |
 
 The renderer colors the class glyph strongly rather than coloring the complete row. Large
@@ -391,9 +525,12 @@ The CLI provides:
 ```text
 --color auto|always|never
 --hyperlinks auto|always|never
+--source-urls
 ```
 
-Both default to `auto`.
+`--color` and `--hyperlinks` default to `auto`. `--source-urls` is an off-by-default switch
+that opts into the per-finding pinned URL continuation lines described in §5; it affects text
+output only.
 
 For color, `auto` enables ANSI styling only when standard output is an interactive terminal,
 `TERM` is not `dumb`, and `NO_COLOR` is absent. `--color always` explicitly enables generated
@@ -423,7 +560,33 @@ and semantics after ANSI and OSC-8 sequences are stripped.
 GitHub does not interpret ANSI styling, and Markdown links do not work inside fenced `diff`
 blocks. Exact source links and readable evidence take precedence over whole-line diff color.
 
-GitHub output uses the same column order and class glyphs. It may add a colored status marker
+A GitHub-rendered table has no horizontal scroll affordance of its own: an over-wide row
+forces the whole table sideways and destroys the scannability §1 requires. At corpus scale a
+report carries well over a hundred findings, so the per-row budget is the binding constraint,
+not the per-finding one.
+
+GitHub rows therefore carry the **first retained source line only**, rendered as a Markdown
+code span so it reads as code, followed by a bare `[...]` when the excerpt continues. That
+satisfies this section's requirement that a reviewer see the first retained line without
+expanding anything, while spending the fewest cells on the fact that more exists; the exact
+retained and omitted line counts stay in the JSON report, which is the CI-consumable product.
+A code span also renders its content literally, so Markdown structure, raw HTML, and link
+syntax inside pinned source are inert there; only the table's own `|` separator still needs
+escaping, which GitHub honors inside code spans. In-row caps for the message, changed values,
+and source text are tighter than the terminal renderer's for the same reason: those caps, not
+the link targets, set the rendered column width, because a Markdown link renders as its short
+label. A row that serializes a whole excerpt into one cell violates this section.
+
+The width budget also decides the column set. GitHub output narrows the terminal renderer's
+columns to the blank class column, `rule`, `%`, `location`, and `message`, in that order.
+`kind`, `symbol`, and the changed-field summary column are dropped. `kind` remains in the
+JSON report and in text output; the symbol is already named inside the normalized diagnostic
+message and pinpointed by the pinned link in the location cell, so a dedicated column spends
+width on text the row states twice; and every changed field still appears beneath the
+diagnostic as an explicit base→head value. Nothing observable is lost — only the columns
+whose content is most repetitive or most redundant across a corpus.
+
+GitHub output keeps the class glyphs. It may add a colored status marker
 in the blank class header column because GitHub-rendered tables do not have terminal color:
 
 - `🟢 +` for `new`;
@@ -434,11 +597,12 @@ The `+`, `-`, and `~` remain mandatory so color is not the only carrier of meani
 GitHub-hosted corpus project, the location is a Markdown link to the pinned source line. For
 a non-GitHub ad-hoc project, it is escaped plain text. Source evidence appears in the same row
 beneath the diagnostic using escaped inline or preformatted text; a reviewer must not have
-to expand a collapsed section to see the first retained source line.
+to expand a collapsed section to see the first retained source line, and continuation is
+marked rather than silent.
 
 GitHub table source may omit a leading and trailing `|`. GitHub's required separator row is
 not a user-facing semantic header. The first header cell is blank; the remaining headers are
-`rule`, `%`, `kind`, `location`, `message`, `symbol`, and `fields`.
+`rule`, `%`, `location`, and `message`.
 
 ## 8. Sanitization and truncation
 
@@ -449,7 +613,8 @@ untrusted. Human renderers must:
 - prevent Rich-markup interpretation;
 - escape Markdown and HTML metacharacters at the GitHub structural boundary;
 - apply independent per-cell length caps;
-- show how many characters or lines were omitted;
+- show how many characters or lines were omitted, the one exception being §7's in-row source
+  elision marker, which is deliberately bare because the exact counts remain in JSON;
 - preserve the beginning and identifying portion of locations and rule IDs;
 - prevent any one field from consuming another field's display budget; and
 - apply generated ANSI or hyperlink control sequences only outside untrusted text.
@@ -468,8 +633,9 @@ are not normalized or suppressed as detector-derived data.
 | class glyphs | yes | yes | yes | structured value |
 | ANSI color | capability-dependent | explicit only | never | never |
 | colored fallback marker | not required | no | yes | no |
-| source location/link | pinned OSC-8 when available, plus visible fallback | pinned URL when available, otherwise plain location | pinned Markdown link when available, otherwise plain location | structured/derivable |
-| bounded source excerpt | yes | yes | yes | complete retained excerpt |
+| source location/link | pinned OSC-8 when available, plus visible fallback | plain location; pinned URL only under `--source-urls` | pinned Markdown link when available, otherwise plain location | structured/derivable |
+| bounded source excerpt | yes | yes | first retained line as a code span plus `[...]` | complete retained excerpt |
+| end-of-report summary | yes | yes | no (header only) | no |
 | raw detector record | no | no | no | when retained |
 | temporary paths in detector-derived finding content | never | never | never | never in normalized locations |
 | trusted escape-hatch argv | faithfully rendered | faithfully rendered | faithfully rendered | complete manifest argv |
@@ -519,8 +685,32 @@ Implementation is complete only when tests establish all of the following.
 21. The overall and project headers contain the applicable pinned-tree link, or the plain
     repository fallback for a non-GitHub project, plus the abbreviated SHA, base/head finding
     counts, complete totals, aggregate rollups, execution cost, and bounded errors or warnings.
+    This is asserted for `text` and `github` alike: the GitHub overall header carries measured
+    cost and the error, corpus-integrity, and source-warning summaries, not only totals.
 22. Existing message-only suppression remains explicit and the JSON report retains complete
     structured detail.
+23. Decoded source is split only on `\n`, `\r\n`, and `\r`. A file whose line embeds a form
+    feed, vertical tab, `NEL`, or a Unicode separator still reports the excerpt Python and the
+    detector number at the reported line.
+24. An unreadable regular file and a self-referential symlink each yield no excerpt, one
+    bounded warning free of the local checkout prefix, and a completed report — never an
+    uncaught `PermissionError` or `RuntimeError`.
+25. `rollups` is required by the generated schemas, and a `ProjectReport` or `Report` whose
+    rollups or overall totals disagree with their diff totals fails validation.
+26. The confidence column measures to its widest present value; a section whose values are
+    all `XX%` renders a three-cell column, and a `100%->100%` value expands it.
+27. `location` truncates in the middle, `symbol` truncates at the end, `message` wraps at word
+    boundaries, and each truncation states its omitted character count.
+28. Per-finding pinned URL lines are absent by default and present under `--source-urls`;
+    every project prints exactly one `corpus:` provenance line.
+29. The text report ends with the repeated overall summary and the per-project impact table,
+    ordered by descending absolute delta, showing signed delta and ratio together and
+    rendering a zero baseline as `new` or `-`.
+30. No GitHub table row serializes more than the first retained source line of a side; the
+    line renders as a code span, a continuing excerpt is marked `[...]`, and the header row
+    is exactly the blank class column, `rule`, `%`, `location`, and `message`.
+31. `--json-out PATH` writes the byte-identical `--output json` payload for any `--output`
+    mode without changing what reaches standard output.
 
 Plain-text and GitHub golden fixtures must cover a representative `new`, `dropped`, and
 multi-field `changed` finding. Color and hyperlink tests must assert capabilities and visible

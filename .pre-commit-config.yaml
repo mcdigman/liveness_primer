@@ -67,6 +67,7 @@ repos:
       - platformdirs>=4
       - filelock>=3
       - packaging>=24
+      - rich>=13
       - httpx>=0.28,<1
       - pytest
 

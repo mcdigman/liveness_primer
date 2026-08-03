@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from liveness_primer.errors import LivenessPrimerError
+from liveness_primer.filesystem import FilesystemPolicyError, atomic_write_text, contained_path
 from liveness_primer.launcher import SyncLauncher, run_sync, validate_sync_launcher
-from liveness_primer.testing.filesystem import ArtifactFilesystemError, atomic_write_text, contained_path
 
 DEFAULT_FILES: Mapping[str, str] = {
     'pkg/__init__.py': '',
@@ -119,7 +119,7 @@ def create_fake_project(
     for relative, text in contents.items():
         try:
             target = contained_path(directory, relative)
-        except ArtifactFilesystemError as error:
+        except FilesystemPolicyError as error:
             raise FakeProjectError(str(error)) from error
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(target, text)

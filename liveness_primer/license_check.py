@@ -232,7 +232,7 @@ def check_licenses(
         If httpx (the ``[license]`` extra) is not installed.
     """
     if httpx is None:
-        msg = "license verification requires httpx; install the '[license]' extra (contract §6)"
+        msg = "license verification requires httpx; install the '[license]' extra"
         raise LicenseCheckError(msg)
     headers = {
         'Accept': 'application/vnd.github+json',

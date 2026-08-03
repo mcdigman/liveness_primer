@@ -12,20 +12,29 @@ import argparse
 import math
 import os
 import shlex
+import shutil
 import sys
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as metadata_version
 from pathlib import Path
+from typing import cast
 
 from liveness_primer.config import CorpusProject, ad_hoc_project, load_corpus, select_projects
 from liveness_primer.corpus import CheckoutStore, cache_root
 from liveness_primer.envcache import DetectorEnvironments, choose_installer
 from liveness_primer.errors import LivenessPrimerError
+from liveness_primer.filesystem import atomic_write_text
 from liveness_primer.findings import SCHEMA_VERSION, Report
 from liveness_primer.isolation import detect_isolation, require_isolation
 from liveness_primer.license_check import check_licenses
 from liveness_primer.report import render_github, render_json, render_text
+from liveness_primer.report.terminal import (
+    CAPABILITY_CHOICES,
+    DEFAULT_REDIRECTED_WIDTH,
+    CapabilityMode,
+    resolve_text_options,
+)
 from liveness_primer.runner import (
     GATE_CHOICES,
     PrimerRunner,
@@ -41,7 +50,7 @@ EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_GATE = 3
 
-_RENDERERS = {'text': render_text, 'json': render_json, 'github': render_github}
+_OUTPUT_MODES = ('github', 'json', 'text')
 
 
 def _positive_int(text: str) -> int:
@@ -166,8 +175,35 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     run_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
     run_parser.add_argument('--project', dest='project_url', help='ad-hoc mode: single target repository URL')
     run_parser.add_argument('--max-results', type=_positive_int, default=200, help='per-project cap on rendered diffs')
-    run_parser.add_argument('--excerpt-lines', type=_nonnegative_int, default=5, help='cap on rendered excerpt lines')
-    run_parser.add_argument('--output', choices=sorted(_RENDERERS), default='text', help='report mode')
+    run_parser.add_argument(
+        '--excerpt-lines',
+        type=_nonnegative_int,
+        default=5,
+        help='pinned-source evidence lines stored and rendered per occurrence (0 disables)',
+    )
+    run_parser.add_argument('--output', choices=_OUTPUT_MODES, default='text', help='report mode')
+    run_parser.add_argument(
+        '--color',
+        choices=CAPABILITY_CHOICES,
+        default='auto',
+        help='ANSI styling in text output',
+    )
+    run_parser.add_argument(
+        '--hyperlinks',
+        choices=CAPABILITY_CHOICES,
+        default='auto',
+        help='OSC-8 terminal hyperlinks in text output',
+    )
+    run_parser.add_argument(
+        '--source-urls',
+        action='store_true',
+        help='print per-finding pinned URL lines in text output',
+    )
+    run_parser.add_argument(
+        '--json-out',
+        type=Path,
+        help='also write the complete JSON report to this path',
+    )
     run_parser.add_argument(
         '--fail-on',
         action='append',
@@ -304,6 +340,79 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
     )
 
 
+def _terminal_width() -> int | None:
+    """Measure the interactive terminal width.
+
+    Returns
+    -------
+    int | None
+        The measured width, or ``None`` when unavailable.
+    """
+    width = shutil.get_terminal_size(fallback=(0, 0)).columns
+    return width if width > 0 else None
+
+
+def _render_report(report: Report, args: argparse.Namespace) -> str:
+    """Render the report in the selected output mode (contract §9, reporting §6).
+
+    JSON and GitHub output never contain ANSI styling or OSC-8 links; the
+    text renderer resolves its capabilities from ``--color``,
+    ``--hyperlinks``, the environment, and the output stream.
+
+    Parameters
+    ----------
+    report : Report
+        The assembled report.
+    args : argparse.Namespace
+        Parsed ``run`` arguments.
+
+    Returns
+    -------
+    str
+        The rendered report.
+    """
+    if args.output == 'json':
+        return render_json(report)
+    if args.output == 'github':
+        return render_github(report)
+    interactive = sys.stdout.isatty()
+    options = resolve_text_options(
+        color_mode=cast('CapabilityMode', args.color),
+        hyperlink_mode=cast('CapabilityMode', args.hyperlinks),
+        interactive=interactive,
+        env=os.environ,
+        terminal_width=_terminal_width() if interactive else DEFAULT_REDIRECTED_WIDTH,
+        source_urls=args.source_urls,
+    )
+    return render_text(report, options)
+
+
+def _write_json_report(report: Report, path: Path) -> None:
+    """Archive the complete JSON report alongside any output mode (§2).
+
+    Initial contract §9 makes the JSON artifact the CI-consumable product,
+    but ``--output`` selects one mode; a CI job must not have to pay for a
+    second complete corpus run to keep it.
+
+    Parameters
+    ----------
+    report : Report
+        The assembled report.
+    path : Path
+        Destination file.
+
+    Raises
+    ------
+    RunnerError
+        If the destination cannot be written.
+    """
+    try:
+        atomic_write_text(path, render_json(report))
+    except OSError as error:
+        msg = f'could not write the JSON report to {path}: {error.strerror}'
+        raise RunnerError(msg) from error
+
+
 def _exit_code_for(report: Report, fail_on: tuple[str, ...]) -> int:
     """Derive the process exit code from a finished run (contract §9).
 
@@ -380,7 +489,9 @@ def _command_run(args: argparse.Namespace) -> int:
             head_ref=args.new,
             environments=environments,
         )
-    sys.stdout.write(_RENDERERS[args.output](report))
+    if args.json_out is not None:
+        _write_json_report(report, args.json_out)
+    sys.stdout.write(_render_report(report, args))
     return _exit_code_for(report, options.fail_on)
 
 

@@ -25,6 +25,20 @@ from liveness_primer.tools.base import (
 # categories (danger, secrets, quality, ...) are deliberately not ingested.
 _DEAD_CODE_KEYS = ('unused_functions', 'unused_imports', 'unused_classes', 'unused_variables', 'unused_parameters')
 
+# Documented, versioned mapping from each ingested skylos structured output
+# bucket to its canonical rule ID (reporting contract §3.1). A rule ID
+# explicitly present on the detector finding takes precedence; a rule ID is
+# never inferred from free-form message text. If a supported skylos revision
+# changes the documented mapping, this table must be updated rather than
+# silently retaining a stale code.
+BUCKET_RULE_IDS = {
+    'unused_functions': 'SKY-U001',
+    'unused_imports': 'SKY-U002',
+    'unused_variables': 'SKY-U003',
+    'unused_classes': 'SKY-U004',
+    'unused_parameters': 'SKY-U006',
+}
+
 
 class _SkylosEntry(BaseModel):
     """One dead-code entry from a skylos JSON array (untrusted input)."""
@@ -37,6 +51,7 @@ class _SkylosEntry(BaseModel):
     file: str
     line: int
     confidence: int | None = Field(default=None, ge=0, le=100)
+    rule_id: str | None = None
 
 
 class SkylosAdapter:
@@ -150,5 +165,8 @@ def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
         start_line=line,
         end_line=line,
         confidence=entry.confidence,
+        # An explicit detector rule ID wins; the documented bucket mapping
+        # is the fallback (reporting contract §3.1).
+        rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS.get(key),
         raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
     )
