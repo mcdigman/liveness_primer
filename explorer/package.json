@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "package-lock.json": "^1.0.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tabulator-tables": "^6.5.2"
@@ -13,7 +12,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/tabulator-tables": "^6.3.6",
-    "ajv": "^8.17.1",
+    "ajv": "^8.18.0",
     "esbuild": "^0.25.0",
     "eslint": "^9.39.0",
     "eslint-plugin-react": "^7.37.5",
