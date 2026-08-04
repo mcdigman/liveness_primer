@@ -19,7 +19,9 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 # Minor versions are additive-only; breaking changes require a major bump.
 # 1.1.0 adds nullable rule IDs, nullable source excerpts, aggregate rollups,
 # and the additive `rule` changed-field value (reporting contract §3.6).
-SCHEMA_VERSION = '1.1.0'
+# 1.2.0 adds the additive serialized finding locator and the portable
+# explorer review record (explorer contract §4.2, §6).
+SCHEMA_VERSION = '1.2.0'
 
 
 def _validated_schema_version(value: str) -> str:
@@ -394,6 +396,33 @@ class Finding(_FrozenModel):
         )
 
 
+class FindingLocator(_FrozenModel):
+    """Persistent reference to one serialized finding diff (explorer contract §4.2).
+
+    ``line`` is the diff class's reference-side start line — head for
+    ``new``, base for ``dropped`` and ``changed``. ``occurrence`` is the
+    diff's zero-based position within the subsequence of the same serialized
+    ``ProjectReport.diffs`` tuple whose identity and reference-side start
+    line equal ``(identity, line)``, in serialized order.
+
+    Attributes
+    ----------
+    project : str
+        Corpus project name.
+    identity : str
+        Stable finding identity hash.
+    line : int
+        Reference-side start line (1-based).
+    occurrence : int
+        Zero-based index among diffs sharing ``(identity, line)``.
+    """
+
+    project: str
+    identity: str
+    line: int = Field(ge=1)
+    occurrence: int = Field(ge=0)
+
+
 class FindingDiff(_FrozenModel):
     """One classified difference between the base and head reports.
 
@@ -421,6 +450,10 @@ class FindingDiff(_FrozenModel):
         Head-side occurrence; absent for ``dropped``.
     changed_fields : tuple[ChangedField, ...]
         Fields differing within a ``changed`` pair; empty otherwise.
+    locator : FindingLocator | None
+        Unique serialized locator, assigned during canonical report
+        assembly — after the canonical sort and any diff-transforming
+        hook, before truncation and serialization (explorer contract §4.2).
     """
 
     schema_version: SchemaVersion = SCHEMA_VERSION
@@ -434,6 +467,7 @@ class FindingDiff(_FrozenModel):
     base_occurrence: FindingOccurrence | None = None
     head_occurrence: FindingOccurrence | None = None
     changed_fields: tuple[ChangedField, ...] = ()
+    locator: FindingLocator | None = None
 
     @model_validator(mode='after')
     def _check_sides(self) -> Self:
@@ -917,6 +951,52 @@ class Report(_FrozenModel):
         if overall != merged:
             msg = 'overall rollups are stale: they are not the sum of the project rollups'
             raise ValueError(msg)
+        return self
+
+
+class ExplorerReview(_FrozenModel):
+    """Portable review record exported by the report explorer (explorer contract §6).
+
+    ``report_sha256`` is the SHA-256 digest of the exact report bytes; a
+    byte-different report never inherits workspace state. Report order of
+    the tuples is a producer obligation the model cannot check without the
+    report.
+
+    Attributes
+    ----------
+    schema_version : SchemaVersion
+        Package-wide schema semver.
+    report_sha256 : str
+        Lowercase hex SHA-256 digest of the exact report bytes.
+    selected : tuple[FindingLocator, ...]
+        Locators selected for export; unique.
+    hidden : tuple[FindingLocator, ...]
+        Locators hidden from the default findings view; unique.
+    """
+
+    schema_version: SchemaVersion = SCHEMA_VERSION
+    report_sha256: str = Field(pattern='^[0-9a-f]{64}$')
+    selected: tuple[FindingLocator, ...]
+    hidden: tuple[FindingLocator, ...]
+
+    @model_validator(mode='after')
+    def _check_unique_locators(self) -> Self:
+        """Reject duplicate locators within either tuple.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If ``selected`` or ``hidden`` repeats a locator.
+        """
+        for name, entries in (('selected', self.selected), ('hidden', self.hidden)):
+            if len(set(entries)) != len(entries):
+                msg = f'{name} contains duplicate locators'
+                raise ValueError(msg)
         return self
 
 

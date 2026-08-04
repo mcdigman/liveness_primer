@@ -89,6 +89,7 @@
       "type": "string"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "One internal-corpus annotation with sidecar evidence.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\ntarget : AnnotationTarget\n    Annotated path/symbol/line.\nverdict : Verdict\n    ``live``, ``dead``, ``no-coverage``, or ``unknown``.\nevidence : EvidenceKind\n    Kind of evidence backing the verdict.\nprovenance : AnnotationProvenance\n    Source project, commit, and extraction date.\nrunner : str | None\n    Repo-relative path of a runner file demonstrating the evidence.",
   "properties": {
@@ -111,8 +112,8 @@
       "title": "Runner"
     },
     "schema_version": {
-      "const": "1.1.0",
-      "default": "1.1.0",
+      "const": "1.2.0",
+      "default": "1.2.0",
       "title": "Schema Version",
       "type": "string"
     },

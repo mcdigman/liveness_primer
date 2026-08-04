@@ -13,9 +13,13 @@ from liveness_primer.schema_export import EXPORTED_MODELS, export_schemas, schem
 def test_export_writes_every_contract_model(tmp_path: Path) -> None:
     written = export_schemas(tmp_path)
     assert [path.name for path in written] == [f'{name}.schema.json' for name in EXPORTED_MODELS]
+    assert 'explorer-review.schema.json' in {path.name for path in written}
     for path in written:
         document = json.loads(path.read_text(encoding='utf-8'))
         assert document.get('title') or document.get('$defs')
+        # Every exported document declares its dialect so validators are
+        # compiled for it rather than a build-time guess (explorer §4.3).
+        assert document['$schema'] == 'https://json-schema.org/draft/2020-12/schema'
 
 
 def test_report_schema_embeds_schema_version_default(tmp_path: Path) -> None:

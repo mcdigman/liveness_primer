@@ -19,9 +19,11 @@ from liveness_primer.findings import (
     DiffRollup,
     DiffTotals,
     EvidenceKind,
+    ExplorerReview,
     FetchRecord,
     Finding,
     FindingDiff,
+    FindingLocator,
     FindingOccurrence,
     ProjectReport,
     Report,
@@ -342,6 +344,64 @@ def test_every_standalone_payload_embeds_schema_version() -> None:
     for payload in (finding, occurrence, diff):
         assert payload.schema_version == SCHEMA_VERSION
         assert f'"schema_version":"{SCHEMA_VERSION}"' in payload.model_dump_json()
+
+
+def locator_at(occurrence: int, *, line: int = 10, project: str = 'demo') -> FindingLocator:
+    return FindingLocator(project=project, identity='a' * 64, line=line, occurrence=occurrence)
+
+
+def test_diff_locator_is_absent_until_canonical_assembly() -> None:
+    finding = make_finding()
+    diff = FindingDiff(
+        diff_class=DiffClass.NEW,
+        identity=finding.identity,
+        tool=finding.tool,
+        project=finding.project,
+        path=finding.path,
+        symbol=finding.symbol,
+        kind=finding.kind,
+        head_occurrence=finding.occurrence(),
+    )
+    assert diff.locator is None
+    located = diff.model_copy(update={'locator': locator_at(0)})
+    assert '"locator":{"project":"demo"' in located.model_dump_json()
+
+
+def test_explorer_review_roundtrips_and_embeds_schema_version() -> None:
+    review = ExplorerReview(
+        report_sha256='ab' * 32,
+        selected=(locator_at(0), locator_at(1)),
+        hidden=(locator_at(0),),
+    )
+    assert review.schema_version == SCHEMA_VERSION
+    # A hidden finding may remain selected (explorer contract §6).
+    assert ExplorerReview.model_validate_json(review.model_dump_json()) == review
+
+
+def test_explorer_review_requires_a_lowercase_full_digest() -> None:
+    for digest in ('AB' * 32, 'ab' * 31, 'ab' * 33, 'zz' * 32, ''):
+        with pytest.raises(ValidationError, match='report_sha256'):
+            ExplorerReview.model_validate({'report_sha256': digest, 'selected': (), 'hidden': ()})
+
+
+def test_explorer_review_rejects_duplicate_locators_within_a_tuple() -> None:
+    for name in ('selected', 'hidden'):
+        with pytest.raises(ValidationError, match=f'{name} contains duplicate locators'):
+            ExplorerReview.model_validate(
+                {
+                    'report_sha256': 'ab' * 32,
+                    'selected': (),
+                    'hidden': (),
+                    name: (locator_at(0), locator_at(0)),
+                }
+            )
+
+
+def test_finding_locator_bounds() -> None:
+    with pytest.raises(ValidationError, match='line'):
+        FindingLocator.model_validate({'project': 'demo', 'identity': 'a' * 64, 'line': 0, 'occurrence': 0})
+    with pytest.raises(ValidationError, match='occurrence'):
+        FindingLocator.model_validate({'project': 'demo', 'identity': 'a' * 64, 'line': 1, 'occurrence': -1})
 
 
 def test_schema_version_is_constrained_to_the_supported_version() -> None:

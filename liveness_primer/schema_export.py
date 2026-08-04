@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from liveness_primer.findings import (
     Annotation,
+    ExplorerReview,
     Finding,
     FindingDiff,
     FindingOccurrence,
@@ -25,6 +26,7 @@ from liveness_primer.findings import (
 
 EXPORTED_MODELS: Mapping[str, type[BaseModel]] = {
     'annotation': Annotation,
+    'explorer-review': ExplorerReview,
     'finding': Finding,
     'finding-diff': FindingDiff,
     'finding-occurrence': FindingOccurrence,
@@ -63,6 +65,9 @@ def _render_schema(model: type[BaseModel]) -> str:
         The schema document, newline-terminated.
     """
     schema = model.model_json_schema(mode='serialization')
+    # Exported documents declare their JSON Schema dialect so consumers
+    # compile validators for it rather than guessing (explorer §4.3).
+    schema['$schema'] = 'https://json-schema.org/draft/2020-12/schema'
     return json.dumps(schema, indent=2, sort_keys=True, ensure_ascii=True) + '\n'
 
 
