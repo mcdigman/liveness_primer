@@ -1,0 +1,83 @@
+// Untrusted report content stays inert in the DOM and in exports
+// (explorer contract §8, §10).
+import { expect, test } from '@playwright/test';
+
+import {
+  HOSTILE_MESSAGE,
+  HOSTILE_SYMBOL,
+  adversarialReport,
+  openReportAndWait,
+} from './fixtures.mjs';
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('./');
+});
+
+test('hostile strings render as literal text without executing or injecting', async ({ page }) => {
+  let dialogs = 0;
+  page.on('dialog', (dialog) => {
+    dialogs += 1;
+    void dialog.dismiss();
+  });
+  await openReportAndWait(page, adversarialReport());
+  await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('onerror');
+  const row = page.locator('.tabulator-row').first();
+  await expect(row).toContainText('<img src=x onerror');
+  expect(await page.locator('img').count()).toBe(0);
+  expect(await page.locator('.tabulator-row style').count()).toBe(0);
+  await row.click();
+  await expect(page.locator('.context-panel .context-message')).toHaveText(
+    new RegExp(HOSTILE_MESSAGE.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')),
+  );
+  await expect(page.locator('.context-facts')).toContainText(HOSTILE_SYMBOL);
+  expect(dialogs).toBe(0);
+});
+
+test('a hostile repository string never fabricates a source link', async ({ page }) => {
+  await openReportAndWait(page, adversarialReport());
+  await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('onerror');
+  await page.locator('.tabulator-row').first().click();
+  const panel = page.locator('.context-panel');
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('link', { name: 'Open pinned source' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: /Load complete file/ })).toHaveCount(0);
+  const hrefs = await panel.locator('a').evaluateAll((anchors) => anchors.map((a) => a.href));
+  for (const href of hrefs) {
+    expect(href.startsWith('https://github.com/')).toBe(true);
+  }
+});
+
+test('the Markdown export escapes hostile values and creates no hostile link targets', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'download content inspection runs once, on chromium');
+  await openReportAndWait(page, adversarialReport());
+  await page.getByLabel('Select all visible findings for export').check();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export selected findings' }).click();
+  const download = await downloadPromise;
+  const path = await download.path();
+  const { readFileSync } = await import('node:fs');
+  const markdown = readFileSync(path, 'utf8');
+  expect(markdown).not.toContain('](javascript:');
+  expect(markdown).not.toContain('<script>');
+  expect(markdown).toContain('\\<script\\>');
+  expect(markdown).toContain('selected findings:');
+});
+
+test('the review JSON export downloads the versioned record', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'download content inspection runs once, on chromium');
+  await openReportAndWait(page, adversarialReport());
+  await page.locator('.tabulator-row input[aria-label^="Select for export"]').first().check();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Review export JSON' }).click();
+  const download = await downloadPromise;
+  const { readFileSync } = await import('node:fs');
+  const record = JSON.parse(readFileSync(await download.path(), 'utf8'));
+  expect(record.schema_version).toBe('1.2.0');
+  expect(record.report_sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(record.selected).toHaveLength(1);
+  expect(record.selected[0]).toHaveProperty('identity');
+  expect(record.selected[0]).toHaveProperty('occurrence');
+});
