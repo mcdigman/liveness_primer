@@ -56,7 +56,9 @@ export function checkReport(text) {
     const shown = typeof declared === 'string' ? declared : 'missing';
     return {
       ok: false,
-      errors: [bounded(`Unsupported schema version ${shown}; this explorer supports ${supportedSchemaVersion}.`)],
+      errors: [
+        bounded(`Unsupported schema version ${shown}; this explorer supports ${supportedSchemaVersion}.`),
+      ],
     };
   }
   if (!validateReport(parsed)) {
@@ -64,7 +66,10 @@ export function checkReport(text) {
       const where = failure.instancePath === '' ? '/' : failure.instancePath;
       return bounded(`${where}: ${failure.message ?? 'schema violation'}`);
     });
-    return { ok: false, errors: failures.length > 0 ? failures : ['The document does not match the report schema.'] };
+    return {
+      ok: false,
+      errors: failures.length > 0 ? failures : ['The document does not match the report schema.'],
+    };
   }
   const report = /** @type {Report} */ (parsed);
   const preconditionErrors = locatorPreconditions(report);

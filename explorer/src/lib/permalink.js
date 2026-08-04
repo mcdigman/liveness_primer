@@ -12,7 +12,8 @@
 // GitHub owners are alphanumerics and inner hyphens; repository names also
 // allow dots and underscores but never consist of dots alone. Identical to
 // the Python `_GITHUB_PATTERN`.
-const GITHUB_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/((?!\.\.?(?:\.git)?\/?$)[A-Za-z0-9._-]+?)(?:\.git)?\/?$/;
+const GITHUB_PATTERN =
+  /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/((?!\.\.?(?:\.git)?\/?$)[A-Za-z0-9._-]+?)(?:\.git)?\/?$/;
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 

@@ -157,8 +157,7 @@ export function largeReport(perProject = 1500, projectCount = 3) {
       rule_id: `SKY-U00${rule}`,
       kind: null,
       count: projects.reduce(
-        (sum, project) =>
-          sum + project.rollups.find((rollup) => rollup.rule_id === `SKY-U00${rule}`).count,
+        (sum, project) => sum + project.rollups.find((rollup) => rollup.rule_id === `SKY-U00${rule}`).count,
         0,
       ),
     })),
@@ -166,7 +165,8 @@ export function largeReport(perProject = 1500, projectCount = 3) {
   };
 }
 
-export const HOSTILE_MESSAGE = '<img src=x onerror="alert(1)"><script>alert(2)</script>[x](javascript:alert(3))';
+export const HOSTILE_MESSAGE =
+  '<img src=x onerror="alert(1)"><script>alert(2)</script>[x](javascript:alert(3))';
 export const HOSTILE_SYMBOL = '</td><style>*{display:none}</style>';
 
 /**
@@ -208,5 +208,8 @@ export async function openReport(page, text, name = 'report.json') {
  */
 export async function openReportAndWait(page, report, name = 'report.json') {
   await openReport(page, JSON.stringify(report), name);
-  await page.locator('.tabulator-row').first().waitFor({ state: 'visible', timeout: 30_000 });
+  await page
+    .locator('.tabulator-row:not(.tabulator-group)')
+    .first()
+    .waitFor({ state: 'visible', timeout: 30_000 });
 }

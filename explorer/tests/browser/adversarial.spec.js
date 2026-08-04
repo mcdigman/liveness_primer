@@ -2,12 +2,7 @@
 // (explorer contract §8, §10).
 import { expect, test } from '@playwright/test';
 
-import {
-  HOSTILE_MESSAGE,
-  HOSTILE_SYMBOL,
-  adversarialReport,
-  openReportAndWait,
-} from './fixtures.mjs';
+import { HOSTILE_MESSAGE, HOSTILE_SYMBOL, adversarialReport, openReportAndWait } from './fixtures.mjs';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('./');
@@ -21,10 +16,10 @@ test('hostile strings render as literal text without executing or injecting', as
   });
   await openReportAndWait(page, adversarialReport());
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('onerror');
-  const row = page.locator('.tabulator-row').first();
+  const row = page.locator('.tabulator-row:not(.tabulator-group)').first();
   await expect(row).toContainText('<img src=x onerror');
   expect(await page.locator('img').count()).toBe(0);
-  expect(await page.locator('.tabulator-row style').count()).toBe(0);
+  expect(await page.locator('.tabulator-row:not(.tabulator-group) style').count()).toBe(0);
   await row.click();
   await expect(page.locator('.context-panel .context-message')).toHaveText(
     new RegExp(HOSTILE_MESSAGE.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')),
@@ -36,7 +31,7 @@ test('hostile strings render as literal text without executing or injecting', as
 test('a hostile repository string never fabricates a source link', async ({ page }) => {
   await openReportAndWait(page, adversarialReport());
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('onerror');
-  await page.locator('.tabulator-row').first().click();
+  await page.locator('.tabulator-row:not(.tabulator-group)').first().click();
   const panel = page.locator('.context-panel');
   await expect(panel).toBeVisible();
   await expect(panel.getByRole('link', { name: 'Open pinned source' })).toHaveCount(0);
@@ -69,7 +64,10 @@ test('the Markdown export escapes hostile values and creates no hostile link tar
 test('the review JSON export downloads the versioned record', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'download content inspection runs once, on chromium');
   await openReportAndWait(page, adversarialReport());
-  await page.locator('.tabulator-row input[aria-label^="Select for export"]').first().check();
+  await page
+    .locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Select for export"]')
+    .first()
+    .check();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Review export JSON' }).click();
   const download = await downloadPromise;

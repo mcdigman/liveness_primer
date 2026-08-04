@@ -26,7 +26,10 @@ export const RAW_SOURCE_ORIGIN = 'https://raw.githubusercontent.com';
  * @param {AbortSignal} [options.signal]
  * @returns {Promise<SourceFetchResult>}
  */
-export async function fetchCompleteFile(url, { fetchImpl = fetch, maxBytes = MAX_SOURCE_BYTES, signal } = {}) {
+export async function fetchCompleteFile(
+  url,
+  { fetchImpl = fetch, maxBytes = MAX_SOURCE_BYTES, signal } = {},
+) {
   /** @type {URL} */
   let parsed;
   try {

@@ -3,10 +3,12 @@
 //
 // All report-derived cell content is inserted through DOM nodes built with
 // textContent — never markup. React owns the data flow: filtering,
-// sorting, and workspace flags are computed outside and pushed in through
-// replaceData, which preserves the central scroll position.
+// sorting, and workspace flags are computed outside. The visible row set
+// is pushed with replaceData; workspace flag changes patch rows in place
+// with updateData and the open-row highlight is a class toggle, so
+// selection and context opening never move the central scroll position.
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { TabulatorFull as Tabulator } from 'tabulator-tables';
 
 import { DIFF_CLASS_PRESENTATION } from '../../lib/format.js';
@@ -25,6 +27,20 @@ import { NO_RULE, projectHeaderModel } from '../../lib/projection.js';
  */
 
 /**
+ * @param {FindingRow[]} rows
+ * @param {Workspace} workspace
+ * @returns {object[]} Tabulator row data with current workspace flags
+ */
+function buildData(rows, workspace) {
+  return rows.map((row) => ({
+    ...row,
+    ruleFacet: row.ruleValue ?? NO_RULE,
+    selected: workspace.selected.has(row.key),
+    hiddenFlag: workspace.hidden.has(row.key),
+  }));
+}
+
+/**
  * @param {string} text
  * @param {string} className
  * @returns {HTMLSpanElement}
@@ -34,6 +50,30 @@ function span(text, className) {
   element.className = className;
   element.textContent = text;
   return element;
+}
+
+/**
+ * Tabulator's flat markup is not a conformant ARIA grid on its own: the
+ * scrollable holder is a focusable generic and group headers are
+ * row-less rowgroups. This presentation-only surgery re-roles those
+ * elements so the exposed tree is grid > rowgroup > row > gridcell.
+ *
+ * @param {HTMLElement} container
+ */
+function applyAriaRepairs(container) {
+  const holder = container.querySelector('.tabulator-tableholder');
+  if (holder !== null) {
+    holder.setAttribute('role', 'rowgroup');
+  }
+  for (const table of container.querySelectorAll('.tabulator-table')) {
+    table.removeAttribute('role');
+  }
+  for (const group of container.querySelectorAll('.tabulator-group')) {
+    group.setAttribute('role', 'row');
+  }
+  for (const arrow of container.querySelectorAll('.tabulator-arrow')) {
+    arrow.setAttribute('aria-hidden', 'true');
+  }
 }
 
 /**
@@ -61,24 +101,15 @@ export function FindingsTable({
   const tableRef = useRef(/** @type {Tabulator | null} */ (null));
   const builtRef = useRef(false);
   const headerCheckboxRef = useRef(/** @type {HTMLInputElement | null} */ (null));
+  const openKeyRef = useRef(openKey);
+  openKeyRef.current = openKey;
+  const workspaceRef = useRef(workspace);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const handlersRef = useRef(
     /** @type {TableHandlers} */ ({ projection, onToggleFlag, onToggleAllVisible, onOpenContext }),
   );
   handlersRef.current = { projection, onToggleFlag, onToggleAllVisible, onOpenContext };
-
-  const data = useMemo(
-    () =>
-      rows.map((row) => ({
-        ...row,
-        ruleFacet: row.ruleValue ?? NO_RULE,
-        selected: workspace.selected.has(row.key),
-        hiddenFlag: workspace.hidden.has(row.key),
-        open: row.key === openKey,
-      })),
-    [rows, workspace, openKey],
-  );
-  const dataRef = useRef(data);
-  dataRef.current = data;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -89,9 +120,9 @@ export function FindingsTable({
     const checkboxColumn = (flag) => ({
       title: flag === 'selected' ? 'Export' : 'Hide',
       field: flag === 'selected' ? 'selected' : 'hiddenFlag',
-      width: flag === 'selected' ? 88 : 64,
+      width: flag === 'selected' ? 64 : 52,
       hozAlign: /** @type {const} */ ('center'),
-      responsive: flag === 'selected' ? 0 : 4,
+      responsive: flag === 'selected' ? 0 : 3,
       /** @param {import('tabulator-tables').CellComponent} cell */
       formatter: (cell) => {
         const rowData = /** @type {{key: string, location: string}} */ (cell.getRow().getData());
@@ -110,7 +141,7 @@ export function FindingsTable({
     });
     const table = new Tabulator(container, {
       index: 'key',
-      data: dataRef.current,
+      data: buildData(rowsRef.current, workspaceRef.current),
       layout: 'fitColumns',
       height: '100%',
       renderVertical: 'virtual',
@@ -118,36 +149,45 @@ export function FindingsTable({
       placeholder: 'No findings match the current filters.',
       groupBy: 'project',
       groupToggleElement: 'header',
-      /**
-       * @param {unknown} value
-       * @param {number} count
-       */
-      groupHeader: (value, count) => {
-        const handlers = handlersRef.current;
-        const wrapper = document.createElement('div');
-        wrapper.className = 'group-header';
-        const name = String(value);
-        const view = handlers.projection.projectsByName.get(name);
-        if (view === undefined) {
-          wrapper.append(span(name, 'group-name'), span(`${count} findings`, 'group-counts'));
+      // Tabulator accepts a DOM node from groupHeader at runtime; the
+      // published typings only admit strings, hence the cast.
+      groupHeader: /** @type {never} */ (
+        /**
+         * @param {unknown} value
+         * @param {number} count
+         */
+        (value, count) => {
+          const handlers = handlersRef.current;
+          const wrapper = document.createElement('div');
+          wrapper.className = 'group-header';
+          wrapper.setAttribute('role', 'gridcell');
+          const name = String(value);
+          const view = handlers.projection.projectsByName.get(name);
+          if (view === undefined) {
+            wrapper.append(span(name, 'group-name'), span(`${count} findings`, 'group-counts'));
+            return wrapper;
+          }
+          const model = projectHeaderModel(view);
+          wrapper.append(
+            span(name, 'group-name'),
+            span(model.repoLine, 'group-repo'),
+            span(model.countsLine, 'group-counts'),
+          );
+          for (const line of model.rollupLines) {
+            wrapper.append(span(line, 'group-rollup'));
+          }
+          if (count !== view.report.diffs.length) {
+            wrapper.append(span(`${count} of ${view.report.diffs.length} findings shown`, 'group-filtered'));
+          }
           return wrapper;
         }
-        const model = projectHeaderModel(view);
-        wrapper.append(span(name, 'group-name'), span(model.repoLine, 'group-repo'), span(model.countsLine, 'group-counts'));
-        for (const line of model.rollupLines) {
-          wrapper.append(span(line, 'group-rollup'));
-        }
-        if (count !== view.report.diffs.length) {
-          wrapper.append(span(`${count} of ${view.report.diffs.length} findings shown`, 'group-filtered'));
-        }
-        return wrapper;
-      },
+      ),
       columnDefaults: { headerSort: false, vertAlign: 'middle' },
       columns: [
         {
           title: 'Diff',
           field: 'diffClass',
-          width: 118,
+          width: 92,
           responsive: 0,
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
@@ -159,13 +199,13 @@ export function FindingsTable({
             return badge;
           },
         },
-        { title: 'Rule', field: 'rule', width: 150, responsive: 2, cssClass: 'cell-mono' },
-        { title: '%', field: 'confidence', width: 96, responsive: 3, cssClass: 'cell-mono' },
-        { title: 'Kind', field: 'kind', width: 104, responsive: 5 },
+        { title: 'Rule', field: 'rule', width: 108, responsive: 2, cssClass: 'cell-mono' },
+        { title: '%', field: 'confidence', width: 72, responsive: 2, cssClass: 'cell-mono' },
+        { title: 'Kind', field: 'kind', width: 84, responsive: 4 },
         {
           title: 'Location',
           field: 'location',
-          minWidth: 180,
+          minWidth: 130,
           widthGrow: 2,
           responsive: 0,
           cssClass: 'cell-mono',
@@ -179,7 +219,7 @@ export function FindingsTable({
         {
           title: 'Message',
           field: 'message',
-          minWidth: 200,
+          minWidth: 150,
           widthGrow: 3,
           responsive: 0,
           /** @param {import('tabulator-tables').CellComponent} cell */
@@ -191,8 +231,8 @@ export function FindingsTable({
         },
         {
           ...checkboxColumn('selected'),
-          /** @param {import('tabulator-tables').ColumnComponent} _column */
-          titleFormatter: (_column) => {
+          /** @param {import('tabulator-tables').CellComponent} _cell */
+          titleFormatter: (_cell) => {
             const wrapper = document.createElement('span');
             wrapper.className = 'header-export';
             const input = document.createElement('input');
@@ -209,7 +249,7 @@ export function FindingsTable({
         {
           title: 'Open',
           field: 'open',
-          width: 56,
+          width: 44,
           responsive: 0,
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
@@ -230,14 +270,20 @@ export function FindingsTable({
       ],
       /** @param {import('tabulator-tables').RowComponent} row */
       rowFormatter: (row) => {
-        const rowData = /** @type {{hiddenFlag: boolean, open: boolean}} */ (row.getData());
+        const rowData = /** @type {{key: string, hiddenFlag: boolean}} */ (row.getData());
         const element = row.getElement();
         element.classList.toggle('row-hidden', Boolean(rowData.hiddenFlag));
-        element.classList.toggle('row-open', Boolean(rowData.open));
+        element.classList.toggle('row-open', rowData.key === openKeyRef.current);
       },
     });
     table.on('tableBuilt', () => {
       builtRef.current = true;
+      applyAriaRepairs(container);
+    });
+    table.on('renderComplete', () => {
+      if (builtRef.current) {
+        applyAriaRepairs(container);
+      }
     });
     table.on('rowClick', (event, row) => {
       const target = /** @type {HTMLElement} */ (event.target);
@@ -255,47 +301,84 @@ export function FindingsTable({
     };
   }, []);
 
-  // Push data changes into the grid; replaceData preserves scroll (§2.4).
-  useEffect(() => {
+  /** Run now when the table is built, otherwise once it is. */
+  const whenBuilt = (/** @type {() => void} */ action) => {
     const table = tableRef.current;
     if (table === null) {
       return;
     }
-    /** @type {() => void} */
-    const push = () => {
-      void table.replaceData(data);
+    if (builtRef.current) {
+      action();
+    } else {
+      table.on('tableBuilt', action);
+    }
+  };
+
+  // Push the visible row set; replaceData preserves scroll (§2.4).
+  const previousRowsRef = useRef(/** @type {FindingRow[] | null} */ (null));
+  useEffect(() => {
+    whenBuilt(() => {
+      const table = tableRef.current;
+      if (table === null) {
+        return;
+      }
+      if (previousRowsRef.current !== rows) {
+        previousRowsRef.current = rows;
+        void table.replaceData(buildData(rows, workspace));
+      } else {
+        // Same rows, changed workspace flags: patch rows in place so the
+        // central scroll position never moves.
+        const previous = workspaceRef.current;
+        /** @type {{key: string, selected: boolean, hiddenFlag: boolean}[]} */
+        const updates = [];
+        for (const row of rows) {
+          const selected = workspace.selected.has(row.key);
+          const hiddenFlag = workspace.hidden.has(row.key);
+          if (previous.selected.has(row.key) !== selected || previous.hidden.has(row.key) !== hiddenFlag) {
+            updates.push({ key: row.key, selected, hiddenFlag });
+          }
+        }
+        if (updates.length > 0) {
+          void table.updateData(updates);
+        }
+      }
+      workspaceRef.current = workspace;
       const header = headerCheckboxRef.current;
       if (header !== null) {
-        const selectedVisible = data.filter((row) => row.selected).length;
-        header.checked = data.length > 0 && selectedVisible === data.length;
-        header.indeterminate = selectedVisible > 0 && selectedVisible < data.length;
+        const selectedVisible = rows.filter((row) => workspace.selected.has(row.key)).length;
+        header.checked = rows.length > 0 && selectedVisible === rows.length;
+        header.indeterminate = selectedVisible > 0 && selectedVisible < rows.length;
       }
-    };
-    if (builtRef.current) {
-      push();
-    } else {
-      table.on('tableBuilt', push);
-    }
-  }, [data]);
+    });
+  }, [rows, workspace]);
 
+  // The open-row highlight is a class toggle, not a data change.
   useEffect(() => {
-    const table = tableRef.current;
-    if (table === null) {
+    const container = containerRef.current;
+    if (container === null || !builtRef.current) {
       return;
     }
-    /** @type {() => void} */
-    const apply = () => {
+    for (const element of container.querySelectorAll('.row-open')) {
+      element.classList.remove('row-open');
+    }
+    if (openKey !== null) {
+      const button = container.querySelector(`[data-context-button="${CSS.escape(openKey)}"]`);
+      button?.closest('.tabulator-row')?.classList.add('row-open');
+    }
+  }, [openKey]);
+
+  useEffect(() => {
+    whenBuilt(() => {
+      const table = tableRef.current;
+      if (table === null) {
+        return;
+      }
       if (grouping === 'none') {
         table.setGroupBy(/** @type {never} */ (false));
       } else {
         table.setGroupBy(grouping === 'project' ? 'project' : 'ruleFacet');
       }
-    };
-    if (builtRef.current) {
-      apply();
-    } else {
-      table.on('tableBuilt', apply);
-    }
+    });
   }, [grouping]);
 
   return <div className="findings-table" ref={containerRef} data-testid="findings-table" />;

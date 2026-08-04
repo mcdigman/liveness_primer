@@ -41,9 +41,7 @@ function knownLocatorKeys(report) {
 export function App() {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [theme, setTheme] = useState(storedTheme);
-  const [narrowPanel, setNarrowPanel] = useState(
-    /** @type {'none' | 'filters' | 'export'} */ ('none'),
-  );
+  const [narrowPanel, setNarrowPanel] = useState(/** @type {'none' | 'filters' | 'export'} */ ('none'));
   const workerRef = useRef(/** @type {Worker | null} */ (null));
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -222,8 +220,8 @@ export function App() {
       {state.storageFailed && projection !== null && (
         <div className="storage-warning" role="alert">
           <span>
-            Local storage is unavailable: selection and hidden state live in memory only. Export now to
-            keep them.
+            Local storage is unavailable: selection and hidden state live in memory only. Export now to keep
+            them.
           </span>
           <button type="button" onClick={handleDownloadReview}>
             Review export JSON
@@ -261,6 +259,7 @@ export function App() {
             visibleCount={visibleRows.length}
             onToggle={(category, value) => dispatch({ type: 'facet-toggled', category, value })}
             onReset={() => dispatch({ type: 'filters-reset' })}
+            onClose={() => setNarrowPanel('none')}
           />
           <section id="findings-region" className="findings-region" aria-label="Findings" tabIndex={-1}>
             <StatusStrip status={projection.status} projects={projection.projects} />

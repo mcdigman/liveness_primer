@@ -33,7 +33,9 @@ export function ExportPanel({
         <strong>{selectedRows.length}</strong> selected finding{selectedRows.length === 1 ? '' : 's'}
       </p>
       <p className="export-projects-note">
-        {none ? 'Select findings in the table to export them.' : `Across ${perProject.size} project${perProject.size === 1 ? '' : 's'}`}
+        {none
+          ? 'Select findings in the table to export them.'
+          : `Across ${perProject.size} project${perProject.size === 1 ? '' : 's'}`}
       </p>
       {perProject.size > 0 && (
         <ul className="export-projects">

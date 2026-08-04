@@ -34,7 +34,22 @@ for (const viewport of [
       await page.waitForTimeout(150);
       const before = await holder.evaluate((element) => element.scrollTop);
       expect(before).toBeGreaterThan(1000);
-      await page.locator('.tabulator-row button[aria-label^="Open finding context"]').first().click();
+      // Click an open button that is already fully inside the viewport, by
+      // coordinate: element-based clicking would itself scroll the surface
+      // and mask what the application does.
+      const target = await page.evaluate(() => {
+        const scroller = document.querySelector('.tabulator-tableholder');
+        const bounds = scroller.getBoundingClientRect();
+        for (const button of document.querySelectorAll('button[data-context-button]')) {
+          const box = button.getBoundingClientRect();
+          if (box.top > bounds.top + 60 && box.bottom < bounds.bottom - 60) {
+            return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+          }
+        }
+        return null;
+      });
+      expect(target).not.toBeNull();
+      await page.mouse.click(target.x, target.y);
       await expect(page.locator('.context-panel')).toBeVisible();
       const after = await holder.evaluate((element) => element.scrollTop);
       expect(Math.abs(after - before)).toBeLessThan(4);
@@ -44,7 +59,7 @@ for (const viewport of [
       await page.goto('./');
       await openReportAndWait(page, largeReport(1500, 3));
       await expect(page.locator('.findings-counts')).toContainText('4500 total');
-      const rendered = await page.locator('.tabulator-row').count();
+      const rendered = await page.locator('.tabulator-row:not(.tabulator-group)').count();
       expect(rendered).toBeLessThan(400);
     });
   });
@@ -58,7 +73,10 @@ test.describe('intermediate width', () => {
     await openReportAndWait(page, goldenReport());
     await expect(page.locator('.side-region')).toBeHidden();
     await expect(page.locator('.filter-rail')).toBeVisible();
-    await page.locator('.tabulator-row button[aria-label^="Open finding context"]').first().click();
+    await page
+      .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+      .first()
+      .click();
     await expect(page.locator('.side-region')).toBeVisible();
     await expect(page.locator('.context-panel')).toBeVisible();
     await expect(page.locator('.filter-rail')).toBeVisible();
@@ -80,9 +98,9 @@ test.describe('narrow width', () => {
     await expect(page.locator('.filter-rail')).toBeHidden();
     await page.getByRole('button', { name: 'Filters' }).click();
     await expect(page.locator('.filter-rail')).toBeVisible();
-    await page.getByRole('button', { name: 'Filters' }).click();
+    await page.getByRole('button', { name: 'Close filters' }).click();
     await expect(page.locator('.filter-rail')).toBeHidden();
-    await expect(page.locator('.tabulator-row').first()).toBeVisible();
+    await expect(page.locator('.tabulator-row:not(.tabulator-group)').first()).toBeVisible();
   });
 });
 
@@ -93,12 +111,15 @@ test.describe('200% zoom equivalent', () => {
   test('controls remain operable and findings remain primary', async ({ page }) => {
     await page.goto('./');
     await openReportAndWait(page, goldenReport());
-    await expect(page.locator('.tabulator-row').first()).toBeVisible();
+    await expect(page.locator('.tabulator-row:not(.tabulator-group)').first()).toBeVisible();
     await page.getByRole('button', { name: 'Filters' }).click();
     await page.locator('.facet', { hasText: 'Diff class' }).getByLabel('+ New').check();
     await page.getByRole('button', { name: 'Reset all' }).click();
-    await page.getByRole('button', { name: 'Filters' }).click();
-    await page.locator('.tabulator-row button[aria-label^="Open finding context"]').first().click();
+    await page.getByRole('button', { name: 'Close filters' }).click();
+    await page
+      .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+      .first()
+      .click();
     await expect(page.locator('.context-panel')).toBeVisible();
   });
 });
@@ -112,7 +133,7 @@ test.describe('themes', () => {
       if (theme !== 'system') {
         await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       }
-      await expect(page.locator('.tabulator-row').first()).toBeVisible();
+      await expect(page.locator('.tabulator-row:not(.tabulator-group)').first()).toBeVisible();
     }
   });
 });

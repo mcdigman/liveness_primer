@@ -19,14 +19,23 @@ const rows = projection.rows;
 test('facet counts are full-report counts with a clear no-rule value', () => {
   const counts = facetCounts(rows);
   const total = rows.length;
-  assert.equal([...counts.diffClass.values()].reduce((a, b) => a + b, 0), total);
+  assert.equal(
+    [...counts.diffClass.values()].reduce((a, b) => a + b, 0),
+    total,
+  );
   assert.equal(counts.project.get('alpha') + counts.project.get('beta'), total);
   assert.ok(counts.rule.get(NO_RULE) > 0);
   assert.ok(counts.kind.get('function') > 0);
-  assert.equal([...counts.confidence.values()].reduce((a, b) => a + b, 0), total);
+  assert.equal(
+    [...counts.confidence.values()].reduce((a, b) => a + b, 0),
+    total,
+  );
   // Open-ended categories order by descending count, then label.
   const ruleCounts = [...counts.rule.values()];
-  assert.deepEqual(ruleCounts, [...ruleCounts].sort((a, b) => b - a));
+  assert.deepEqual(
+    ruleCounts,
+    [...ruleCounts].sort((a, b) => b - a),
+  );
 });
 
 test('selections OR within a category and AND across categories', () => {
@@ -49,6 +58,10 @@ test('selections OR within a category and AND across categories', () => {
   assert.ok(full.every((row) => row.kind === 'function' && row.confidenceValue === null));
   const kindMiss = { ...emptySelections(), kind: new Set(['import']) };
   assert.ok(rows.every((row) => !matchesFacets(row, kindMiss)));
+  const ruleMiss = { ...emptySelections(), rule: new Set(['NOT-A-RULE']) };
+  assert.ok(rows.every((row) => !matchesFacets(row, ruleMiss)));
+  const projectMiss = { ...emptySelections(), project: new Set(['no-such-project']) };
+  assert.ok(rows.every((row) => !matchesFacets(row, projectMiss)));
 });
 
 test('search terms are case-insensitive and ANDed', () => {

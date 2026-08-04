@@ -68,17 +68,15 @@ export function StatusStrip({ status, projects }) {
       <div className="status-details">
         {!status.comparable && (
           <p>
-            This run is not comparable: at least one side ran through the unmanaged escape hatch, so the
-            two revisions are not guaranteed to differ only in the detector.
+            This run is not comparable: at least one side ran through the unmanaged escape hatch, so the two
+            revisions are not guaranteed to differ only in the detector.
           </p>
         )}
-        {!status.isolationEnforced && (
-          <p>Build and analysis sandboxing was not enforced for this run.</p>
-        )}
+        {!status.isolationEnforced && <p>Build and analysis sandboxing was not enforced for this run.</p>}
         {status.truncated && (
           <p>
-            Displayed findings were truncated by the results cap in:{' '}
-            {status.truncatedProjects.join(', ')}. Totals and rollups remain complete-run values.
+            Displayed findings were truncated by the results cap in: {status.truncatedProjects.join(', ')}.
+            Totals and rollups remain complete-run values.
           </p>
         )}
         {status.environmentDelta.length > 0 && (

@@ -44,8 +44,7 @@ export function Header({
             {filename}
           </span>
           <span className="report-digest">
-            digest{' '}
-            <code title={`report SHA-256 ${digest}`}>{abbreviatedDigest(digest)}</code>
+            digest <code title={`report SHA-256 ${digest}`}>{abbreviatedDigest(digest)}</code>
           </span>
         </p>
       )}

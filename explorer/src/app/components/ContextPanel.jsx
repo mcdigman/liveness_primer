@@ -56,15 +56,15 @@ function SourceLines({ lines, startLine, highlightStart, highlightEnd }) {
  * @param {string} props.side
  * @param {string} props.revision
  * @param {FindingOccurrence | null} props.occurrence
- * @param {boolean} props.isReference
+ * @param {boolean} props.soleReporter the only side that reported
  */
-function AnalyzerCard({ side, revision, occurrence, isReference }) {
+function AnalyzerCard({ side, revision, occurrence, soleReporter }) {
   return (
     <div className={`analyzer-card${occurrence === null ? ' analyzer-card-empty' : ''}`}>
       <p className="analyzer-title">
         <span className="analyzer-side">{side}</span>
         <span className="analyzer-revision">{revision}</span>
-        {occurrence !== null && isReference && <span className="analyzer-tag">Finding reported</span>}
+        {occurrence !== null && soleReporter && <span className="analyzer-tag">Finding reported</span>}
       </p>
       {occurrence === null ? (
         <>
@@ -200,13 +200,13 @@ export function ContextPanel({ row, projection, workspace, onClose, onAnnounce }
           side="Base"
           revision={projection.revisions.base}
           occurrence={diff.base_occurrence}
-          isReference={row.diffClass !== 'new'}
+          soleReporter={row.diffClass === 'dropped'}
         />
         <AnalyzerCard
           side="Head"
           revision={projection.revisions.head}
           occurrence={diff.head_occurrence}
-          isReference={row.diffClass === 'new'}
+          soleReporter={row.diffClass === 'new'}
         />
       </div>
       <h3 className="context-section">Source context</h3>

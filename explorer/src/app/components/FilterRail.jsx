@@ -41,11 +41,17 @@ function Facet({ title, options, labelFor, chosen, onToggle }) {
  * @param {number} props.visibleCount
  * @param {(category: keyof FacetSelections, value: string) => void} props.onToggle
  * @param {() => void} props.onReset
+ * @param {() => void} props.onClose closes the drawer at narrow widths
  */
-export function FilterRail({ counts, selections, visibleCount, onToggle, onReset }) {
+export function FilterRail({ counts, selections, visibleCount, onToggle, onReset, onClose }) {
   return (
     <nav className="filter-rail" aria-label="Filters">
-      <h2 className="rail-heading">Filters</h2>
+      <div className="rail-header">
+        <h2 className="rail-heading">Filters</h2>
+        <button type="button" className="rail-close" onClick={onClose} aria-label="Close filters">
+          ✕
+        </button>
+      </div>
       <p className="visually-hidden" aria-live="polite">
         {visibleCount} findings match the current filters.
       </p>

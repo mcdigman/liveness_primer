@@ -13,7 +13,12 @@ self.addEventListener('message', (event) => {
   const data = /** @type {{kind?: string, buffer?: ArrayBuffer}} */ (
     /** @type {MessageEvent} */ (event).data
   );
-  if (data === null || typeof data !== 'object' || data.kind !== 'import' || !(data.buffer instanceof ArrayBuffer)) {
+  if (
+    data === null ||
+    typeof data !== 'object' ||
+    data.kind !== 'import' ||
+    !(data.buffer instanceof ArrayBuffer)
+  ) {
     return;
   }
   void importReport(data.buffer);

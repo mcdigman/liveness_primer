@@ -45,7 +45,9 @@ export function Toolbar({
       </button>
       <h1 className="findings-title">Findings</h1>
       <p className="findings-counts">
-        <span className="count-shown">{visibleCount === total ? `${total} total` : `${visibleCount} of ${total}`}</span>
+        <span className="count-shown">
+          {visibleCount === total ? `${total} total` : `${visibleCount} of ${total}`}
+        </span>
       </p>
       <p className="findings-revisions" title="detector revisions">
         <span className="revision">{projection.revisions.base}</span>
@@ -54,7 +56,8 @@ export function Toolbar({
         <span className="revision">{projection.revisions.head}</span>
       </p>
       <p className="findings-totals" title="complete new, dropped, and changed totals">
-        <span className="total-new">{totals.new}</span> <span className="total-dropped">{totals.dropped}</span>{' '}
+        <span className="total-new">{totals.new}</span>{' '}
+        <span className="total-dropped">{totals.dropped}</span>{' '}
         <span className="total-changed">{totals.changed}</span>
       </p>
       <span className="toolbar-spacer" />

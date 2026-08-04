@@ -131,10 +131,9 @@ test('rollup lines follow the reporting-contract display shape', () => {
     count,
   });
   assert.deepEqual(rollupLines([]), []);
-  assert.deepEqual(
-    rollupLines([rollup('new', 'SKY-U001', null, 80), rollup('new', null, 'function', 3)]),
-    ['new 83: SKY-U001 80, kind:function 3'],
-  );
+  assert.deepEqual(rollupLines([rollup('new', 'SKY-U001', null, 80), rollup('new', null, 'function', 3)]), [
+    'new 83: SKY-U001 80, kind:function 3',
+  ]);
   const many = [
     rollup('changed', 'R1', null, 9),
     rollup('changed', 'R2', null, 8),
@@ -164,7 +163,14 @@ test('confidence buckets cover the declared facet options', () => {
 test('row source URLs exist only for GitHub-pinned projects', () => {
   const projection = projectReport(goldenReport());
   const alphaRow = projection.rows.find((row) => row.project === 'alpha');
-  assert.match(rowSourceUrl(alphaRow), /^https:\/\/github\.com\/example\/alpha\/blob\/3{40}\/pkg\/a\.py#L\d/u);
+  assert.match(
+    rowSourceUrl(alphaRow),
+    /^https:\/\/github\.com\/example\/alpha\/blob\/3{40}\/pkg\/a\.py#L\d/u,
+  );
   const betaRow = projection.rows.find((row) => row.project === 'beta');
   assert.equal(rowSourceUrl(betaRow), null);
+  const unpinned = goldenReport();
+  unpinned.manifest.corpus_pins = [];
+  const pinless = projectReport(unpinned);
+  assert.equal(rowSourceUrl(pinless.rows[0]), null);
 });

@@ -73,7 +73,10 @@ test('locator UI preconditions reject missing and duplicate locators', () => {
   missing.projects[0].diffs[1].locator = null;
   const rejectedMissing = checkReport(textOf(missing));
   assert.equal(rejectedMissing.ok, false);
-  assert.match(rejectedMissing.errors[0], /^\/projects\/0\/diffs\/1\/locator: every serialized finding diff/u);
+  assert.match(
+    rejectedMissing.errors[0],
+    /^\/projects\/0\/diffs\/1\/locator: every serialized finding diff/u,
+  );
   const duplicated = goldenReport();
   duplicated.projects[0].diffs[1].locator = structuredClone(duplicated.projects[0].diffs[0].locator);
   const rejectedDuplicate = checkReport(textOf(duplicated));
@@ -83,6 +86,8 @@ test('locator UI preconditions reject missing and duplicate locators', () => {
 
 test('many precondition failures stay bounded', () => {
   const broken = goldenReport();
+  // Double the diff list so the failure count exceeds the error bound.
+  broken.projects[0].diffs = [...broken.projects[0].diffs, ...structuredClone(broken.projects[0].diffs)];
   for (const project of broken.projects) {
     for (const diff of project.diffs) {
       diff.locator = null;
@@ -90,7 +95,7 @@ test('many precondition failures stay bounded', () => {
   }
   const rejected = checkReport(textOf(broken));
   assert.equal(rejected.ok, false);
-  assert.ok(rejected.errors.length <= 20);
+  assert.equal(rejected.errors.length, 20);
 });
 
 test('the size bound is 50 MiB', () => {

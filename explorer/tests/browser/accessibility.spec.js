@@ -36,7 +36,10 @@ for (const theme of ['dark', 'light']) {
   test(`the finding context has no WCAG A/AA violations in the ${theme} theme`, async ({ page }) => {
     await openReportAndWait(page, goldenReport());
     await page.getByLabel('Theme').selectOption(theme);
-    await page.locator('.tabulator-row button[aria-label^="Open finding context"]').first().click();
+    await page
+      .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+      .first()
+      .click();
     await expect(page.locator('.context-panel')).toBeVisible();
     expect(await axeViolations(page)).toEqual([]);
   });
@@ -47,13 +50,19 @@ test('the review workflow is keyboard operable', async ({ page }) => {
   // Search from the keyboard.
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').focus();
   await page.keyboard.type('mover');
-  await expect(page.locator('.tabulator-row')).toHaveCount(1);
+  await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(1);
   // Toggle export selection with Space on the row checkbox.
-  await page.locator('.tabulator-row input[aria-label^="Select for export"]').first().focus();
+  await page
+    .locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Select for export"]')
+    .first()
+    .focus();
   await page.keyboard.press('Space');
   await expect(page.locator('.export-count')).toContainText('1');
   // Open context with Enter on the row's open button; focus lands in it.
-  await page.locator('.tabulator-row button[aria-label^="Open finding context"]').first().focus();
+  await page
+    .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+    .first()
+    .focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('.context-panel')).toBeVisible();
   await expect(page.locator('.context-location')).toBeFocused();
@@ -61,7 +70,7 @@ test('the review workflow is keyboard operable', async ({ page }) => {
   await page.getByRole('button', { name: 'Close finding context' }).focus();
   await page.keyboard.press('Enter');
   await expect(
-    page.locator('.tabulator-row button[aria-label^="Open finding context"]').first(),
+    page.locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]').first(),
   ).toBeFocused();
 });
 

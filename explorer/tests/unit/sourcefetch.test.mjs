@@ -72,8 +72,7 @@ test('HTTP failures and network failures fall back with a reason', async () => {
 test('the 2 MiB bound applies to both declared and streamed sizes', async () => {
   assert.equal(MAX_SOURCE_BYTES, 2 * 1024 * 1024);
   const declared = await fetchCompleteFile(URL_OK, {
-    fetchImpl: async () =>
-      fakeResponse([], { headers: { 'content-length': String(MAX_SOURCE_BYTES + 1) } }),
+    fetchImpl: async () => fakeResponse([], { headers: { 'content-length': String(MAX_SOURCE_BYTES + 1) } }),
   });
   assert.deepEqual(declared, { ok: false, reason: 'file is larger than the 2 MiB bound' });
   const streamed = await fetchCompleteFile(URL_OK, {

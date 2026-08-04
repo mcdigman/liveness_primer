@@ -22,7 +22,10 @@ function selectedExport(report, count = 4) {
 
 test('escapeMarkdown neutralizes structure, links, HTML, and control characters', () => {
   assert.equal(escapeMarkdown('plain words'), 'plain words');
-  assert.equal(escapeMarkdown('[label](https://evil.example)'), '\\[label\\]\\(https\\:\\/\\/evil\\.example\\)');
+  assert.equal(
+    escapeMarkdown('[label](https://evil.example)'),
+    '\\[label\\]\\(https\\:\\/\\/evil\\.example\\)',
+  );
   assert.equal(escapeMarkdown('`code` *em* _u_ # h | cell'), '\\`code\\` \\*em\\* \\_u\\_ \\# h \\| cell');
   assert.equal(escapeMarkdown('<script>alert(1)</script>'), '\\<script\\>alert\\(1\\)\\<\\/script\\>');
   assert.equal(escapeMarkdown('line\nbreak\u0007bell'), 'line�break�bell');
@@ -35,9 +38,20 @@ test('the export states count, digest, revisions, safety state, and project coun
   assert.match(text, new RegExp(`report sha256: \`${DIGEST}\``, 'u'));
   assert.match(text, /detector: faketool, base command\\: old\\-faketool → head command\\: new\\-faketool/u);
   assert.match(text, /comparison: \*\*not comparable\*\*; isolation enforced; complete/u);
-  assert.match(text, /run health: detector errors 0, corpus warnings 0, source warnings 0, environment deltas 0/u);
+  assert.match(
+    text,
+    /run health: detector errors 0, corpus warnings 0, source warnings 0, environment deltas 0/u,
+  );
   assert.match(text, new RegExp(`selected findings: ${selectedRows.length} across 1 project\\b`, 'u'));
   assert.match(text, /## alpha @ 33333333 — \d+ selected/u);
+});
+
+test('a clean comparable run states so plainly', () => {
+  const report = goldenReport();
+  report.manifest.comparable = true;
+  const { text } = selectedExport(report, 1);
+  assert.match(text, /comparison: comparable; isolation enforced; complete/u);
+  assert.match(text, /selected findings: 1 across 1 project\b/u);
 });
 
 test('safety flags surface truncation and isolation failures', () => {
@@ -60,7 +74,10 @@ test('pinned source links appear only for GitHub-pinned projects and only as bui
     projection,
     selectedRows: [alphaRow, betaRow],
   });
-  assert.match(text, /\[pinned source\]\(https:\/\/github\.com\/example\/alpha\/blob\/3{40}\/pkg\/a\.py#L\d+\)/u);
+  assert.match(
+    text,
+    /\[pinned source\]\(https:\/\/github\.com\/example\/alpha\/blob\/3{40}\/pkg\/a\.py#L\d+\)/u,
+  );
   const betaSection = text.slice(text.indexOf('## beta'));
   assert.ok(!betaSection.includes('pinned source'), betaSection);
   assert.match(text, /selected findings: 2 across 2 projects/u);

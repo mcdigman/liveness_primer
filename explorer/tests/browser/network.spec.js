@@ -21,8 +21,11 @@ test('no report load or row interaction causes an unexpected network request', a
   });
   await openReportAndWait(page, goldenReport());
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('mover');
-  await page.locator('.tabulator-row input[aria-label^="Select for export"]').first().check();
-  await page.locator('.tabulator-row').first().click();
+  await page
+    .locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Select for export"]')
+    .first()
+    .check();
+  await page.locator('.tabulator-row:not(.tabulator-group)').first().click();
   await expect(page.locator('.context-panel')).toBeVisible();
   await page.getByRole('button', { name: 'Close finding context' }).click();
   expect(external).toEqual([]);
@@ -38,14 +41,16 @@ test('Load complete file fetches only after the explicit action and renders text
   });
   await openReportAndWait(page, goldenReport());
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('mover');
-  await page.locator('.tabulator-row').first().click();
+  await page.locator('.tabulator-row:not(.tabulator-group)').first().click();
   const loadButton = page.getByRole('button', { name: 'Load complete file' });
   await expect(loadButton).toBeVisible();
   expect(rawRequests).toEqual([]);
   await loadButton.click();
   await expect(page.locator('.source-lines')).toContainText('line 10');
   expect(rawRequests).toHaveLength(1);
-  expect(rawRequests[0]).toMatch(/^https:\/\/raw\.githubusercontent\.com\/example\/alpha\/3{40}\/pkg\/a\.py$/);
+  expect(rawRequests[0]).toMatch(
+    /^https:\/\/raw\.githubusercontent\.com\/example\/alpha\/3{40}\/pkg\/a\.py$/,
+  );
 });
 
 test('a failed complete-file load falls back to the embedded excerpt', async ({ page }) => {
@@ -59,7 +64,7 @@ test('a failed complete-file load falls back to the embedded excerpt', async ({ 
   };
   await openReportAndWait(page, report);
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('mover');
-  await page.locator('.tabulator-row').first().click();
+  await page.locator('.tabulator-row:not(.tabulator-group)').first().click();
   await page.getByRole('button', { name: 'Load complete file' }).click();
   await expect(page.locator('.source-error')).toContainText('the embedded excerpt remains the evidence');
   await expect(page.locator('.source-lines')).toContainText('def moved():');
@@ -76,7 +81,12 @@ test('storage failure keeps the workspace usable with immediate exports', async 
   await page.goto('./');
   await openReportAndWait(page, goldenReport());
   await expect(page.locator('.storage-warning')).toContainText('Local storage is unavailable');
-  await expect(page.locator('.storage-warning').getByRole('button', { name: 'Review export JSON' })).toBeVisible();
-  await page.locator('.tabulator-row input[aria-label^="Select for export"]').first().check();
+  await expect(
+    page.locator('.storage-warning').getByRole('button', { name: 'Review export JSON' }),
+  ).toBeVisible();
+  await page
+    .locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Select for export"]')
+    .first()
+    .check();
   await expect(page.locator('.export-count')).toContainText('1');
 });

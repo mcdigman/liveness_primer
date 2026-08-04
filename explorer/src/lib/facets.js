@@ -93,7 +93,10 @@ export function facetCounts(rows) {
  * @returns {string[]} lower-cased whitespace-separated terms
  */
 export function searchTerms(query) {
-  return query.toLowerCase().split(/\s+/u).filter((term) => term.length > 0);
+  return query
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter((term) => term.length > 0);
 }
 
 /**

@@ -55,18 +55,9 @@ test('confidence pairs show base and head instead of collapsing', () => {
   assert.equal(confidenceText(null), 'NA');
   assert.equal(confidenceText(0), '0%');
   assert.equal(confidenceDisplay(diff()), '60%');
-  assert.equal(
-    confidenceDisplay(diff({ head_occurrence: occurrence({ confidence: 90 }) })),
-    '60% → 90%',
-  );
-  assert.equal(
-    confidenceDisplay(diff({ base_occurrence: occurrence({ confidence: null }) })),
-    'NA → 60%',
-  );
-  assert.equal(
-    confidenceDisplay(diff({ head_occurrence: occurrence({ confidence: null }) })),
-    '60% → NA',
-  );
+  assert.equal(confidenceDisplay(diff({ head_occurrence: occurrence({ confidence: 90 }) })), '60% → 90%');
+  assert.equal(confidenceDisplay(diff({ base_occurrence: occurrence({ confidence: null }) })), 'NA → 60%');
+  assert.equal(confidenceDisplay(diff({ head_occurrence: occurrence({ confidence: null }) })), '60% → NA');
   assert.equal(
     confidenceDisplay(diff({ diff_class: 'new', base_occurrence: null, changed_fields: [] })),
     '60%',
@@ -75,7 +66,10 @@ test('confidence pairs show base and head instead of collapsing', () => {
 
 test('rule pairs and absent rules render without invention', () => {
   assert.equal(ruleDisplay(diff()), 'SKY-U001');
-  assert.equal(ruleDisplay(diff({ head_occurrence: occurrence({ rule_id: 'SKY-U003' }) })), 'SKY-U001 → SKY-U003');
+  assert.equal(
+    ruleDisplay(diff({ head_occurrence: occurrence({ rule_id: 'SKY-U003' }) })),
+    'SKY-U001 → SKY-U003',
+  );
   assert.equal(ruleDisplay(diff({ base_occurrence: occurrence({ rule_id: null }) })), '- → SKY-U001');
   assert.equal(
     ruleDisplay(
@@ -127,9 +121,12 @@ test('reference side follows the diff class', () => {
 test('span and totals fragments', () => {
   assert.equal(spanDisplay(occurrence()), 'L10');
   assert.equal(spanDisplay(occurrence({ end_line: 14 })), 'L10–14');
-  assert.deepEqual(totalsDisplay({ new: 168, dropped: 0, changed: 3, changed_confidence: 1, changed_message_only: 1 }), {
-    new: '+168',
-    dropped: '-0',
-    changed: '~3',
-  });
+  assert.deepEqual(
+    totalsDisplay({ new: 168, dropped: 0, changed: 3, changed_confidence: 1, changed_message_only: 1 }),
+    {
+      new: '+168',
+      dropped: '-0',
+      changed: '~3',
+    },
+  );
 });

@@ -5,7 +5,7 @@
 /**
  * Hex SHA-256 digest of the exact report bytes.
  *
- * @param {ArrayBuffer | Uint8Array} bytes
+ * @param {ArrayBuffer | Uint8Array<ArrayBuffer>} bytes
  * @param {SubtleCrypto} [subtle]
  * @returns {Promise<string>} 64 lowercase hex characters
  */

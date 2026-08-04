@@ -20,7 +20,10 @@ test('large-report import and render times are measured separately', async ({ pa
   });
   const importMs = Date.now() - importStart;
   const renderStart = Date.now();
-  await page.locator('.tabulator-row').first().waitFor({ state: 'visible', timeout: 60_000 });
+  await page
+    .locator('.tabulator-row:not(.tabulator-group)')
+    .first()
+    .waitFor({ state: 'visible', timeout: 60_000 });
   const renderMs = Date.now() - renderStart;
   console.log(
     `[performance] rows=4500 bytes=${text.length} import+validate=${importMs}ms grid-first-render=${renderMs}ms`,
@@ -30,6 +33,6 @@ test('large-report import and render times are measured separately', async ({ pa
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('unused_symbol_77');
   await expect(page.locator('.findings-counts')).toContainText('of 4500', { timeout: 30_000 });
   console.log(`[performance] filter-apply=${Date.now() - filterStart}ms`);
-  const rendered = await page.locator('.tabulator-row').count();
+  const rendered = await page.locator('.tabulator-row:not(.tabulator-group)').count();
   expect(rendered).toBeLessThan(400);
 });

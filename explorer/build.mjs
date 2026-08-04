@@ -99,7 +99,13 @@ for (const name of bundled) {
   const packageDir = join(here, 'node_modules', name);
   const meta = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
   const licenseText = readFileSync(join(packageDir, 'LICENSE'), 'utf8');
-  notices.push('='.repeat(72), `${meta.name} ${meta.version} (${meta.license})`, '='.repeat(72), licenseText.trimEnd(), '');
+  notices.push(
+    '='.repeat(72),
+    `${meta.name} ${meta.version} (${meta.license})`,
+    '='.repeat(72),
+    licenseText.trimEnd(),
+    '',
+  );
 }
 writeFileSync(join(dist, 'NOTICE.txt'), notices.join('\n'));
 
