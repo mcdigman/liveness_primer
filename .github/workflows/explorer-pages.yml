@@ -28,9 +28,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # No dependency needs an install lifecycle script: esbuild is driven
+      # through its JS API, which resolves its own platform package, and the
+      # Playwright browsers install in their own explicit step. Skipping the
+      # scripts denies every transitive package arbitrary code execution on
+      # the runner.
       - name: Install pinned toolchain
         working-directory: explorer
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build production bundle
         working-directory: explorer
@@ -46,6 +51,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # This is the only job holding a write-capable Pages token and an OIDC
+    # identity; a bounded runtime caps how long a hung or subverted run can
+    # hold them (explorer contract §8).
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write

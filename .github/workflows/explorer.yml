@@ -29,8 +29,13 @@ jobs:
       - name: Show toolchain
         run: node --version && npm --version
 
+      # No dependency needs an install lifecycle script: esbuild is driven
+      # through its JS API, which resolves its own platform package, and the
+      # Playwright browsers install in their own explicit step. Skipping the
+      # scripts denies every transitive package arbitrary code execution on
+      # the runner.
       - name: Install pinned toolchain
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # The committed Ajv standalone validators must match the checked-in
       # exported schemas (pydantic models remain the source of truth,
@@ -71,15 +76,20 @@ jobs:
         run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Browser, layout, accessibility, adversarial, and network suites
+        id: browser-suites
         run: npm run test:browser
 
+      # Uploaded whenever the suites actually ran, pass or fail, and only
+      # then: the CI reporter always writes the HTML report, so a missing
+      # one means the evidence was lost and must fail loudly rather than
+      # leave an empty artifact behind.
       - name: Upload Playwright report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.browser-suites.conclusion != 'skipped' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: explorer-playwright-report
           path: explorer/playwright-report/
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Upload distributable bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
