@@ -3,8 +3,11 @@
 // across the three major engines.
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 4173;
-const SUBPATH = '/liveness-primer/explorer/';
+import { baseUrl, PORT } from './tests/browser/serve.mjs';
+
+// One endpoint for both the server and the clients, resolved from the
+// environment by serve.mjs (EXPLORER_TEST_HOST / EXPLORER_TEST_PORT).
+const BASE_URL = baseUrl();
 
 export default defineConfig({
   testDir: './tests/browser',
@@ -13,12 +16,12 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   use: {
-    baseURL: `http://127.0.0.1:${PORT}${SUBPATH}`,
+    baseURL: BASE_URL,
     trace: 'retain-on-failure',
   },
   webServer: {
     command: `node build.mjs && node tests/browser/serve.mjs --port ${PORT}`,
-    url: `http://127.0.0.1:${PORT}${SUBPATH}`,
+    url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

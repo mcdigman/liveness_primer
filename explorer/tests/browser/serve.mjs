@@ -14,6 +14,25 @@ const dist = join(here, '..', '..', 'dist');
 
 export const SUBPATH = '/liveness-primer/explorer/';
 
+// The endpoint comes from the environment rather than the source so a run
+// can move off an occupied port (4173 is also Vite's default preview port)
+// or bind somewhere reachable from another container. This module is the
+// single source of truth: playwright.config.js imports it, so the address
+// the suites drive and the address this server binds cannot drift. The
+// defaults keep the historical loopback-only endpoint; overriding the host
+// exposes dist/ beyond this machine.
+export const HOST = process.env.EXPLORER_TEST_HOST ?? '127.0.0.1';
+export const PORT = Number(process.env.EXPLORER_TEST_PORT ?? 4173);
+
+/**
+ * @param {string} [host]
+ * @param {number} [port]
+ * @returns {string}
+ */
+export function baseUrl(host = HOST, port = PORT) {
+  return `http://${host}:${port}${SUBPATH}`;
+}
+
 const TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
@@ -25,10 +44,11 @@ const TYPES = new Map([
 ]);
 
 /**
- * @param {number} port
+ * @param {number} [port]
+ * @param {string} [host]
  * @returns {Promise<import('node:http').Server>}
  */
-export function serve(port) {
+export function serve(port = PORT, host = HOST) {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     let path = url.pathname;
@@ -60,13 +80,13 @@ export function serve(port) {
     }
   });
   return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve(server));
+    server.listen(port, host, () => resolve(server));
   });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const portFlag = process.argv.indexOf('--port');
-  const port = portFlag === -1 ? 4173 : Number(process.argv[portFlag + 1]);
+  const port = portFlag === -1 ? PORT : Number(process.argv[portFlag + 1]);
   await serve(port);
-  console.log(`serving dist at http://127.0.0.1:${port}${SUBPATH}`);
+  console.log(`serving dist at ${baseUrl(HOST, port)}`);
 }
