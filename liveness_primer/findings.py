@@ -11,7 +11,7 @@ import json
 from collections.abc import Sequence
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Self
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
@@ -1018,6 +1018,44 @@ class FindingComment(_FrozenModel):
     comment: str = Field(max_length=200)
 
 
+EXPLORER_EXPORT_KIND = 'explorer-export'
+
+
+def _validated_document_kind(value: str) -> str:
+    """Constrain an export's discriminator to the one kind it may declare.
+
+    Parameters
+    ----------
+    value : str
+        Declared document kind of the payload.
+
+    Returns
+    -------
+    str
+        The validated kind.
+
+    Raises
+    ------
+    ValueError
+        If the kind is not :data:`EXPLORER_EXPORT_KIND`.
+    """
+    if value != EXPLORER_EXPORT_KIND:
+        msg = f'document_kind {value!r} is not the supported {EXPLORER_EXPORT_KIND!r}'
+        raise ValueError(msg)
+    return value
+
+
+# Pinned the same way as SchemaVersion rather than through Literal: the
+# annotation fixes how the constant renders as JSON Schema (`type` from
+# `str`, `const` from the extra), so the exported document does not shift
+# under the range of pydantic versions the package supports.
+DocumentKind = Annotated[
+    str,
+    AfterValidator(_validated_document_kind),
+    Field(json_schema_extra={'const': EXPLORER_EXPORT_KIND}),
+]
+
+
 class ExplorerExport(Report):
     """Report re-emitted by the explorer over a chosen subset (explorer contract §6).
 
@@ -1032,7 +1070,7 @@ class ExplorerExport(Report):
 
     Attributes
     ----------
-    document_kind : Literal['explorer-export']
+    document_kind : DocumentKind
         Discriminator separating an export from a first-generation report.
     source_report_sha256 : str
         Lowercase hex SHA-256 digest of the original report's exact bytes.
@@ -1041,7 +1079,7 @@ class ExplorerExport(Report):
         learns to write them.
     """
 
-    document_kind: Literal['explorer-export'] = 'explorer-export'
+    document_kind: DocumentKind = EXPLORER_EXPORT_KIND
     source_report_sha256: str = Field(pattern='^[0-9a-f]{64}$')
     comments: tuple[FindingComment, ...] = ()
 

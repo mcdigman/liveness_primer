@@ -3,11 +3,18 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
+import difflib
 import json
 from pathlib import Path
 
 from liveness_primer.findings import SCHEMA_VERSION
-from liveness_primer.schema_export import EXPORTED_MODELS, export_schemas, schemas_dir, stale_schemas
+from liveness_primer.schema_export import (
+    EXPORTED_MODELS,
+    export_schemas,
+    render_schema,
+    schemas_dir,
+    stale_schemas,
+)
 
 
 def test_export_writes_every_contract_model(tmp_path: Path) -> None:
@@ -29,7 +36,22 @@ def test_report_schema_embeds_schema_version_default(tmp_path: Path) -> None:
 
 
 def test_shipped_schemas_are_in_sync_with_the_models() -> None:
-    assert stale_schemas() == ()
+    # Name the difference rather than only the file: a schema can go stale
+    # because pydantic renders a construct differently across the supported
+    # version range, and the diff is what identifies the construct.
+    stale = stale_schemas()
+    detail = '\n'.join(
+        line
+        for name in stale
+        for line in difflib.unified_diff(
+            (schemas_dir() / f'{name}.schema.json').read_text(encoding='utf-8').splitlines(),
+            render_schema(EXPORTED_MODELS[name]).splitlines(),
+            fromfile=f'shipped/{name}',
+            tofile=f'rendered/{name}',
+            lineterm='',
+        )
+    )
+    assert stale == (), f'schemas disagree with the models:\n{detail}'
     assert schemas_dir().is_dir()
 
 

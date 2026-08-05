@@ -418,6 +418,12 @@ def test_explorer_export_is_a_report_carrying_provenance() -> None:
         )
 
 
+def test_explorer_export_rejects_a_foreign_document_kind() -> None:
+    assert make_export(document_kind='explorer-export').document_kind == 'explorer-export'
+    with pytest.raises(ValidationError, match="document_kind 'something-else' is not the supported"):
+        make_export(document_kind='something-else')
+
+
 def test_explorer_export_inherits_the_aggregate_checks() -> None:
     with pytest.raises(ValidationError, match='overall totals are stale'):
         make_export(totals=DiffTotals(new=2))
