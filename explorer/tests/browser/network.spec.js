@@ -82,7 +82,7 @@ test('storage failure keeps the workspace usable with immediate exports', async 
   await openReportAndWait(page, goldenReport());
   await expect(page.locator('.storage-warning')).toContainText('Local storage is unavailable');
   await expect(
-    page.locator('.storage-warning').getByRole('button', { name: 'Review export JSON' }),
+    page.locator('.storage-warning').getByRole('button', { name: 'Export selected findings (.json)' }),
   ).toBeVisible();
   await page
     .locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Select for export"]')

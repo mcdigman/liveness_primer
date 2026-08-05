@@ -14,18 +14,19 @@ export function StatusStrip({ status, projects }) {
   /** @type {{key: string, severity: 'error' | 'warning', text: string}[]} */
   const conditions = [];
   if (!status.comparable) {
-    conditions.push({ key: 'comparable', severity: 'error', text: 'Not comparable' });
+    conditions.push({ key: 'comparable', severity: 'error', text: 'Comparison unreliable' });
   }
   if (!status.isolationEnforced) {
-    conditions.push({ key: 'isolation', severity: 'error', text: 'Isolation not enforced' });
+    conditions.push({ key: 'isolation', severity: 'error', text: 'Sandboxing disabled' });
   }
   if (status.truncated) {
+    const suffix = `${status.truncatedProjects.length} project${
+      status.truncatedProjects.length === 1 ? '' : 's'
+    }`;
     conditions.push({
       key: 'truncated',
       severity: 'warning',
-      text: `Truncated: ${status.truncatedProjects.length} project${
-        status.truncatedProjects.length === 1 ? '' : 's'
-      }`,
+      text: status.isExport ? `Exported subset: ${suffix}` : `Findings incomplete: ${suffix}`,
     });
   }
   if (status.errorCount > 0) {
@@ -35,21 +36,21 @@ export function StatusStrip({ status, projects }) {
     conditions.push({
       key: 'integrity',
       severity: 'warning',
-      text: `Corpus warnings: ${status.integrityWarningCount}`,
+      text: `Unexpected baseline findings: ${status.integrityWarningCount}`,
     });
   }
   if (status.sourceWarningCount > 0) {
     conditions.push({
       key: 'source',
       severity: 'warning',
-      text: `Source warnings: ${status.sourceWarningCount}`,
+      text: `Source excerpt warnings: ${status.sourceWarningCount}`,
     });
   }
   if (status.environmentDelta.length > 0) {
     conditions.push({
       key: 'delta',
       severity: 'warning',
-      text: `Environment deltas: ${status.environmentDelta.length}`,
+      text: `Dependency differences: ${status.environmentDelta.length}`,
     });
   }
   return (
@@ -68,26 +69,47 @@ export function StatusStrip({ status, projects }) {
       <div className="status-details">
         {!status.comparable && (
           <p>
-            This run is not comparable: at least one side ran through the unmanaged escape hatch, so the two
-            revisions are not guaranteed to differ only in the detector.
+            The base and head detectors did not run in matching managed environments: at least one side was
+            launched with a custom command. Differences shown here may come from the environments rather than
+            the detector change, so treat this comparison with caution; re-run without the custom command for
+            a reliable one.
           </p>
         )}
-        {!status.isolationEnforced && <p>Build and analysis sandboxing was not enforced for this run.</p>}
-        {status.truncated && (
+        {!status.isolationEnforced && (
           <p>
-            Displayed findings were truncated by the results cap in: {status.truncatedProjects.join(', ')}.
-            Totals and rollups remain complete-run values.
+            This run did not sandbox the build and analysis steps, so the analyzed projects&apos; own code
+            could have influenced the results. Re-run with isolation enforced to rule that out.
           </p>
         )}
+        {status.truncated &&
+          (status.isExport ? (
+            <p>
+              This file is an export of findings chosen in the explorer, so by design it omits the unselected
+              findings of: {status.truncatedProjects.join(', ')}. Totals and rollups still describe the
+              complete original run.
+            </p>
+          ) : (
+            <p>
+              Some findings did not fit in this report: the results cap cut the finding list short in:{' '}
+              {status.truncatedProjects.join(', ')}. Totals and rollups still count every finding from the
+              run; only the detailed list is incomplete. Raise the cap and re-run to see the missing findings.
+            </p>
+          ))}
         {status.environmentDelta.length > 0 && (
-          <ul>
-            {status.environmentDelta.map((delta) => (
-              <li key={delta.package}>
-                <code>{delta.package}</code>: {delta.base_version ?? 'absent'} →{' '}
-                {delta.head_version ?? 'absent'}
-              </li>
-            ))}
-          </ul>
+          <>
+            <p>
+              These dependencies differ between the base and head environments, which can change results
+              independently of the detector:
+            </p>
+            <ul>
+              {status.environmentDelta.map((delta) => (
+                <li key={delta.package}>
+                  <code>{delta.package}</code>: {delta.base_version ?? 'absent'} →{' '}
+                  {delta.head_version ?? 'absent'}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
         {projects
           .filter(
@@ -102,15 +124,21 @@ export function StatusStrip({ status, projects }) {
               <ul>
                 {project.report.errors.map((error, index) => (
                   <li key={`error-${index}`}>
-                    detector error ({error.side}
-                    {error.exit_code === null ? ', timeout' : `, exit ${error.exit_code}`}): {error.detail}
+                    The detector failed on the {error.side} side (
+                    {error.exit_code === null ? 'timed out' : `exit code ${error.exit_code}`}), so its
+                    findings are missing from this comparison: {error.detail}
                   </li>
                 ))}
                 {project.report.integrity_warnings.map((warning, index) => (
-                  <li key={`integrity-${index}`}>corpus integrity: {warning.detail}</li>
+                  <li key={`integrity-${index}`}>
+                    The base revision unexpectedly reported findings on this project, which was expected to be
+                    clean, so results here may be untrustworthy: {warning.detail}
+                  </li>
                 ))}
                 {project.report.source_warnings.map((warning, index) => (
-                  <li key={`source-${index}`}>source: {warning}</li>
+                  <li key={`source-${index}`}>
+                    A problem reading pinned source files left some excerpts incomplete: {warning}
+                  </li>
                 ))}
               </ul>
             </div>

@@ -8,7 +8,7 @@
 // with updateData and the open-row highlight is a class toggle, so
 // selection and context opening never move the central scroll position.
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { TabulatorFull as Tabulator } from 'tabulator-tables';
 
 import { DIFF_CLASS_PRESENTATION } from '../../lib/format.js';
@@ -22,7 +22,7 @@ import { NO_RULE, projectHeaderModel } from '../../lib/projection.js';
  * @typedef {object} TableHandlers
  * @property {Projection} projection
  * @property {(flag: 'selected' | 'hidden', key: string, enable: boolean) => void} onToggleFlag
- * @property {(enable: boolean) => void} onToggleAllVisible
+ * @property {(enable: boolean, keys: string[]) => void} onToggleAllVisible
  * @property {(key: string) => void} onOpenContext
  */
 
@@ -84,7 +84,7 @@ function applyAriaRepairs(container) {
  * @param {string | null} props.openKey
  * @param {'project' | 'rule' | 'none'} props.grouping
  * @param {(flag: 'selected' | 'hidden', key: string, enable: boolean) => void} props.onToggleFlag
- * @param {(enable: boolean) => void} props.onToggleAllVisible
+ * @param {(enable: boolean, keys: string[]) => void} props.onToggleAllVisible select-all over the given row keys
  * @param {(key: string) => void} props.onOpenContext
  */
 export function FindingsTable({
@@ -106,10 +106,65 @@ export function FindingsTable({
   const workspaceRef = useRef(workspace);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+  const groupingRef = useRef(grouping);
+  groupingRef.current = grouping;
+  // Collapsed group headers, keyed by group field and value so the state
+  // survives sort, filter, and data replacement (which rebuild the groups).
+  const collapsedGroupsRef = useRef(/** @type {Set<string>} */ (new Set()));
   const handlersRef = useRef(
     /** @type {TableHandlers} */ ({ projection, onToggleFlag, onToggleAllVisible, onOpenContext }),
   );
   handlersRef.current = { projection, onToggleFlag, onToggleAllVisible, onOpenContext };
+
+  /** Keys of visible rows that are not under a collapsed group header. */
+  const expandedRowKeys = useCallback(() => {
+    const activeGrouping = groupingRef.current;
+    if (activeGrouping === 'none') {
+      return rowsRef.current.map((row) => row.key);
+    }
+    const field = activeGrouping === 'project' ? 'project' : 'ruleFacet';
+    const collapsed = collapsedGroupsRef.current;
+    return rowsRef.current
+      .filter((row) => {
+        const value = activeGrouping === 'project' ? row.project : (row.ruleValue ?? NO_RULE);
+        return !collapsed.has(`${field}:${value}`);
+      })
+      .map((row) => row.key);
+  }, []);
+
+  /** Header select-all reflects the rows it would act on: expanded ones. */
+  const syncHeaderCheckbox = useCallback(() => {
+    const header = headerCheckboxRef.current;
+    if (header === null) {
+      return;
+    }
+    const keys = expandedRowKeys();
+    const selectedCount = keys.filter((key) => workspaceRef.current.selected.has(key)).length;
+    header.checked = keys.length > 0 && selectedCount === keys.length;
+    header.indeterminate = selectedCount > 0 && selectedCount < keys.length;
+  }, [expandedRowKeys]);
+
+  // Reapply the recorded collapse state after Tabulator rebuilds its
+  // groups, which recreates them expanded. Imperative show/hide is the
+  // channel: a groupStartOpen callback is stored as the group's visibility
+  // and only resolved lazily during element generation, leaving a function
+  // where boolean checks read it as open in the meantime.
+  const restoreCollapsedGroups = useCallback(() => {
+    const table = tableRef.current;
+    if (table === null || groupingRef.current === 'none') {
+      return;
+    }
+    for (const group of table.getGroups()) {
+      const shouldBeOpen = !collapsedGroupsRef.current.has(`${group.getField()}:${String(group.getKey())}`);
+      if (group.isVisible() !== shouldBeOpen) {
+        if (shouldBeOpen) {
+          group.show();
+        } else {
+          group.hide();
+        }
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -120,7 +175,9 @@ export function FindingsTable({
     const checkboxColumn = (flag) => ({
       title: flag === 'selected' ? 'Export' : 'Hide',
       field: flag === 'selected' ? 'selected' : 'hiddenFlag',
-      width: flag === 'selected' ? 64 : 52,
+      // 84 fits the checkbox plus an unclipped "Export" title while the
+      // default desktop widths still keep the Hide column visible.
+      width: flag === 'selected' ? 84 : 52,
       hozAlign: /** @type {const} */ ('center'),
       responsive: flag === 'selected' ? 0 : 3,
       /** @param {import('tabulator-tables').CellComponent} cell */
@@ -187,7 +244,7 @@ export function FindingsTable({
         {
           title: 'Diff',
           field: 'diffClass',
-          width: 92,
+          width: 86,
           responsive: 0,
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
@@ -199,7 +256,7 @@ export function FindingsTable({
             return badge;
           },
         },
-        { title: 'Rule', field: 'rule', width: 108, responsive: 2, cssClass: 'cell-mono' },
+        { title: 'Rule', field: 'rule', width: 100, responsive: 2, cssClass: 'cell-mono' },
         { title: '%', field: 'confidence', width: 72, responsive: 2, cssClass: 'cell-mono' },
         { title: 'Kind', field: 'kind', width: 84, responsive: 4 },
         {
@@ -239,7 +296,11 @@ export function FindingsTable({
             input.type = 'checkbox';
             input.setAttribute('aria-label', 'Select all visible findings for export');
             input.addEventListener('click', (event) => event.stopPropagation());
-            input.addEventListener('change', () => handlersRef.current.onToggleAllVisible(input.checked));
+            // Collapsed groups are excluded: the checkbox only flags rows
+            // the user can currently see.
+            input.addEventListener('change', () =>
+              handlersRef.current.onToggleAllVisible(input.checked, expandedRowKeys()),
+            );
             headerCheckboxRef.current = input;
             wrapper.append(input, span('Export', 'header-export-label'));
             return wrapper;
@@ -249,7 +310,7 @@ export function FindingsTable({
         {
           title: 'Open',
           field: 'open',
-          width: 44,
+          width: 42,
           responsive: 0,
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
@@ -285,6 +346,15 @@ export function FindingsTable({
         applyAriaRepairs(container);
       }
     });
+    table.on('groupVisibilityChanged', (group, visible) => {
+      const key = `${group.getField()}:${String(group.getKey())}`;
+      if (visible) {
+        collapsedGroupsRef.current.delete(key);
+      } else {
+        collapsedGroupsRef.current.add(key);
+      }
+      syncHeaderCheckbox();
+    });
     table.on('rowClick', (event, row) => {
       const target = /** @type {HTMLElement} */ (event.target);
       if (target.closest('input, button, a') !== null) {
@@ -299,7 +369,7 @@ export function FindingsTable({
       tableRef.current = null;
       table.destroy();
     };
-  }, []);
+  }, [expandedRowKeys, syncHeaderCheckbox]);
 
   /** Run now when the table is built, otherwise once it is. */
   const whenBuilt = (/** @type {() => void} */ action) => {
@@ -324,7 +394,7 @@ export function FindingsTable({
       }
       if (previousRowsRef.current !== rows) {
         previousRowsRef.current = rows;
-        void table.replaceData(buildData(rows, workspace));
+        void table.replaceData(buildData(rows, workspace)).then(restoreCollapsedGroups);
       } else {
         // Same rows, changed workspace flags: patch rows in place so the
         // central scroll position never moves.
@@ -343,14 +413,9 @@ export function FindingsTable({
         }
       }
       workspaceRef.current = workspace;
-      const header = headerCheckboxRef.current;
-      if (header !== null) {
-        const selectedVisible = rows.filter((row) => workspace.selected.has(row.key)).length;
-        header.checked = rows.length > 0 && selectedVisible === rows.length;
-        header.indeterminate = selectedVisible > 0 && selectedVisible < rows.length;
-      }
+      syncHeaderCheckbox();
     });
-  }, [rows, workspace]);
+  }, [rows, workspace, syncHeaderCheckbox, restoreCollapsedGroups]);
 
   // The open-row highlight is a class toggle, not a data change.
   useEffect(() => {
@@ -377,9 +442,11 @@ export function FindingsTable({
         table.setGroupBy(/** @type {never} */ (false));
       } else {
         table.setGroupBy(grouping === 'project' ? 'project' : 'ruleFacet');
+        restoreCollapsedGroups();
       }
+      syncHeaderCheckbox();
     });
-  }, [grouping]);
+  }, [grouping, restoreCollapsedGroups, syncHeaderCheckbox]);
 
   return <div className="findings-table" ref={containerRef} data-testid="findings-table" />;
 }

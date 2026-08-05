@@ -34,19 +34,25 @@ export function escapeMarkdown(text) {
  */
 function statusLines(projection) {
   const status = projection.status;
-  const lines = [
-    `- comparison: ${status.comparable ? 'comparable' : '**not comparable**'}; isolation ${
-      status.isolationEnforced ? 'enforced' : '**not enforced**'
-    }; ${status.truncated ? `**truncated** (${status.truncatedProjects.map(escapeMarkdown).join(', ')})` : 'complete'}`,
-  ];
+  const comparison = status.comparable
+    ? 'base and head ran in matching managed environments'
+    : '**environments may differ** (a side ran with a custom command), so differences may not come from the detector alone';
+  const sandbox = status.isolationEnforced
+    ? 'sandboxing was enforced'
+    : '**sandboxing was not enforced**, so analyzed projects could have influenced the run';
+  const projectList = status.truncatedProjects.map(escapeMarkdown).join(', ');
+  const completeness = !status.truncated
+    ? 'findings complete'
+    : status.isExport
+      ? `findings are **a chosen subset**: this export omits unselected findings of ${projectList}; totals still describe the complete run`
+      : `findings **incomplete**: the results cap left findings out of ${projectList}; totals still count the complete run`;
   const counts = [
     `detector errors ${status.errorCount}`,
-    `corpus warnings ${status.integrityWarningCount}`,
-    `source warnings ${status.sourceWarningCount}`,
-    `environment deltas ${status.environmentDelta.length}`,
+    `unexpected baseline findings ${status.integrityWarningCount}`,
+    `source excerpt warnings ${status.sourceWarningCount}`,
+    `dependency differences ${status.environmentDelta.length}`,
   ];
-  lines.push(`- run health: ${counts.join(', ')}`);
-  return lines;
+  return [`- comparison: ${comparison}; ${sandbox}; ${completeness}`, `- run health: ${counts.join(', ')}`];
 }
 
 /**

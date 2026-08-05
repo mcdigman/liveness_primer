@@ -57,6 +57,7 @@ test('hiding removes a row from the default view; show hidden reveals it dimmed'
   // post-toggle checked-state verification would race the removal.
   await page.locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Hide"]').first().click();
   await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(total - 1);
+  await expect(page.locator('.show-hidden')).toContainText('Show hidden findings (1)');
   await page.getByLabel('Show hidden findings').check();
   await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(total);
   const hiddenRow = page.locator('.tabulator-row:not(.tabulator-group).row-hidden');
@@ -175,6 +176,28 @@ test('select-all applies to visible rows only and shows the affected count', asy
   await page.getByLabel('Select all visible findings for export').check();
   await expect(page.locator('.export-count strong')).toHaveText(String(visible));
   await expect(page.getByRole('button', { name: `Clear selection (${visible})` })).toBeVisible();
+});
+
+test('collapsed projects survive sort and filter changes and select-all skips them', async ({ page }) => {
+  await openReportAndWait(page, goldenReport());
+  const total = goldenRowCount();
+  const rows = page.locator('.tabulator-row:not(.tabulator-group)');
+  const alphaGroup = page.locator('.tabulator-group', { hasText: 'alpha' }).first();
+  await alphaGroup.click();
+  await expect(alphaGroup).not.toHaveClass(/tabulator-group-visible/);
+  const remaining = await rows.count();
+  expect(remaining).toBeLessThan(total);
+  await page.getByLabel('Sort').selectOption('confidence');
+  await expect(alphaGroup).not.toHaveClass(/tabulator-group-visible/);
+  await expect(rows).toHaveCount(remaining);
+  // A query that still matches every finding: the filtered row set is
+  // rebuilt, and the collapse survives that too.
+  await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('.py');
+  await expect(alphaGroup).not.toHaveClass(/tabulator-group-visible/);
+  await expect(rows).toHaveCount(remaining);
+  // Select-all only flags findings the user can see: none under alpha.
+  await page.getByLabel('Select all visible findings for export').check();
+  await expect(page.locator('.export-count strong')).toHaveText(String(remaining));
 });
 
 test('grouping by rule and ungrouped views are offered', async ({ page }) => {

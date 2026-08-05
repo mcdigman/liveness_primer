@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { facetCounts, rowPredicate } from '../lib/facets.js';
 import { renderMarkdown, markdownFilename } from '../lib/markdown.js';
 import { buildReportExport, reportExportFilename, serializeReportExport } from '../lib/reportexport.js';
-import { buildReviewPayload, reviewFilename, serializeReview } from '../lib/review.js';
+import { buildReviewPayload } from '../lib/review.js';
 import { sortRows } from '../lib/sorting.js';
 import { MAX_REPORT_BYTES } from '../lib/validate.js';
 import { loadWorkspace, locatorKey, saveWorkspace } from '../lib/workspace.js';
@@ -198,15 +198,6 @@ export function App() {
     });
   }, [projection, state.sourceSha256, selectedRows]);
 
-  const handleDownloadReview = useCallback(() => {
-    if (projection === null || digest === null) {
-      return;
-    }
-    const payload = buildReviewPayload(digest, workspace, projection.rows);
-    downloadText(reviewFilename(digest), serializeReview(payload), 'application/json');
-    dispatch({ type: 'announced', text: 'Downloaded the review JSON record.' });
-  }, [projection, digest, workspace]);
-
   return (
     <div className="app" data-phase={state.phase}>
       <a className="skip-link" href="#findings-region">
@@ -240,11 +231,11 @@ export function App() {
             Local storage is unavailable: selection and hidden state live in memory only. Export now to keep
             them.
           </span>
-          <button type="button" onClick={handleDownloadReview}>
-            Review export JSON
+          <button type="button" onClick={handleDownloadReport}>
+            Export selected findings (.json)
           </button>
           <button type="button" onClick={handleDownloadMarkdown}>
-            Export Markdown
+            Save export markdown
           </button>
         </div>
       )}
@@ -286,6 +277,7 @@ export function App() {
               grouping={state.grouping}
               sort={state.sort}
               showHidden={state.showHidden}
+              hiddenCount={workspace.hidden.size}
               onGroupingChange={(grouping) => dispatch({ type: 'grouping-changed', grouping })}
               onSortChange={(sort) => dispatch({ type: 'sort-changed', sort })}
               onShowHiddenChange={(showHidden) => dispatch({ type: 'show-hidden-changed', showHidden })}
@@ -302,13 +294,8 @@ export function App() {
               onToggleFlag={(flag, key, enable) =>
                 dispatch({ type: 'toggle-flag', flag, key, force: enable })
               }
-              onToggleAllVisible={(enable) =>
-                dispatch({
-                  type: 'set-flag-all',
-                  flag: 'selected',
-                  keys: visibleRows.map((row) => row.key),
-                  enable,
-                })
+              onToggleAllVisible={(enable, keys) =>
+                dispatch({ type: 'set-flag-all', flag: 'selected', keys, enable })
               }
               onOpenContext={(key) => dispatch({ type: 'context-opened', key })}
             />
@@ -324,7 +311,6 @@ export function App() {
                 onDownloadMarkdown={handleDownloadMarkdown}
                 onCopyMarkdown={handleCopyMarkdown}
                 onDownloadReport={handleDownloadReport}
-                onDownloadReview={handleDownloadReview}
                 onClearSelection={() => dispatch({ type: 'clear-selection' })}
               />
             ) : (

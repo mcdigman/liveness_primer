@@ -57,7 +57,7 @@ test('the Markdown export escapes hostile values and creates no hostile link tar
   await openReportAndWait(page, adversarialReport());
   await page.getByLabel('Select all visible findings for export').check();
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export selected findings' }).click();
+  await page.getByRole('button', { name: 'Save export markdown' }).click();
   const download = await downloadPromise;
   const path = await download.path();
   const { readFileSync } = await import('node:fs');
@@ -78,7 +78,7 @@ test('the report JSON export is a report the explorer reimports', async ({ page,
     .first()
     .check();
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export report JSON' }).click();
+  await page.getByRole('button', { name: 'Export selected findings (.json)' }).click();
   const download = await downloadPromise;
   const { readFileSync } = await import('node:fs');
   const text = readFileSync(await download.path(), 'utf8');
@@ -93,23 +93,4 @@ test('the report JSON export is a report the explorer reimports', async ({ page,
   await openReport(page, text, 'export.json');
   await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(1);
   await expect(page.locator('.import-errors')).toHaveCount(0);
-});
-
-test('the review JSON export downloads the versioned record', async ({ page, browserName }) => {
-  test.skip(browserName !== 'chromium', 'download content inspection runs once, on chromium');
-  await openReportAndWait(page, adversarialReport());
-  await page
-    .locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Select for export"]')
-    .first()
-    .check();
-  const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Review export JSON' }).click();
-  const download = await downloadPromise;
-  const { readFileSync } = await import('node:fs');
-  const record = JSON.parse(readFileSync(await download.path(), 'utf8'));
-  expect(record.schema_version).toBe('1.2.0');
-  expect(record.report_sha256).toMatch(/^[0-9a-f]{64}$/);
-  expect(record.selected).toHaveLength(1);
-  expect(record.selected[0]).toHaveProperty('identity');
-  expect(record.selected[0]).toHaveProperty('occurrence');
 });

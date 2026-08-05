@@ -10,7 +10,6 @@
  * @param {() => void} props.onDownloadMarkdown
  * @param {() => void} props.onCopyMarkdown
  * @param {() => void} props.onDownloadReport
- * @param {() => void} props.onDownloadReview
  * @param {() => void} props.onClearSelection
  */
 export function ExportPanel({
@@ -19,7 +18,6 @@ export function ExportPanel({
   onDownloadMarkdown,
   onCopyMarkdown,
   onDownloadReport,
-  onDownloadReview,
   onClearSelection,
 }) {
   /** @type {Map<string, number>} */
@@ -50,17 +48,14 @@ export function ExportPanel({
         </ul>
       )}
       <div className="export-actions">
-        <button type="button" className="primary" disabled={none} onClick={onDownloadMarkdown}>
-          Export selected findings
+        <button type="button" className="primary" disabled={none} onClick={onDownloadReport}>
+          Export selected findings (.json)
+        </button>
+        <button type="button" disabled={none} onClick={onDownloadMarkdown}>
+          Save export markdown
         </button>
         <button type="button" disabled={none} onClick={onCopyMarkdown}>
-          Copy export Markdown
-        </button>
-        <button type="button" disabled={none} onClick={onDownloadReport}>
-          Export report JSON
-        </button>
-        <button type="button" onClick={onDownloadReview}>
-          Review export JSON
+          Copy export markdown
         </button>
         <button type="button" className="link-button" disabled={none} onClick={onClearSelection}>
           Clear selection ({selectedRows.length})

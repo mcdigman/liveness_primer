@@ -38,7 +38,7 @@ test('the two document kinds are disjoint and each is held to its own schema', (
   unknownKind.document_kind = 'something-else';
   const rejected = checkReport(textOf(unknownKind));
   assert.equal(rejected.ok, false);
-  assert.match(rejected.errors[0], /document_kind|additional properties/u);
+  assert.match(rejected.errors[1], /document_kind|additional properties/u);
 });
 
 test('export comments are validated by locator shape, not accepted blindly', () => {
@@ -50,7 +50,7 @@ test('export comments are validated by locator shape, not accepted blindly', () 
   withComments.comments = [{ locator: { project: 'alpha' }, comment: 'incomplete' }];
   const rejected = checkReport(textOf(withComments));
   assert.equal(rejected.ok, false);
-  assert.match(rejected.errors[0], /\/comments\/0\/locator/u);
+  assert.match(rejected.errors[1], /\/comments\/0\/locator/u);
 });
 
 test('a comment is bounded to a margin note at the import boundary', () => {
@@ -63,8 +63,8 @@ test('a comment is bounded to a margin note at the import boundary', () => {
   withComments.comments = [{ locator, comment: 'x'.repeat(201) }];
   const rejected = checkReport(textOf(withComments));
   assert.equal(rejected.ok, false);
-  assert.match(rejected.errors[0], /\/comments\/0\/comment/u);
-  assert.match(rejected.errors[0], /200/u);
+  assert.match(rejected.errors[1], /\/comments\/0\/comment/u);
+  assert.match(rejected.errors[1], /200/u);
   // The bound counts code points, as Python's `len` does, so an astral
   // character costs one here and one there rather than one and two.
   withComments.comments = [{ locator, comment: '😀'.repeat(200) }];
@@ -109,7 +109,8 @@ test('structural schema violations produce path-based errors', () => {
   badTotals.totals.new = 'many';
   const rejected = checkReport(textOf(badTotals));
   assert.equal(rejected.ok, false);
-  assert.match(rejected.errors[0], /\/totals\/new/u);
+  assert.match(rejected.errors[0], /not structured like a liveness-primer report/u);
+  assert.match(rejected.errors[1], /\/totals\/new/u);
   const extra = goldenReport();
   extra.unexpected_field = 1;
   assert.equal(checkReport(textOf(extra)).ok, false);
@@ -130,10 +131,7 @@ test('locator UI preconditions reject missing and duplicate locators', () => {
   missing.projects[0].diffs[1].locator = null;
   const rejectedMissing = checkReport(textOf(missing));
   assert.equal(rejectedMissing.ok, false);
-  assert.match(
-    rejectedMissing.errors[0],
-    /^\/projects\/0\/diffs\/1\/locator: every serialized finding diff/u,
-  );
+  assert.match(rejectedMissing.errors[0], /^\/projects\/0\/diffs\/1\/locator: this finding has no locator/u);
   const duplicated = goldenReport();
   duplicated.projects[0].diffs[1].locator = structuredClone(duplicated.projects[0].diffs[0].locator);
   const rejectedDuplicate = checkReport(textOf(duplicated));

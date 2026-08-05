@@ -14,6 +14,7 @@ import { SORT_OPTIONS } from '../../lib/sorting.js';
  * @param {'project' | 'rule' | 'none'} props.grouping
  * @param {string} props.sort
  * @param {boolean} props.showHidden
+ * @param {number} props.hiddenCount
  * @param {(grouping: 'project' | 'rule' | 'none') => void} props.onGroupingChange
  * @param {(sort: string) => void} props.onSortChange
  * @param {(showHidden: boolean) => void} props.onShowHiddenChange
@@ -27,6 +28,7 @@ export function Toolbar({
   grouping,
   sort,
   showHidden,
+  hiddenCount,
   onGroupingChange,
   onSortChange,
   onShowHiddenChange,
@@ -49,6 +51,14 @@ export function Toolbar({
           {visibleCount === total ? `${total} total` : `${visibleCount} of ${total}`}
         </span>
       </p>
+      <label htmlFor={sortId}>Sort</label>
+      <select id={sortId} value={sort} onChange={(event) => onSortChange(event.currentTarget.value)}>
+        {SORT_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
       <p className="findings-revisions" title="detector revisions">
         <span className="revision">{projection.revisions.base}</span>
         <span aria-hidden="true"> → </span>
@@ -79,16 +89,8 @@ export function Toolbar({
           checked={showHidden}
           onChange={(event) => onShowHiddenChange(event.currentTarget.checked)}
         />
-        Show hidden findings
+        Show hidden findings ({hiddenCount})
       </label>
-      <label htmlFor={sortId}>Sort</label>
-      <select id={sortId} value={sort} onChange={(event) => onSortChange(event.currentTarget.value)}>
-        {SORT_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
       <button type="button" className="export-toggle" onClick={onToggleExport}>
         Export ({selectedCount})
       </button>

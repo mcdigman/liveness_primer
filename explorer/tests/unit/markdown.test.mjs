@@ -37,10 +37,11 @@ test('the export states count, digest, revisions, safety state, and project coun
   assert.match(text, /^# liveness primer review export$/mu);
   assert.match(text, new RegExp(`report sha256: \`${DIGEST}\``, 'u'));
   assert.match(text, /detector: faketool, base command\\: old\\-faketool → head command\\: new\\-faketool/u);
-  assert.match(text, /comparison: \*\*not comparable\*\*; isolation enforced; complete/u);
+  assert.match(text, /comparison: \*\*environments may differ\*\*/u);
+  assert.match(text, /sandboxing was enforced; findings complete/u);
   assert.match(
     text,
-    /run health: detector errors 0, corpus warnings 0, source warnings 0, environment deltas 0/u,
+    /run health: detector errors 0, unexpected baseline findings 0, source excerpt warnings 0, dependency differences 0/u,
   );
   assert.match(text, new RegExp(`selected findings: ${selectedRows.length} across 1 project\\b`, 'u'));
   assert.match(text, /## alpha @ 33333333 — \d+ selected/u);
@@ -50,7 +51,10 @@ test('a clean comparable run states so plainly', () => {
   const report = goldenReport();
   report.manifest.comparable = true;
   const { text } = selectedExport(report, 1);
-  assert.match(text, /comparison: comparable; isolation enforced; complete/u);
+  assert.match(
+    text,
+    /comparison: base and head ran in matching managed environments; sandboxing was enforced; findings complete/u,
+  );
   assert.match(text, /selected findings: 1 across 1 project\b/u);
 });
 
@@ -60,8 +64,17 @@ test('safety flags surface truncation and isolation failures', () => {
   report.projects[0].truncated = true;
   report.manifest.isolation_enforced = false;
   const { text } = selectedExport(report);
-  assert.match(text, /isolation \*\*not enforced\*\*/u);
-  assert.match(text, /\*\*truncated\*\* \(alpha\)/u);
+  assert.match(text, /\*\*sandboxing was not enforced\*\*/u);
+  assert.match(text, /findings \*\*incomplete\*\*: the results cap left findings out of alpha/u);
+});
+
+test('an export document states its subset nature instead of claiming a results cap', () => {
+  const report = goldenReport();
+  report.document_kind = 'explorer-export';
+  report.truncated = true;
+  report.projects[0].truncated = true;
+  const { text } = selectedExport(report);
+  assert.match(text, /findings are \*\*a chosen subset\*\*: this export omits unselected findings of alpha/u);
 });
 
 test('pinned source links appear only for GitHub-pinned projects and only as built URLs', () => {

@@ -90,6 +90,7 @@ export function confidenceBucket(confidence) {
  * @property {number} integrityWarningCount
  * @property {number} sourceWarningCount
  * @property {import('./types.js').DependencyDelta[]} environmentDelta
+ * @property {boolean} isExport the document is an explorer export of a chosen subset
  * @property {boolean} clean no condition present
  */
 
@@ -237,6 +238,7 @@ export function projectReport(report) {
     integrityWarningCount,
     sourceWarningCount,
     environmentDelta: manifest.environment_delta,
+    isExport: /** @type {{document_kind?: unknown}} */ (report).document_kind !== undefined,
     clean:
       manifest.comparable &&
       manifest.isolation_enforced &&

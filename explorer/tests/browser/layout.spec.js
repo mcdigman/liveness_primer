@@ -55,6 +55,18 @@ for (const viewport of [
       expect(Math.abs(after - before)).toBeLessThan(4);
     });
 
+    test('the Export column header label is never clipped', async ({ page }) => {
+      await page.goto('./');
+      await openReportAndWait(page, goldenReport());
+      const clipped = await page.evaluate(() => {
+        const title = document
+          .querySelector('.tabulator-header .header-export')
+          .closest('.tabulator-col-title');
+        return title.scrollWidth > title.clientWidth;
+      });
+      expect(clipped).toBe(false);
+    });
+
     test('large reports render a bounded number of rows', async ({ page }) => {
       await page.goto('./');
       await openReportAndWait(page, largeReport(1500, 3));

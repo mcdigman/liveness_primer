@@ -248,8 +248,10 @@ export function ContextPanel({ row, projection, workspace, onClose, onAnnounce }
           />
           {excerpt.omitted_lines > 0 && (
             <p className="source-note">
-              {excerpt.omitted_lines} reported-span line{excerpt.omitted_lines === 1 ? '' : 's'} beyond the
-              evidence budget.
+              The report embeds only a capped excerpt, so {excerpt.omitted_lines} line
+              {excerpt.omitted_lines === 1 ? '' : 's'} of the reported span{' '}
+              {excerpt.omitted_lines === 1 ? 'is' : 'are'} not shown here. Open the pinned source or load the
+              complete file to see the full span.
             </p>
           )}
         </>

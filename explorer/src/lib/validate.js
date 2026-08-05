@@ -72,7 +72,11 @@ export function checkReport(text) {
     return {
       ok: false,
       errors: [
-        bounded(`Unsupported schema version ${shown}; this explorer supports ${supportedSchemaVersion}.`),
+        bounded(
+          `Unsupported schema version ${shown}; this explorer reads version ${supportedSchemaVersion}. ` +
+            'Regenerate the report with the liveness-primer release this explorer ships with, or open it ' +
+            'in the explorer build matching the report.',
+        ),
       ],
     };
   }
@@ -83,9 +87,12 @@ export function checkReport(text) {
       const where = failure.instancePath === '' ? '/' : failure.instancePath;
       return bounded(`${where}: ${failure.message ?? 'schema violation'}`);
     });
+    const lead =
+      'This file is not structured like a liveness-primer report or export, so it cannot be opened.';
     return {
       ok: false,
-      errors: failures.length > 0 ? failures : ['The document does not match the report schema.'],
+      errors:
+        failures.length > 0 ? [`${lead} The first problems, located by JSON path:`, ...failures] : [lead],
     };
   }
   const report = /** @type {Report} */ (parsed);
@@ -111,11 +118,17 @@ function locatorPreconditions(report) {
     for (const [diffIndex, diff] of project.diffs.entries()) {
       const where = `/projects/${projectIndex}/diffs/${diffIndex}/locator`;
       if (diff.locator === null) {
-        errors.push(`${where}: every serialized finding diff must carry a locator`);
+        errors.push(
+          `${where}: this finding has no locator, the stable ID the explorer tracks findings by. ` +
+            'Regenerate the report with a liveness-primer release that writes locators.',
+        );
       } else {
         const key = locatorKey(diff.locator);
         if (seen.has(key)) {
-          errors.push(`${where}: duplicate locator within the report`);
+          errors.push(
+            `${where}: duplicate locator — two findings carry the same stable ID, so the explorer ` +
+              'cannot tell them apart. This report was not produced by a standard liveness-primer run.',
+          );
         }
         seen.add(key);
       }
