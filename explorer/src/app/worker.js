@@ -35,7 +35,9 @@ async function importReport(buffer) {
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     const result = checkReport(text);
     if (result.ok) {
-      post({ kind: 'result', ok: true, digest, report: result.report });
+      // A first-generation report is its own origin (§6).
+      const sourceSha256 = result.sourceSha256 ?? digest;
+      post({ kind: 'result', ok: true, digest, sourceSha256, report: result.report });
     } else {
       post({ kind: 'result', ok: false, errors: result.errors });
     }

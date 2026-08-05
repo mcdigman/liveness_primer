@@ -152,6 +152,23 @@
  */
 
 /**
+ * @typedef {object} FindingComment
+ * @property {FindingLocator} locator
+ * @property {string} comment
+ */
+
+/**
+ * An export is a report over a chosen subset plus its origin digest, so
+ * every consumer of `Report` accepts one unchanged.
+ *
+ * @typedef {Report & {
+ *   document_kind: 'explorer-export',
+ *   source_report_sha256: string,
+ *   comments: FindingComment[],
+ * }} ExplorerExport
+ */
+
+/**
  * @typedef {object} ExplorerReview
  * @property {string} schema_version
  * @property {string} report_sha256

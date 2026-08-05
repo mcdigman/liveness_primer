@@ -17,5 +17,6 @@ export interface StandaloneValidateFunction {
 
 export const validateReport: StandaloneValidateFunction;
 export const validateExplorerReview: StandaloneValidateFunction;
+export const validateExplorerExport: StandaloneValidateFunction;
 export const supportedSchemaVersion: string;
 export const schemaDialect: string;

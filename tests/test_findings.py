@@ -19,9 +19,11 @@ from liveness_primer.findings import (
     DiffRollup,
     DiffTotals,
     EvidenceKind,
+    ExplorerExport,
     ExplorerReview,
     FetchRecord,
     Finding,
+    FindingComment,
     FindingDiff,
     FindingLocator,
     FindingOccurrence,
@@ -382,6 +384,69 @@ def test_explorer_review_requires_a_lowercase_full_digest() -> None:
     for digest in ('AB' * 32, 'ab' * 31, 'ab' * 33, 'zz' * 32, ''):
         with pytest.raises(ValidationError, match='report_sha256'):
             ExplorerReview.model_validate({'report_sha256': digest, 'selected': (), 'hidden': ()})
+
+
+def make_export(**overrides: object) -> ExplorerExport:
+    group = DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1)
+    fields: dict[str, object] = {
+        'source_report_sha256': 'ab' * 32,
+        'manifest': make_manifest(),
+        'projects': (project_report(DiffTotals(new=1), (group,)),),
+        'totals': DiffTotals(new=1),
+        'rollups': (group,),
+        'truncated': True,
+    }
+    fields.update(overrides)
+    return ExplorerExport.model_validate(fields)
+
+
+def test_explorer_export_is_a_report_carrying_provenance() -> None:
+    # Explorer contract §6: the export is the report format plus the origin
+    # digest, so the subset it carries is the truncation the format models.
+    export = make_export()
+    assert isinstance(export, Report)
+    assert export.schema_version == SCHEMA_VERSION
+    assert export.document_kind == 'explorer-export'
+    assert export.comments == ()
+    assert ExplorerExport.model_validate_json(export.model_dump_json()) == export
+    # The two documents stay distinct under strict validation both ways.
+    with pytest.raises(ValidationError, match='document_kind'):
+        Report.model_validate(export.model_dump())
+    with pytest.raises(ValidationError, match='source_report_sha256'):
+        ExplorerExport.model_validate(
+            Report(manifest=make_manifest(), projects=(), totals=DiffTotals(), rollups=(), truncated=False).model_dump()
+        )
+
+
+def test_explorer_export_inherits_the_aggregate_checks() -> None:
+    with pytest.raises(ValidationError, match='overall totals are stale'):
+        make_export(totals=DiffTotals(new=2))
+
+
+def test_explorer_export_requires_a_lowercase_full_origin_digest() -> None:
+    for digest in ('AB' * 32, 'ab' * 31, 'ab' * 33, 'zz' * 32, ''):
+        with pytest.raises(ValidationError, match='source_report_sha256'):
+            make_export(source_report_sha256=digest)
+
+
+def test_explorer_export_comments_are_additive_and_keyed_by_unique_locators() -> None:
+    # The sidecar ships with its final shape so populating it later is not a
+    # schema change: a comment names the finding it annotates by locator.
+    comment = FindingComment(locator=locator_at(0), comment='needs a second look')
+    export = make_export(comments=(comment,))
+    assert export.comments == (comment,)
+    assert ExplorerExport.model_validate_json(export.model_dump_json()) == export
+    with pytest.raises(ValidationError, match='comments contains duplicate locators'):
+        make_export(comments=(comment, FindingComment(locator=locator_at(0), comment='again')))
+
+
+def test_finding_comment_is_bounded_to_a_margin_note() -> None:
+    # A comment is a margin note, not a thread: 200 characters is the bound
+    # both implementations enforce, and raising it later would strand new
+    # exports in explorers pinned to this schema version.
+    assert FindingComment(locator=locator_at(0), comment='x' * 200).comment == 'x' * 200
+    with pytest.raises(ValidationError, match='at most 200 characters'):
+        FindingComment(locator=locator_at(0), comment='x' * 201)
 
 
 def test_explorer_review_rejects_duplicate_locators_within_a_tuple() -> None:

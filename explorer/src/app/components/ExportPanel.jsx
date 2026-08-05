@@ -9,6 +9,7 @@
  * @param {boolean} props.storageFailed
  * @param {() => void} props.onDownloadMarkdown
  * @param {() => void} props.onCopyMarkdown
+ * @param {() => void} props.onDownloadReport
  * @param {() => void} props.onDownloadReview
  * @param {() => void} props.onClearSelection
  */
@@ -17,6 +18,7 @@ export function ExportPanel({
   storageFailed,
   onDownloadMarkdown,
   onCopyMarkdown,
+  onDownloadReport,
   onDownloadReview,
   onClearSelection,
 }) {
@@ -53,6 +55,9 @@ export function ExportPanel({
         </button>
         <button type="button" disabled={none} onClick={onCopyMarkdown}>
           Copy export Markdown
+        </button>
+        <button type="button" disabled={none} onClick={onDownloadReport}>
+          Export report JSON
         </button>
         <button type="button" onClick={onDownloadReview}>
           Review export JSON

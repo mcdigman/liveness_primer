@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from liveness_primer.findings import (
     Annotation,
+    ExplorerExport,
     ExplorerReview,
     Finding,
     FindingDiff,
@@ -26,6 +27,7 @@ from liveness_primer.findings import (
 
 EXPORTED_MODELS: Mapping[str, type[BaseModel]] = {
     'annotation': Annotation,
+    'explorer-export': ExplorerExport,
     'explorer-review': ExplorerReview,
     'finding': Finding,
     'finding-diff': FindingDiff,

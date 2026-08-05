@@ -14,6 +14,63 @@ test('a real Python-generated report validates and activates', () => {
   const result = checkReport(textOf(goldenReport()));
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.report.schema_version, supportedSchemaVersion);
+  // A first-generation report is its own origin (§6).
+  assert.equal(result.sourceSha256, null);
+});
+
+test('the two document kinds are disjoint and each is held to its own schema', () => {
+  const asExport = goldenReport();
+  asExport.document_kind = 'explorer-export';
+  asExport.source_report_sha256 = 'ab'.repeat(32);
+  const accepted = checkReport(textOf(asExport));
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.equal(accepted.sourceSha256, 'ab'.repeat(32));
+  // An export without provenance, and a report wearing export fields, both
+  // fail: neither schema admits the other's document.
+  const noOrigin = goldenReport();
+  noOrigin.document_kind = 'explorer-export';
+  assert.equal(checkReport(textOf(noOrigin)).ok, false);
+  const undeclared = goldenReport();
+  undeclared.source_report_sha256 = 'ab'.repeat(32);
+  assert.equal(checkReport(textOf(undeclared)).ok, false);
+  // An unknown discriminator is validated as a report, and rejected as one.
+  const unknownKind = goldenReport();
+  unknownKind.document_kind = 'something-else';
+  const rejected = checkReport(textOf(unknownKind));
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.errors[0], /document_kind|additional properties/u);
+});
+
+test('export comments are validated by locator shape, not accepted blindly', () => {
+  const withComments = goldenReport();
+  withComments.document_kind = 'explorer-export';
+  withComments.source_report_sha256 = 'ab'.repeat(32);
+  withComments.comments = [{ locator: withComments.projects[0].diffs[0].locator, comment: 'look again' }];
+  assert.equal(checkReport(textOf(withComments)).ok, true);
+  withComments.comments = [{ locator: { project: 'alpha' }, comment: 'incomplete' }];
+  const rejected = checkReport(textOf(withComments));
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.errors[0], /\/comments\/0\/locator/u);
+});
+
+test('a comment is bounded to a margin note at the import boundary', () => {
+  const withComments = goldenReport();
+  withComments.document_kind = 'explorer-export';
+  withComments.source_report_sha256 = 'ab'.repeat(32);
+  const locator = withComments.projects[0].diffs[0].locator;
+  withComments.comments = [{ locator, comment: 'x'.repeat(200) }];
+  assert.equal(checkReport(textOf(withComments)).ok, true);
+  withComments.comments = [{ locator, comment: 'x'.repeat(201) }];
+  const rejected = checkReport(textOf(withComments));
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.errors[0], /\/comments\/0\/comment/u);
+  assert.match(rejected.errors[0], /200/u);
+  // The bound counts code points, as Python's `len` does, so an astral
+  // character costs one here and one there rather than one and two.
+  withComments.comments = [{ locator, comment: '😀'.repeat(200) }];
+  assert.equal(checkReport(textOf(withComments)).ok, true);
+  withComments.comments = [{ locator, comment: '😀'.repeat(201) }];
+  assert.equal(checkReport(textOf(withComments)).ok, false);
 });
 
 test('malformed JSON and non-object documents are rejected with bounded errors', () => {

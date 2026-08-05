@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 
 import { facetCounts, rowPredicate } from '../lib/facets.js';
 import { renderMarkdown, markdownFilename } from '../lib/markdown.js';
+import { buildReportExport, reportExportFilename, serializeReportExport } from '../lib/reportexport.js';
 import { buildReviewPayload, reviewFilename, serializeReview } from '../lib/review.js';
 import { sortRows } from '../lib/sorting.js';
 import { MAX_REPORT_BYTES } from '../lib/validate.js';
@@ -84,20 +85,23 @@ export function App() {
       }
       workerRef.current = null;
       worker.terminate();
-      const result = /** @type {{ok: boolean, digest?: string, report?: Report, errors?: string[]}} */ (
-        event.data
-      );
+      const result =
+        /** @type {{ok: boolean, digest?: string, sourceSha256?: string, report?: Report, errors?: string[]}} */ (
+          event.data
+        );
       if (!result.ok) {
         dispatch({ type: 'import-failed', errors: result.errors ?? ['Import failed.'] });
         return;
       }
       const report = /** @type {Report} */ (result.report);
       const digest = /** @type {string} */ (result.digest);
+      const sourceSha256 = /** @type {string} */ (result.sourceSha256);
       const { workspace, failed } = loadWorkspace(localStorage, digest, knownLocatorKeys(report));
       dispatch({
         type: 'import-succeeded',
         filename: file.name,
         digest,
+        sourceSha256,
         report,
         workspace,
         storageFailed: failed,
@@ -180,6 +184,19 @@ export function App() {
         : 'Clipboard is unavailable; use the download instead.',
     });
   }, [exportMarkdown, selectedRows.length]);
+
+  const handleDownloadReport = useCallback(() => {
+    const source = state.sourceSha256;
+    if (projection === null || source === null) {
+      return;
+    }
+    const payload = buildReportExport(projection.report, source, selectedRows);
+    downloadText(reportExportFilename(source), serializeReportExport(payload), 'application/json');
+    dispatch({
+      type: 'announced',
+      text: `Downloaded a report export of ${selectedRows.length} findings.`,
+    });
+  }, [projection, state.sourceSha256, selectedRows]);
 
   const handleDownloadReview = useCallback(() => {
     if (projection === null || digest === null) {
@@ -306,6 +323,7 @@ export function App() {
                 storageFailed={state.storageFailed}
                 onDownloadMarkdown={handleDownloadMarkdown}
                 onCopyMarkdown={handleCopyMarkdown}
+                onDownloadReport={handleDownloadReport}
                 onDownloadReview={handleDownloadReview}
                 onClearSelection={() => dispatch({ type: 'clear-selection' })}
               />

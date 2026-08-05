@@ -11,7 +11,7 @@ import json
 from collections.abc import Sequence
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
@@ -997,6 +997,72 @@ class ExplorerReview(_FrozenModel):
             if len(set(entries)) != len(entries):
                 msg = f'{name} contains duplicate locators'
                 raise ValueError(msg)
+        return self
+
+
+class FindingComment(_FrozenModel):
+    """One reviewer comment attached to a serialized finding (explorer contract §6).
+
+    Attributes
+    ----------
+    locator : FindingLocator
+        Locator of the commented finding.
+    comment : str
+        Reviewer text, at most 200 characters; opaque to this package. The
+        bound keeps a comment a margin note rather than a thread, and
+        raising it later would make new exports unreadable to explorers
+        pinned to this schema version.
+    """
+
+    locator: FindingLocator
+    comment: str = Field(max_length=200)
+
+
+class ExplorerExport(Report):
+    """Report re-emitted by the explorer over a chosen subset (explorer contract §6).
+
+    Every field of :class:`Report` keeps its meaning: ``totals`` and
+    ``rollups`` stay the complete pre-truncation aggregates of the original
+    run while ``diffs`` carries only the exported subset, which is exactly
+    the truncation the format already models. ``source_report_sha256``
+    names the original run's report bytes and is carried through unchanged
+    by a re-export, so an export chain of any length points at one origin;
+    locators identify findings across every generation, which makes the
+    intermediate history irrelevant.
+
+    Attributes
+    ----------
+    document_kind : Literal['explorer-export']
+        Discriminator separating an export from a first-generation report.
+    source_report_sha256 : str
+        Lowercase hex SHA-256 digest of the original report's exact bytes.
+    comments : tuple[FindingComment, ...]
+        Reviewer comments by locator; unique, and empty until the explorer
+        learns to write them.
+    """
+
+    document_kind: Literal['explorer-export'] = 'explorer-export'
+    source_report_sha256: str = Field(pattern='^[0-9a-f]{64}$')
+    comments: tuple[FindingComment, ...] = ()
+
+    @model_validator(mode='after')
+    def _check_unique_comment_locators(self) -> Self:
+        """Reject repeated comment locators.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If two comments name the same locator.
+        """
+        locators = [comment.locator for comment in self.comments]
+        if len(set(locators)) != len(locators):
+            msg = 'comments contains duplicate locators'
+            raise ValueError(msg)
         return self
 
 

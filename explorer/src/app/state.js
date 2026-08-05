@@ -17,6 +17,7 @@ import { clearSelection, emptyWorkspace, setFlagForAll, toggleFlag } from '../li
  * @property {string[] | null} importErrors
  * @property {string | null} filename
  * @property {string | null} digest
+ * @property {string | null} sourceSha256 origin digest of the imported document
  * @property {Projection | null} projection
  * @property {Workspace} workspace
  * @property {boolean} storageFailed
@@ -36,6 +37,7 @@ export function initialState() {
     importErrors: null,
     filename: null,
     digest: null,
+    sourceSha256: null,
     projection: null,
     workspace: emptyWorkspace(),
     storageFailed: false,
@@ -65,7 +67,7 @@ function withAnnouncement(state, text) {
  * @typedef {(
  *   {type: 'import-started'} |
  *   {type: 'import-failed', errors: string[]} |
- *   {type: 'import-succeeded', filename: string, digest: string,
+ *   {type: 'import-succeeded', filename: string, digest: string, sourceSha256: string,
  *     report: import('../lib/types.js').Report, workspace: Workspace, storageFailed: boolean} |
  *   {type: 'import-cancelled'} |
  *   {type: 'workspace-replaced', workspace: Workspace, storageFailed: boolean} |
@@ -118,6 +120,7 @@ export function reduce(state, action) {
           importErrors: null,
           filename: action.filename,
           digest: action.digest,
+          sourceSha256: action.sourceSha256,
           projection,
           workspace: action.workspace,
           storageFailed: action.storageFailed,

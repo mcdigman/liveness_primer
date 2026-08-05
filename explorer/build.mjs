@@ -87,7 +87,7 @@ if (page.includes('%EXPLORER_VERSION%') || !page.includes(mainJs) || !page.inclu
 writeFileSync(join(dist, 'index.html'), page);
 
 // 4. The supported schema documents ship with the application (§8).
-for (const name of ['report.schema.json', 'explorer-review.schema.json']) {
+for (const name of ['report.schema.json', 'explorer-review.schema.json', 'explorer-export.schema.json']) {
   copyFileSync(join(repoRoot, 'liveness_primer', 'schemas', name), join(dist, 'schemas', name));
 }
 

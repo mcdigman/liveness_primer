@@ -12,6 +12,12 @@
 // semantics: the browser boundary is structural, so format validation is
 // disabled rather than half-reimplemented.
 //
+// Ajv emits CommonJS `require` calls for the runtime helpers a few keywords
+// need, even under ESM standalone output, which no browser and no ESM
+// loader can evaluate. The one helper the schemas reach — the string length
+// `maxLength` measures — is substituted below, and any other one fails the
+// build rather than shipping a module that throws on import.
+//
 // Run: node explorer/generate-validators.mjs
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -42,8 +48,14 @@ function loadSchema(name) {
 
 const report = loadSchema('report.schema.json');
 const review = loadSchema('explorer-review.schema.json');
-if (report.dialect !== review.dialect) {
-  throw new Error('report and explorer-review schemas declare different dialects');
+const exported = loadSchema('explorer-export.schema.json');
+for (const { name, loaded } of [
+  { name: 'explorer-review', loaded: review },
+  { name: 'explorer-export', loaded: exported },
+]) {
+  if (report.dialect !== loaded.dialect) {
+    throw new Error(`report and ${name} schemas declare different dialects`);
+  }
 }
 
 const AjvClass = DIALECTS.get(report.dialect);
@@ -55,10 +67,21 @@ const ajv = new AjvClass({
 });
 ajv.addSchema(report.schema, 'report');
 ajv.addSchema(review.schema, 'explorer-review');
-const moduleCode = standaloneCode(ajv, {
+ajv.addSchema(exported.schema, 'explorer-export');
+const generated = standaloneCode(ajv, {
   validateReport: 'report',
   validateExplorerReview: 'explorer-review',
+  validateExplorerExport: 'explorer-export',
 });
+
+// Ajv's ucs2length counts a surrogate pair as one character, which is what
+// Python's `len` counts, so the bound means the same on both sides.
+const UCS2LENGTH_HELPER = 'ajvUcs2Length';
+const moduleCode = generated.replaceAll('require("ajv/dist/runtime/ucs2length").default', UCS2LENGTH_HELPER);
+const stray = moduleCode.match(/require\([^)]*\)/u);
+if (stray !== null) {
+  throw new Error(`generated validators keep an unsubstituted CommonJS import: ${stray[0]}`);
+}
 
 const properties = /** @type {Record<string, {const?: unknown}>} */ (report.schema['properties']);
 const supportedVersion = properties?.schema_version?.const;
@@ -72,6 +95,8 @@ const banner = [
   '// Schemas with Ajv standalone code generation (explorer contract §4.3).',
   '/* eslint-disable */',
   '// @ts-nocheck',
+  '',
+  `const ${UCS2LENGTH_HELPER} = (text) => [...text].length;`,
   '',
 ].join('\n');
 const footer = [

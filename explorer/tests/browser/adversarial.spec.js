@@ -2,7 +2,14 @@
 // (explorer contract §8, §10).
 import { expect, test } from '@playwright/test';
 
-import { HOSTILE_MESSAGE, HOSTILE_SYMBOL, adversarialReport, openReportAndWait } from './fixtures.mjs';
+import {
+  HOSTILE_MESSAGE,
+  HOSTILE_SYMBOL,
+  adversarialReport,
+  goldenReport,
+  openReport,
+  openReportAndWait,
+} from './fixtures.mjs';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('./');
@@ -59,6 +66,33 @@ test('the Markdown export escapes hostile values and creates no hostile link tar
   expect(markdown).not.toContain('<script>');
   expect(markdown).toContain('\\<script\\>');
   expect(markdown).toContain('selected findings:');
+});
+
+test('the report JSON export is a report the explorer reimports', async ({ page, browserName }) => {
+  // Explorer contract §6: the export is the input format, so the workbench
+  // takes its own output back with the subset it wrote.
+  test.skip(browserName !== 'chromium', 'download content inspection runs once, on chromium');
+  await openReportAndWait(page, goldenReport());
+  await page
+    .locator('.tabulator-row:not(.tabulator-group) input[aria-label^="Select for export"]')
+    .first()
+    .check();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export report JSON' }).click();
+  const download = await downloadPromise;
+  const { readFileSync } = await import('node:fs');
+  const text = readFileSync(await download.path(), 'utf8');
+  const document = JSON.parse(text);
+  expect(document.schema_version).toBe('1.2.0');
+  expect(document.document_kind).toBe('explorer-export');
+  expect(document.source_report_sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(document.projects.flatMap((project) => project.diffs)).toHaveLength(1);
+  // Aggregates still describe the run the export came from.
+  expect(document.totals).toEqual(goldenReport().totals);
+  expect(document.truncated).toBe(true);
+  await openReport(page, text, 'export.json');
+  await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(1);
+  await expect(page.locator('.import-errors')).toHaveCount(0);
 });
 
 test('the review JSON export downloads the versioned record', async ({ page, browserName }) => {
