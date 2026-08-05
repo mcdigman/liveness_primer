@@ -20,13 +20,12 @@ export function StatusStrip({ status, projects }) {
     conditions.push({ key: 'isolation', severity: 'error', text: 'Sandboxing disabled' });
   }
   if (status.truncated) {
-    const suffix = `${status.truncatedProjects.length} project${
-      status.truncatedProjects.length === 1 ? '' : 's'
-    }`;
     conditions.push({
       key: 'truncated',
       severity: 'warning',
-      text: status.isExport ? `Exported subset: ${suffix}` : `Findings incomplete: ${suffix}`,
+      text: `Findings incomplete: ${status.truncatedProjects.length} project${
+        status.truncatedProjects.length === 1 ? '' : 's'
+      }`,
     });
   }
   if (status.errorCount > 0) {
@@ -84,9 +83,10 @@ export function StatusStrip({ status, projects }) {
         {status.truncated &&
           (status.isExport ? (
             <p>
-              This file is an export of findings chosen in the explorer, so by design it omits the unselected
-              findings of: {status.truncatedProjects.join(', ')}. Totals and rollups still describe the
-              complete original run.
+              This file is an explorer export, so findings are missing from:{' '}
+              {status.truncatedProjects.join(', ')}. They were left unselected when the export was made, cut
+              by the original run&apos;s results cap, or both. Totals and rollups still describe the complete
+              original run.
             </p>
           ) : (
             <p>

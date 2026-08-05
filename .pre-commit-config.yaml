@@ -69,6 +69,8 @@ repos:
       - platformdirs>=4
       - filelock>=3
       - packaging>=24
+      - PyYAML>=6
+      - types-PyYAML
       - rich>=13
       - httpx>=0.28,<1
       - pytest

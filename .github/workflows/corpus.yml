@@ -1,14 +1,14 @@
 name: Corpus
 
-# Contract §5/§6: validate the corpus TOML and verify declared licenses
+# Contract §5/§6: validate the corpus YAML and verify declared licenses
 # against the GitHub license API on PRs touching the corpus file. Detection
 # is advisory-strength but the check is binding in CI.
 on:
   push:
     branches: [main]
-    paths: [corpus.toml]
+    paths: [corpus.yaml]
   pull_request:
-    paths: [corpus.toml]
+    paths: [corpus.yaml]
   workflow_dispatch:
 
 concurrency:

@@ -183,30 +183,30 @@ def test_corpus_accepts_valid_entries() -> None:
     assert [entry.name for entry in corpus.projects] == ['one', 'two']
 
 
-VALID_TOML = f"""
-[[projects]]
-name = "one"
-repo = "https://github.com/example/one"
-license = "MIT"
-pin = "{PIN_A}"
-
-[projects.tools.vulture]
-targets = ["src"]
-cost = 3.0
-expected_clean = true
-
-[[projects]]
-name = "two"
-repo = "https://github.com/example/two"
-license = "Apache-2.0"
-branch = "main"
-exclude_tools = ["skylos"]
+VALID_YAML = f"""
+projects:
+  - name: one
+    repo: https://github.com/example/one
+    license: MIT
+    pin: {PIN_A}
+    tools:
+      vulture:
+        targets:
+          - src
+        cost: 3.0
+        expected_clean: true
+  - name: two
+    repo: https://github.com/example/two
+    license: Apache-2.0
+    branch: main
+    exclude_tools:
+      - skylos
 """
 
 
 def test_load_corpus_round_trip(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.write_text(VALID_TOML, encoding='utf-8')
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(VALID_YAML, encoding='utf-8')
     corpus = load_corpus(corpus_file, known_tools=('vulture', 'skylos'))
     assert corpus.projects[0].tool_settings('vulture').expected_clean is True
     assert corpus.projects[1].branch == 'main'
@@ -214,21 +214,21 @@ def test_load_corpus_round_trip(tmp_path: Path) -> None:
 
 def test_load_corpus_rejects_missing_file(tmp_path: Path) -> None:
     with pytest.raises(CorpusConfigError, match='cannot read corpus file'):
-        load_corpus(tmp_path / 'absent.toml')
+        load_corpus(tmp_path / 'absent.yaml')
 
 
 def test_load_corpus_accepts_symlink_to_regular_file(tmp_path: Path) -> None:
-    target = tmp_path / 'target.toml'
-    target.write_text(VALID_TOML, encoding='utf-8')
-    corpus_file = tmp_path / 'corpus.toml'
+    target = tmp_path / 'target.yaml'
+    target.write_text(VALID_YAML, encoding='utf-8')
+    corpus_file = tmp_path / 'corpus.yaml'
     corpus_file.symlink_to(target)
     corpus = load_corpus(corpus_file)
     assert len(corpus.projects) == 2
 
 
 def test_load_corpus_rejects_broken_symlink(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.symlink_to(tmp_path / 'absent.toml')
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.symlink_to(tmp_path / 'absent.yaml')
     with pytest.raises(CorpusConfigError, match='cannot read corpus file'):
         load_corpus(corpus_file)
 
@@ -236,21 +236,21 @@ def test_load_corpus_rejects_broken_symlink(tmp_path: Path) -> None:
 def test_load_corpus_rejects_symlink_to_directory(tmp_path: Path) -> None:
     target = tmp_path / 'target'
     target.mkdir()
-    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file = tmp_path / 'corpus.yaml'
     corpus_file.symlink_to(target)
     with pytest.raises(CorpusConfigError, match='not a regular file'):
         load_corpus(corpus_file)
 
 
 def test_load_corpus_rejects_symlink_loop(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file = tmp_path / 'corpus.yaml'
     corpus_file.symlink_to(corpus_file)
     with pytest.raises(CorpusConfigError, match='cannot read corpus file'):
         load_corpus(corpus_file)
 
 
 def test_load_corpus_rejects_non_file(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file = tmp_path / 'corpus.yaml'
     corpus_file.mkdir()
     with pytest.raises(CorpusConfigError, match='not a regular file'):
         load_corpus(corpus_file)
@@ -264,43 +264,43 @@ def test_load_corpus_rejects_character_device() -> None:
 
 
 def test_load_corpus_rejects_oversized_file(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.write_text(VALID_TOML + '\n#' + 'x' * 1_048_576, encoding='utf-8')
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(VALID_YAML + '\n#' + 'x' * 1_048_576, encoding='utf-8')
     with pytest.raises(CorpusConfigError, match='exceeds 1048576 bytes'):
         load_corpus(corpus_file)
 
 
 def test_load_corpus_rejects_invalid_utf8(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
+    corpus_file = tmp_path / 'corpus.yaml'
     corpus_file.write_bytes(b'\xff')
     with pytest.raises(CorpusConfigError, match='not valid UTF-8'):
         load_corpus(corpus_file)
 
 
-def test_load_corpus_rejects_bad_toml(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.write_text('projects = [', encoding='utf-8')
-    with pytest.raises(CorpusConfigError, match='not valid TOML'):
+def test_load_corpus_rejects_bad_yaml(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text('projects: [', encoding='utf-8')
+    with pytest.raises(CorpusConfigError, match='not valid YAML'):
         load_corpus(corpus_file)
 
 
 def test_load_corpus_rejects_schema_violations(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.write_text(VALID_TOML.replace('name = "two"', 'name = "two"\nsurprise = 1'), encoding='utf-8')
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(VALID_YAML.replace('  - name: two', '  - name: two\n    surprise: 1'), encoding='utf-8')
     with pytest.raises(CorpusConfigError, match='invalid'):
         load_corpus(corpus_file)
 
 
 def test_load_corpus_rejects_unknown_tool_references(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.write_text(VALID_TOML, encoding='utf-8')
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(VALID_YAML, encoding='utf-8')
     with pytest.raises(CorpusConfigError, match="unknown tool 'skylos'"):
         load_corpus(corpus_file, known_tools=('vulture',))
 
 
 def test_load_corpus_without_known_tools_skips_reference_check(tmp_path: Path) -> None:
-    corpus_file = tmp_path / 'corpus.toml'
-    corpus_file.write_text(VALID_TOML, encoding='utf-8')
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(VALID_YAML, encoding='utf-8')
     corpus = load_corpus(corpus_file)
     assert len(corpus.projects) == 2
 

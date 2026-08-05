@@ -68,9 +68,14 @@ export function App() {
 
   const openFile = useCallback(async (/** @type {File} */ file) => {
     if (file.size > MAX_REPORT_BYTES) {
+      const limit = MAX_REPORT_BYTES / (1024 * 1024);
       dispatch({
         type: 'import-failed',
-        errors: [`${file.name} is larger than the 50 MiB report bound and was not read.`],
+        errors: [
+          `${file.name} was not read: it is ${Math.ceil(file.size / (1024 * 1024))} MiB, and this ` +
+            `explorer opens reports up to ${limit} MiB. Regenerate the report with fewer projects ` +
+            'or a lower results cap.',
+        ],
       });
       return;
     }
@@ -111,7 +116,13 @@ export function App() {
       if (workerRef.current === worker) {
         workerRef.current = null;
         worker.terminate();
-        dispatch({ type: 'import-failed', errors: ['The import worker failed to run.'] });
+        dispatch({
+          type: 'import-failed',
+          errors: [
+            'The browser could not run the background import task, so the file was not read. ' +
+              'Reload the page and try again; if it keeps failing, update your browser.',
+          ],
+        });
       }
     });
     worker.postMessage({ kind: 'import', buffer }, [buffer]);

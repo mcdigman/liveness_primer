@@ -2,17 +2,17 @@
 
 Copyright (C) 2026 Matthew C. Digman
 
-The corpus is a human-authored TOML file parsed with ``tomllib`` and validated
+The corpus is a human-authored YAML file parsed with ``PyYAML`` and validated
 into the pydantic models here, which are the source of truth.
 """
 
 import re
-import tomllib
 from collections.abc import Collection, Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from liveness_primer.errors import LivenessPrimerError
@@ -362,7 +362,7 @@ def _read_corpus_text(path: Path) -> str:
 
 
 def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Corpus:
-    """Load and validate a corpus TOML file (contract §5).
+    """Load and validate a corpus YAML file (contract §5).
 
     Parameters
     ----------
@@ -381,13 +381,13 @@ def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Co
     ------
     CorpusConfigError
         If the file is missing, not regular, oversized, unreadable, not valid
-        UTF-8 or TOML, or violates the schema.
+        UTF-8 or YAML, or violates the schema.
     """
     text = _read_corpus_text(path)
     try:
-        raw = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        msg = f'corpus file {path} is not valid TOML: {exc}'
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        msg = f'corpus file {path} is not valid YAML: {exc}'
         raise CorpusConfigError(msg) from exc
     try:
         corpus = Corpus.model_validate(raw)

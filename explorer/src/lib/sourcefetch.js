@@ -38,7 +38,7 @@ export async function fetchCompleteFile(
     return { ok: false, reason: 'invalid source URL' };
   }
   if (parsed.origin !== RAW_SOURCE_ORIGIN) {
-    return { ok: false, reason: 'refused: not the pinned raw GitHub origin' };
+    return { ok: false, reason: 'blocked: not the pinned GitHub source location' };
   }
   /** @type {Response} */
   let response;
@@ -57,11 +57,11 @@ export async function fetchCompleteFile(
   }
   const declared = Number(response.headers.get('content-length') ?? '0');
   if (Number.isFinite(declared) && declared > maxBytes) {
-    return { ok: false, reason: 'file is larger than the 2 MiB bound' };
+    return { ok: false, reason: 'the file is larger than the 2 MiB this viewer loads' };
   }
   const body = response.body;
   if (body === null) {
-    return { ok: false, reason: 'empty response body' };
+    return { ok: false, reason: 'the server sent no content' };
   }
   const reader = body.getReader();
   /** @type {Uint8Array[]} */
@@ -76,7 +76,7 @@ export async function fetchCompleteFile(
       received += value.byteLength;
       if (received > maxBytes) {
         await reader.cancel();
-        return { ok: false, reason: 'file is larger than the 2 MiB bound' };
+        return { ok: false, reason: 'the file is larger than the 2 MiB this viewer loads' };
       }
       chunks.push(value);
     }

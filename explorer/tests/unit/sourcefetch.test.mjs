@@ -47,7 +47,7 @@ test('refuses other origins and invalid URLs without fetching', async () => {
     throw new Error('must not be called');
   };
   const foreign = await fetchCompleteFile('https://evil.example/x.py', { fetchImpl });
-  assert.deepEqual(foreign, { ok: false, reason: 'refused: not the pinned raw GitHub origin' });
+  assert.deepEqual(foreign, { ok: false, reason: 'blocked: not the pinned GitHub source location' });
   const invalid = await fetchCompleteFile('not a url', { fetchImpl });
   assert.deepEqual(invalid, { ok: false, reason: 'invalid source URL' });
 });
@@ -66,7 +66,7 @@ test('HTTP failures and network failures fall back with a reason', async () => {
   const emptyBody = await fetchCompleteFile(URL_OK, {
     fetchImpl: async () => fakeResponse([], { body: null }),
   });
-  assert.deepEqual(emptyBody, { ok: false, reason: 'empty response body' });
+  assert.deepEqual(emptyBody, { ok: false, reason: 'the server sent no content' });
 });
 
 test('the 2 MiB bound applies to both declared and streamed sizes', async () => {
@@ -74,12 +74,12 @@ test('the 2 MiB bound applies to both declared and streamed sizes', async () => 
   const declared = await fetchCompleteFile(URL_OK, {
     fetchImpl: async () => fakeResponse([], { headers: { 'content-length': String(MAX_SOURCE_BYTES + 1) } }),
   });
-  assert.deepEqual(declared, { ok: false, reason: 'file is larger than the 2 MiB bound' });
+  assert.deepEqual(declared, { ok: false, reason: 'the file is larger than the 2 MiB this viewer loads' });
   const streamed = await fetchCompleteFile(URL_OK, {
     fetchImpl: async () => fakeResponse([new Uint8Array(600), new Uint8Array(600)]),
     maxBytes: 1000,
   });
-  assert.deepEqual(streamed, { ok: false, reason: 'file is larger than the 2 MiB bound' });
+  assert.deepEqual(streamed, { ok: false, reason: 'the file is larger than the 2 MiB this viewer loads' });
 });
 
 test('a stream that errors mid-read reports a network failure', async () => {

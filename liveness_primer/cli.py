@@ -172,7 +172,7 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     run_parser.add_argument('-k', dest='keywords', action='append', default=[], help='select projects by substring')
     run_parser.add_argument('--all', dest='select_all', action='store_true', help='select every applicable project')
     run_parser.add_argument('--max-cost', type=_positive_float, help='greedy selection budget in CPU-seconds')
-    run_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
+    run_parser.add_argument('--corpus', type=Path, default=Path('corpus.yaml'), help='corpus YAML file')
     run_parser.add_argument('--project', dest='project_url', help='ad-hoc mode: single target repository URL')
     run_parser.add_argument('--max-results', type=_positive_int, default=200, help='per-project cap on rendered diffs')
     run_parser.add_argument(
@@ -228,10 +228,10 @@ def _add_corpus_parser(subcommands: 'argparse._SubParsersAction[argparse.Argumen
     """
     corpus_parser = subcommands.add_parser('corpus', help='corpus maintenance commands')
     corpus_commands = corpus_parser.add_subparsers(dest='corpus_command', required=True)
-    validate_parser = corpus_commands.add_parser('validate', help='parse and validate the corpus TOML')
-    validate_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
+    validate_parser = corpus_commands.add_parser('validate', help='parse and validate the corpus YAML')
+    validate_parser.add_argument('--corpus', type=Path, default=Path('corpus.yaml'), help='corpus YAML file')
     license_parser = corpus_commands.add_parser('license-check', help='verify licenses via the GitHub API (§6)')
-    license_parser.add_argument('--corpus', type=Path, default=Path('corpus.toml'), help='corpus TOML file')
+    license_parser.add_argument('--corpus', type=Path, default=Path('corpus.yaml'), help='corpus YAML file')
 
 
 def _add_schema_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentParser]') -> None:

@@ -64,7 +64,7 @@ point*: pre-triage, triage, or post-triage (§10).
   non-comparable runs. `--fresh` forces same-run rebuilds of both environments.
 - Concurrency: `asyncio` orchestrates per-project subprocesses; parallelism is set by
   `--jobs N` and the default per-(project, tool) timeout by `--timeout S` (§12), with
-  per-(project, tool) `timeout` overrides in the corpus TOML (§5).
+  per-(project, tool) `timeout` overrides in the corpus YAML (§5).
 
 ## 4. Supported detectors
 
@@ -93,7 +93,7 @@ point*: pre-triage, triage, or post-triage (§10).
 
 ## 5. Corpus specification
 
-- The corpus is a human-authored TOML file parsed with `tomllib` and validated into pydantic
+- The corpus is a human-authored YAML file parsed with PyYAML and validated into pydantic
   models (the source of truth); JSON Schema is exported from the models (§7).
 - Per-project fields: `name` (unique key; the same repository may appear under distinct
   names to allow multiple pins), `repo` URL, `license` (SPDX ID), exactly one of `pin`
@@ -230,7 +230,7 @@ printing the package version and `SCHEMA_VERSION`. Commands:
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
   [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
   [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]`
-- `corpus validate` — parse and validate the corpus TOML.
+- `corpus validate` — parse and validate the corpus YAML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF
   --bad REF [--repo URL] [--predicate P]` — binary search over detector commits. The prior
@@ -296,7 +296,7 @@ design intentionally blocks it, but it is not gated in CI initially.
 
 ## 17. Dependencies
 
-- Runtime: `pydantic>=2`, `platformdirs>=4`, `filelock>=3`, `packaging>=24`.
+- Runtime: `pydantic>=2`, `platformdirs>=4`, `filelock>=3`, `packaging>=24`, `PyYAML>=6`.
 - Extras: `[license]` → `httpx` (license verification only).
 - Stdlib elsewhere: `tomllib`, `argparse`, `subprocess`/`venv`, `asyncio`. Git via
   subprocess; `uv` used opportunistically, never required. Detectors are never dependencies

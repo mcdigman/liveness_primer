@@ -29,7 +29,7 @@ A reviewer must be able to:
 - search, filter, group, sort, select, and hide findings;
 - inspect base/head analyzer output and pinned source evidence for one finding;
 - preserve local selection and hidden state for the same report; and
-- export the selected findings as Markdown or a versioned JSON review record.
+- export the selected findings as Markdown or as a JSON export the explorer reimports.
 
 The findings are the primary content. Provenance and operational warnings remain prominent,
 but they must not displace the findings into a narrow mobile-style column on a laptop.
@@ -220,9 +220,10 @@ serialized locator; browser code must not calculate the occurrence ordinal.
 
 ### 4.3 Structural validation
 
-Every imported report is untrusted input. Before rendering report-derived text, the browser
-must validate the complete parsed value against the bundled `report.schema.json` matching the
-supported schema version.
+Every imported document is untrusted input. Before rendering report-derived text, the browser
+must validate the complete parsed value against the bundled generated schema for its declared
+kind — `report.schema.json`, or `explorer-export.schema.json` for the export of §6 — matching
+the supported schema version.
 
 Validation is provided by Ajv, a maintained, standards-conforming JSON Schema library.
 The schema is compiled during the build into a bundled validator compatible with the
@@ -270,7 +271,7 @@ to report order restores the serialized project and finding order.
 
 Every finding has two independent workspace flags:
 
-- `selected` means include it in review export;
+- `selected` means include it in exports;
 - `hidden` removes it from the default findings view.
 
 `Show hidden findings` reveals hidden rows without clearing their state. A hidden finding may
@@ -281,7 +282,7 @@ Workspace state is stored locally under the SHA-256 digest of the exact report b
 byte-different report never inherits it. Storage failure leaves the in-memory workspace usable
 and displays a persistent warning with immediate export actions.
 
-The versioned JSON review record contains only:
+The versioned JSON review record persisting workspace state contains only:
 
 ```text
 ExplorerReview:
@@ -295,8 +296,24 @@ ExplorerReview:
 64 lowercase hexadecimal characters. Entries within each tuple are unique, enforced by a model
 validator; report order is a producer obligation the model cannot check without the report.
 The implementation supplies a Python model and generated schema for this portable record
-rather than maintaining independent Python and browser definitions. Importing review JSON is
-optional for v1; exporting it is required.
+rather than maintaining independent Python and browser definitions. The record is the stored
+workspace payload; the explorer need not offer it for download or import.
+
+The JSON export is the imported report document narrowed to the selected findings, extended
+with a fixed discriminator, the origin digest, and unique bounded per-finding comments:
+
+```text
+ExplorerExport(Report):
+    document_kind: 'explorer-export'
+    source_report_sha256: str
+    comments: tuple[FindingComment, ...]
+```
+
+Aggregates carry through unchanged with `truncated` raised over omitted findings, so totals
+and rollups keep describing the complete original run. The export validates under §4.3
+against its own generated schema and activates the workbench exactly as a report does.
+`source_report_sha256` names the original run's report bytes and survives re-export
+unchanged, so any chain of exports points at one origin.
 
 The Markdown export covers selected findings only and clearly states the selected count,
 report digest, detector revisions, comparison safety/completeness state, and affected project
@@ -416,9 +433,9 @@ Implementation is complete when:
 8. Selecting a row opens base/head analyzer context and embedded pinned source evidence
    without changing central scroll or workspace state.
 9. Selection and hidden state persist only for the exact report digest, survive storage
-   failure in memory, and export through the generated review schema.
-10. Selected findings download and copy as safe, useful Markdown, while review state downloads
-    as versioned JSON.
+   failure in memory, and persist through the generated review schema.
+10. Selected findings download and copy as safe, useful Markdown, and download as a
+    schema-validated JSON export the explorer accepts as input.
 11. The static bundle works from a GitHub Pages subpath, includes no remote runtime dependency
     or telemetry, and enforces its CSP without `unsafe-inline` or `unsafe-eval`.
 12. Large reports remain bounded and responsive through off-main-thread import and a maintained

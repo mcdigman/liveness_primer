@@ -43,6 +43,10 @@ async function importReport(buffer) {
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'unknown error';
-    post({ kind: 'result', ok: false, errors: [`Import failed: ${detail}`] });
+    post({
+      kind: 'result',
+      ok: false,
+      errors: [`The file could not be read (${detail}). Try opening it again.`],
+    });
   }
 }

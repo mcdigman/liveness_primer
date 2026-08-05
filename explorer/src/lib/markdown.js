@@ -44,7 +44,7 @@ function statusLines(projection) {
   const completeness = !status.truncated
     ? 'findings complete'
     : status.isExport
-      ? `findings are **a chosen subset**: this export omits unselected findings of ${projectList}; totals still describe the complete run`
+      ? `findings are **an export subset**: findings are missing from ${projectList} (unselected at export, cut by the original run's results cap, or both); totals still describe the complete run`
       : `findings **incomplete**: the results cap left findings out of ${projectList}; totals still count the complete run`;
   const counts = [
     `detector errors ${status.errorCount}`,

@@ -74,7 +74,10 @@ test('an export document states its subset nature instead of claiming a results 
   report.truncated = true;
   report.projects[0].truncated = true;
   const { text } = selectedExport(report);
-  assert.match(text, /findings are \*\*a chosen subset\*\*: this export omits unselected findings of alpha/u);
+  assert.match(
+    text,
+    /findings are \*\*an export subset\*\*: findings are missing from alpha \(unselected at export, cut by the original run's results cap, or both\)/u,
+  );
 });
 
 test('pinned source links appear only for GitHub-pinned projects and only as built URLs', () => {

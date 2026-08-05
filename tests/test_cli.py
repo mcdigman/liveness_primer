@@ -314,23 +314,21 @@ def test_version_tolerates_uninstalled_package(
     assert 'unknown' in capsys.readouterr().out
 
 
-CORPUS_TOML = """
-[[projects]]
-name = "alpha"
-repo = "https://github.com/example/alpha"
-license = "MIT"
-pin = "{pin}"
-
-[[projects]]
-name = "beta"
-repo = "https://github.com/example/beta"
-license = "Apache-2.0"
-branch = "main"
+CORPUS_YAML = """
+projects:
+  - name: alpha
+    repo: https://github.com/example/alpha
+    license: MIT
+    pin: {pin}
+  - name: beta
+    repo: https://github.com/example/beta
+    license: Apache-2.0
+    branch: main
 """.format(pin='a' * 40)
 
 
-def write_corpus(tmp_path: Path, content: str = CORPUS_TOML) -> Path:
-    corpus_file = tmp_path / 'corpus.toml'
+def write_corpus(tmp_path: Path, content: str = CORPUS_YAML) -> Path:
+    corpus_file = tmp_path / 'corpus.yaml'
     atomic_write_text(corpus_file, content)
     return corpus_file
 
@@ -344,7 +342,7 @@ def test_corpus_validate_ok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
 
 
 def test_corpus_validate_rejects_bad_corpus(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    corpus_file = write_corpus(tmp_path, CORPUS_TOML.replace('MIT', 'GPL-3.0-only'))
+    corpus_file = write_corpus(tmp_path, CORPUS_YAML.replace('MIT', 'GPL-3.0-only'))
     assert main(['corpus', 'validate', '--corpus', str(corpus_file)]) == EXIT_FAILURE
     assert 'copyleft' in capsys.readouterr().err
 
