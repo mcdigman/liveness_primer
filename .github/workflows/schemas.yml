@@ -42,5 +42,12 @@ jobs:
       - name: Regenerate schemas
         run: .venv/bin/liveness-primer schema export
 
+      # `git diff` inspects tracked files only, so a schema exported for a
+      # newly added model but never committed is invisible to it: the check
+      # passed while the document was missing from the repository entirely.
+      # Recording untracked files as intent-to-add first brings them into
+      # the comparison, and the diff still names what moved.
       - name: Fail if the exported schemas changed
-        run: git diff --exit-code -- liveness_primer/schemas/
+        run: |
+          git add --intent-to-add -- liveness_primer/schemas/
+          git diff --exit-code -- liveness_primer/schemas/

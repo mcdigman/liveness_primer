@@ -1,0 +1,68 @@
+name: Explorer Pages
+
+# Deploys the explorer from trusted default-branch code only (explorer
+# contract §8). Pull requests never build or deploy with a Pages write
+# token; reports remain downloadable workflow artifacts opened locally by
+# the stable explorer. This workflow is inert until GitHub Pages is
+# enabled for the repository with the "GitHub Actions" source.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# The default token stays read-only; deployment permissions exist only in
+# the deploy job below (explorer contract §8).
+permissions:
+  contents: read
+
+concurrency:
+  group: explorer-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      # No dependency needs an install lifecycle script: esbuild is driven
+      # through its JS API, which resolves its own platform package, and the
+      # Playwright browsers install in their own explicit step. Skipping the
+      # scripts denies every transitive package arbitrary code execution on
+      # the runner.
+      - name: Install pinned toolchain
+        working-directory: explorer
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build production bundle
+        working-directory: explorer
+        env:
+          EXPLORER_VERSION: ${{ github.sha }}
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b  # v4.0.0
+        with:
+          path: explorer/dist/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # This is the only job holding a write-capable Pages token and an OIDC
+    # identity; a bounded runtime caps how long a hung or subverted run can
+    # hold them (explorer contract §8).
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4.0.5
+        # No checkout: the deploy job only publishes the built artifact.

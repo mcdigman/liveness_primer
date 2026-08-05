@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <!--
+      Strictest enforceable meta CSP for static hosting (explorer contract §8).
+      frame-ancestors requires an HTTP response header and is therefore not
+      claimed here; hosts that can set headers should add
+      `frame-ancestors 'none'` themselves. The optional raw GitHub source
+      origin is the only connection origin beyond the application's own.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://raw.githubusercontent.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; child-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="explorer-version" content="%EXPLORER_VERSION%" />
+    <title>liveness primer report explorer</title>
+    <link rel="stylesheet" href="./assets/main.css" />
+    <script type="module" src="./assets/main.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <p>The liveness primer report explorer needs JavaScript to read a local report file.</p>
+    </noscript>
+  </body>
+</html>

@@ -39,6 +39,7 @@ from liveness_primer.findings import (
 )
 from liveness_primer.isolation import Isolation, scrubbed_environment
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
+from liveness_primer.locators import attach_locators
 from liveness_primer.report.source import collect_source_evidence
 from liveness_primer.tools.base import AdapterError, DetectorAdapter, RawToolOutput, build_invocation
 
@@ -484,11 +485,14 @@ class PrimerRunner:
                 head.findings,
                 confidence_capable=self._adapter.capabilities.has_confidence,
             )
-            truncated = len(outcome.diffs) > self._options.max_results
+            # Locators index the complete canonical sequence before
+            # truncation, so retained indices match it (explorer §4.2).
+            located = attach_locators(item.project.name, outcome.diffs)
+            truncated = len(located) > self._options.max_results
             # Source evidence is read from the pinned corpus checkout for
             # the retained diffs only, after truncation (reporting §3.3).
             diffs, source_warnings = collect_source_evidence(
-                outcome.diffs[: self._options.max_results],
+                located[: self._options.max_results],
                 checkout=item.checkout,
                 excerpt_lines=self._options.excerpt_lines,
             )

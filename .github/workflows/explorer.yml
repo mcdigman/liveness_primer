@@ -1,0 +1,99 @@
+name: Explorer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: explorer-${{ github.ref }}
+  cancel-in-progress: true
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: explorer
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: node --version && npm --version
+
+      # No dependency needs an install lifecycle script: esbuild is driven
+      # through its JS API, which resolves its own platform package, and the
+      # Playwright browsers install in their own explicit step. Skipping the
+      # scripts denies every transitive package arbitrary code execution on
+      # the runner.
+      - name: Install pinned toolchain
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # The committed Ajv standalone validators must match the checked-in
+      # exported schemas (pydantic models remain the source of truth,
+      # explorer contract §4.3).
+      - name: Verify generated validators are in sync
+        run: |
+          npm run generate-validators
+          git diff --exit-code -- src/generated
+
+      - name: Prettier check
+        run: npm run format
+
+      - name: ESLint (zero warnings)
+        run: npm run lint
+
+      - name: Strict type check
+        run: npm run typecheck
+
+      - name: Unit tests with coverage thresholds
+        run: npm run coverage
+
+      - name: Build production bundle
+        env:
+          EXPLORER_VERSION: ${{ github.sha }}
+        run: npm run build
+
+      - name: Bundled-dependency license check
+        run: npm run licenses
+
+      - name: Guard the bundle against leaked paths and fixtures
+        run: |
+          if grep -R "/Users/\|/home/\|report_golden\|locator_golden" dist; then
+            echo "developer path or test fixture leaked into the bundle"
+            exit 1
+          fi
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Browser, layout, accessibility, adversarial, and network suites
+        id: browser-suites
+        run: npm run test:browser
+
+      # Uploaded whenever the suites actually ran, pass or fail, and only
+      # then: the CI reporter always writes the HTML report, so a missing
+      # one means the evidence was lost and must fail loudly rather than
+      # leave an empty artifact behind.
+      - name: Upload Playwright report
+        if: ${{ !cancelled() && steps.browser-suites.conclusion != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: explorer-playwright-report
+          path: explorer/playwright-report/
+          if-no-files-found: error
+
+      - name: Upload distributable bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: explorer-dist
+          path: explorer/dist/
+          if-no-files-found: error

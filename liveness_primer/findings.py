@@ -19,7 +19,9 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 # Minor versions are additive-only; breaking changes require a major bump.
 # 1.1.0 adds nullable rule IDs, nullable source excerpts, aggregate rollups,
 # and the additive `rule` changed-field value (reporting contract §3.6).
-SCHEMA_VERSION = '1.1.0'
+# 1.2.0 adds the additive serialized finding locator and the portable
+# explorer review record (explorer contract §4.2, §6).
+SCHEMA_VERSION = '1.2.0'
 
 
 def _validated_schema_version(value: str) -> str:
@@ -394,6 +396,33 @@ class Finding(_FrozenModel):
         )
 
 
+class FindingLocator(_FrozenModel):
+    """Persistent reference to one serialized finding diff (explorer contract §4.2).
+
+    ``line`` is the diff class's reference-side start line — head for
+    ``new``, base for ``dropped`` and ``changed``. ``occurrence`` is the
+    diff's zero-based position within the subsequence of the same serialized
+    ``ProjectReport.diffs`` tuple whose identity and reference-side start
+    line equal ``(identity, line)``, in serialized order.
+
+    Attributes
+    ----------
+    project : str
+        Corpus project name.
+    identity : str
+        Stable finding identity hash.
+    line : int
+        Reference-side start line (1-based).
+    occurrence : int
+        Zero-based index among diffs sharing ``(identity, line)``.
+    """
+
+    project: str
+    identity: str
+    line: int = Field(ge=1)
+    occurrence: int = Field(ge=0)
+
+
 class FindingDiff(_FrozenModel):
     """One classified difference between the base and head reports.
 
@@ -421,6 +450,10 @@ class FindingDiff(_FrozenModel):
         Head-side occurrence; absent for ``dropped``.
     changed_fields : tuple[ChangedField, ...]
         Fields differing within a ``changed`` pair; empty otherwise.
+    locator : FindingLocator | None
+        Unique serialized locator, assigned during canonical report
+        assembly — after the canonical sort and any diff-transforming
+        hook, before truncation and serialization (explorer contract §4.2).
     """
 
     schema_version: SchemaVersion = SCHEMA_VERSION
@@ -434,6 +467,7 @@ class FindingDiff(_FrozenModel):
     base_occurrence: FindingOccurrence | None = None
     head_occurrence: FindingOccurrence | None = None
     changed_fields: tuple[ChangedField, ...] = ()
+    locator: FindingLocator | None = None
 
     @model_validator(mode='after')
     def _check_sides(self) -> Self:
@@ -916,6 +950,156 @@ class Report(_FrozenModel):
         overall = {(rollup.diff_class, rollup.rule_id, rollup.kind): rollup.count for rollup in self.rollups}
         if overall != merged:
             msg = 'overall rollups are stale: they are not the sum of the project rollups'
+            raise ValueError(msg)
+        return self
+
+
+class ExplorerReview(_FrozenModel):
+    """Portable review record exported by the report explorer (explorer contract §6).
+
+    ``report_sha256`` is the SHA-256 digest of the exact report bytes; a
+    byte-different report never inherits workspace state. Report order of
+    the tuples is a producer obligation the model cannot check without the
+    report.
+
+    Attributes
+    ----------
+    schema_version : SchemaVersion
+        Package-wide schema semver.
+    report_sha256 : str
+        Lowercase hex SHA-256 digest of the exact report bytes.
+    selected : tuple[FindingLocator, ...]
+        Locators selected for export; unique.
+    hidden : tuple[FindingLocator, ...]
+        Locators hidden from the default findings view; unique.
+    """
+
+    schema_version: SchemaVersion = SCHEMA_VERSION
+    report_sha256: str = Field(pattern='^[0-9a-f]{64}$')
+    selected: tuple[FindingLocator, ...]
+    hidden: tuple[FindingLocator, ...]
+
+    @model_validator(mode='after')
+    def _check_unique_locators(self) -> Self:
+        """Reject duplicate locators within either tuple.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If ``selected`` or ``hidden`` repeats a locator.
+        """
+        for name, entries in (('selected', self.selected), ('hidden', self.hidden)):
+            if len(set(entries)) != len(entries):
+                msg = f'{name} contains duplicate locators'
+                raise ValueError(msg)
+        return self
+
+
+class FindingComment(_FrozenModel):
+    """One reviewer comment attached to a serialized finding (explorer contract §6).
+
+    Attributes
+    ----------
+    locator : FindingLocator
+        Locator of the commented finding.
+    comment : str
+        Reviewer text, at most 200 characters; opaque to this package. The
+        bound keeps a comment a margin note rather than a thread, and
+        raising it later would make new exports unreadable to explorers
+        pinned to this schema version.
+    """
+
+    locator: FindingLocator
+    comment: str = Field(max_length=200)
+
+
+EXPLORER_EXPORT_KIND = 'explorer-export'
+
+
+def _validated_document_kind(value: str) -> str:
+    """Constrain an export's discriminator to the one kind it may declare.
+
+    Parameters
+    ----------
+    value : str
+        Declared document kind of the payload.
+
+    Returns
+    -------
+    str
+        The validated kind.
+
+    Raises
+    ------
+    ValueError
+        If the kind is not :data:`EXPLORER_EXPORT_KIND`.
+    """
+    if value != EXPLORER_EXPORT_KIND:
+        msg = f'document_kind {value!r} is not the supported {EXPLORER_EXPORT_KIND!r}'
+        raise ValueError(msg)
+    return value
+
+
+# Pinned the same way as SchemaVersion rather than through Literal: the
+# annotation fixes how the constant renders as JSON Schema (`type` from
+# `str`, `const` from the extra), so the exported document does not shift
+# under the range of pydantic versions the package supports.
+DocumentKind = Annotated[
+    str,
+    AfterValidator(_validated_document_kind),
+    Field(json_schema_extra={'const': EXPLORER_EXPORT_KIND}),
+]
+
+
+class ExplorerExport(Report):
+    """Report re-emitted by the explorer over a chosen subset (explorer contract §6).
+
+    Every field of :class:`Report` keeps its meaning: ``totals`` and
+    ``rollups`` stay the complete pre-truncation aggregates of the original
+    run while ``diffs`` carries only the exported subset, which is exactly
+    the truncation the format already models. ``source_report_sha256``
+    names the original run's report bytes and is carried through unchanged
+    by a re-export, so an export chain of any length points at one origin;
+    locators identify findings across every generation, which makes the
+    intermediate history irrelevant.
+
+    Attributes
+    ----------
+    document_kind : DocumentKind
+        Discriminator separating an export from a first-generation report.
+    source_report_sha256 : str
+        Lowercase hex SHA-256 digest of the original report's exact bytes.
+    comments : tuple[FindingComment, ...]
+        Reviewer comments by locator; unique, and empty until the explorer
+        learns to write them.
+    """
+
+    document_kind: DocumentKind = EXPLORER_EXPORT_KIND
+    source_report_sha256: str = Field(pattern='^[0-9a-f]{64}$')
+    comments: tuple[FindingComment, ...] = ()
+
+    @model_validator(mode='after')
+    def _check_unique_comment_locators(self) -> Self:
+        """Reject repeated comment locators.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If two comments name the same locator.
+        """
+        locators = [comment.locator for comment in self.comments]
+        if len(set(locators)) != len(locators):
+            msg = 'comments contains duplicate locators'
             raise ValueError(msg)
         return self
 

@@ -9,6 +9,8 @@ repos:
   - id: end-of-file-fixer
   - id: check-yaml
   - id: check-added-large-files
+    # The authoritative explorer mockups (design/mockups/) are ~1.4-1.8 MB.
+    args: [--maxkb=2000]
   - id: check-case-conflict
   - id: check-docstring-first
   - id: check-json

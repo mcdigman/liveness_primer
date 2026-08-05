@@ -15,6 +15,8 @@ from pydantic import BaseModel
 
 from liveness_primer.findings import (
     Annotation,
+    ExplorerExport,
+    ExplorerReview,
     Finding,
     FindingDiff,
     FindingOccurrence,
@@ -25,6 +27,8 @@ from liveness_primer.findings import (
 
 EXPORTED_MODELS: Mapping[str, type[BaseModel]] = {
     'annotation': Annotation,
+    'explorer-export': ExplorerExport,
+    'explorer-review': ExplorerReview,
     'finding': Finding,
     'finding-diff': FindingDiff,
     'finding-occurrence': FindingOccurrence,
@@ -45,7 +49,7 @@ def schemas_dir() -> Path:
     return Path(__file__).parent / 'schemas'
 
 
-def _render_schema(model: type[BaseModel]) -> str:
+def render_schema(model: type[BaseModel]) -> str:
     """Serialize one model's JSON Schema deterministically.
 
     The format matches the repository's ``pretty-format-json`` hook
@@ -63,6 +67,9 @@ def _render_schema(model: type[BaseModel]) -> str:
         The schema document, newline-terminated.
     """
     schema = model.model_json_schema(mode='serialization')
+    # Exported documents declare their JSON Schema dialect so consumers
+    # compile validators for it rather than guessing (explorer §4.3).
+    schema['$schema'] = 'https://json-schema.org/draft/2020-12/schema'
     return json.dumps(schema, indent=2, sort_keys=True, ensure_ascii=True) + '\n'
 
 
@@ -84,7 +91,7 @@ def export_schemas(target: Path | None = None) -> tuple[Path, ...]:
     written: list[Path] = []
     for name, model in EXPORTED_MODELS.items():
         path = directory / f'{name}.schema.json'
-        path.write_text(_render_schema(model), encoding='utf-8')
+        path.write_text(render_schema(model), encoding='utf-8')
         written.append(path)
     return tuple(written)
 
@@ -112,6 +119,6 @@ def stale_schemas(target: Path | None = None) -> tuple[str, ...]:
         except FileNotFoundError:
             stale.append(name)
             continue
-        if current != _render_schema(model):
+        if current != render_schema(model):
             stale.append(name)
     return tuple(stale)

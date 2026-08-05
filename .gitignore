@@ -9,6 +9,12 @@ dist/
 tach.toml
 .claude/
 
+# Explorer build output and dev toolchain (explorer contract §5, §8).
+explorer/dist/
+explorer/node_modules/
+explorer/playwright-report/
+explorer/test-results/
+
 # Sphinx HTML docs build output
 docs/_build/
 
