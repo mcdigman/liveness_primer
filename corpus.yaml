@@ -1,0 +1,121 @@
+# The liveness_primer corpus (contract §5).
+#
+# Human-authored; parsed with PyYAML and validated by `liveness-primer
+# corpus validate` (pydantic models are the source of truth). Every project
+# is GitHub-hosted, permissively licensed per the §6 allowlist, actively
+# maintained, and moderate-size. Pins are full commit SHAs so both detector
+# revisions analyze byte-identical checkouts; declared costs are approximate
+# CPU-seconds on the reference runner (measured actuals land in the report).
+
+projects:
+  - name: attrs
+    repo: https://github.com/python-attrs/attrs
+    license: MIT
+    pin: f06ceaafbe5bdbdafad8a0c01a2daabb89386a42
+    tools:
+      vulture:
+        targets:
+          - src
+        cost: 2.0
+      skylos:
+        targets:
+          - src
+        cost: 15.0
+
+  - name: click
+    repo: https://github.com/pallets/click
+    license: BSD-3-Clause
+    pin: 00e592cea702e0b2caa0dee42489fdb1c22cd845
+    tools:
+      vulture:
+        targets:
+          - src/click
+        cost: 2.0
+      skylos:
+        targets:
+          - src/click
+        cost: 15.0
+
+  - name: jinja
+    repo: https://github.com/pallets/jinja
+    license: BSD-3-Clause
+    pin: 5ef70112a1ff19c05324ff889dd30405b1002044
+    tools:
+      vulture:
+        targets:
+          - src/jinja2
+        cost: 2.0
+      skylos:
+        targets:
+          - src/jinja2
+        cost: 15.0
+
+  - name: rich
+    repo: https://github.com/Textualize/rich
+    license: MIT
+    pin: 9d8f9a372cc5916fd4781fec207ced7ddac2f08f
+    tools:
+      vulture:
+        targets:
+          - rich
+        cost: 5.0
+      skylos:
+        targets:
+          - rich
+        cost: 40.0
+
+  - name: pluggy
+    repo: https://github.com/pytest-dev/pluggy
+    license: MIT
+    pin: 21bb5d175372aa474b44178b8a0577be1822279e
+    tools:
+      vulture:
+        targets:
+          - src/pluggy
+        cost: 1.0
+      skylos:
+        targets:
+          - src/pluggy
+        cost: 8.0
+
+  - name: more-itertools
+    repo: https://github.com/more-itertools/more-itertools
+    license: MIT
+    pin: 9ddc55c57390707d97d96302eea1992919c8d930
+    tools:
+      vulture:
+        targets:
+          - more_itertools
+        cost: 1.0
+      skylos:
+        targets:
+          - more_itertools
+        cost: 8.0
+
+  - name: platformdirs
+    repo: https://github.com/tox-dev/platformdirs
+    license: MIT
+    pin: 070777b43db39aa266f6bef2a10f2f4f37913fe1
+    tools:
+      vulture:
+        targets:
+          - src/platformdirs
+        cost: 1.0
+      skylos:
+        targets:
+          - src/platformdirs
+        cost: 8.0
+
+  - name: httpx
+    repo: https://github.com/encode/httpx
+    license: BSD-3-Clause
+    pin: b5addb64f0161ff6bfe94c124ef76f6a1fba5254
+    tools:
+      vulture:
+        targets:
+          - httpx
+        cost: 2.0
+      skylos:
+        targets:
+          - httpx
+        cost: 15.0
