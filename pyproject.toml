@@ -35,7 +35,7 @@ dependencies = [
     "platformdirs>=4",
     "filelock>=3.20.3",
     "packaging>=24",
-    "PyYAML>=6",
+    "PyYAML>=6.0.1",
     # The human-readable reporting contract §6.1 amends initial contract §17:
     # the terminal renderer uses Rich for Unicode width, ANSI styling, and
     # OSC-8 links rather than implementing them independently. The floor is
