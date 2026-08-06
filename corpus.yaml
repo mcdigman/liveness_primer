@@ -119,3 +119,75 @@ projects:
         targets:
           - httpx
         cost: 15.0
+
+  # Shared with Skylos's pinned real-repository framework corpus.
+  - name: pydantic
+    repo: https://github.com/pydantic/pydantic
+    license: MIT
+    pin: 718ef06e1062892128907f4f28e15f76ff1a38f9
+    tools:
+      vulture:
+        targets:
+          - pydantic
+        cost: 7.0
+      skylos:
+        targets:
+          - pydantic
+        cost: 60.0
+
+  - name: flask
+    repo: https://github.com/pallets/flask
+    license: BSD-3-Clause
+    pin: 6a2f545bfd8ed31e19066a299296917e034aca58
+    tools:
+      vulture:
+        targets:
+          - src/flask
+        cost: 2.0
+      skylos:
+        targets:
+          - src/flask
+        cost: 15.0
+
+  - name: pytest
+    repo: https://github.com/pytest-dev/pytest
+    license: MIT
+    pin: 28e86a6c2ae0173831e4925a4af89b02a2936d09
+    tools:
+      vulture:
+        targets:
+          - src/_pytest
+        cost: 6.0
+      skylos:
+        targets:
+          - src/_pytest
+        cost: 50.0
+
+  # Parent of psf/black#5041, preserving four maintainer-accepted dead symbols.
+  - name: black-pre-cleanup
+    repo: https://github.com/psf/black
+    license: MIT
+    pin: 0dae20b2d009f2f03de8696d06b0c947d3abafc9
+    tools:
+      vulture:
+        targets:
+          - src/black
+        cost: 2.0
+      skylos:
+        targets:
+          - src/black
+        cost: 20.0
+
+  - name: requests
+    repo: https://github.com/psf/requests
+    license: Apache-2.0
+    pin: 1f6589ec3a1ee910f9a65cc3ceac60b26677bc0e
+    tools:
+      vulture:
+        targets:
+          - src/requests
+        cost: 2.0
+      skylos:
+        targets:
+          - src/requests
+        cost: 10.0
