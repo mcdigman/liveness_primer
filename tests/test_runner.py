@@ -74,7 +74,9 @@ def escape_run(
 
 def test_escape_hatch_reports_blast_radius(tmp_path: Path, corpus_project: CorpusProject) -> None:
     report = escape_run(tmp_path, corpus_project, [BASE_FINDING], [MOVED_FINDING, NEW_FINDING])
-    assert report.totals == DiffTotals(new=1, changed=1)
+    # The moved helper is a dropped finding at its old line plus a new one
+    # at its new line: the line is part of the finding identity.
+    assert report.totals == DiffTotals(new=2, dropped=1)
     (project_report,) = report.projects
     assert project_report.project == 'fakeproj'
     assert project_report.base_findings == 1
@@ -82,12 +84,12 @@ def test_escape_hatch_reports_blast_radius(tmp_path: Path, corpus_project: Corpu
     assert not project_report.truncated
     assert project_report.errors == ()
     assert project_report.measured_cost_seconds is not None
-    by_class = {diff.diff_class: diff for diff in project_report.diffs}
-    changed = by_class[DiffClass.CHANGED]
-    assert changed.base_occurrence is not None
-    assert changed.head_occurrence is not None
-    assert (changed.base_occurrence.start_line, changed.head_occurrence.start_line) == (5, 9)
-    assert by_class[DiffClass.NEW].symbol == 'fresh'
+    by_class: dict[tuple[DiffClass, str | None], int] = {}
+    for entry in project_report.diffs:
+        by_class[entry.diff_class, entry.symbol] = entry.reference_occurrence.start_line
+    assert by_class[DiffClass.DROPPED, 'unused_helper'] == 5
+    assert by_class[DiffClass.NEW, 'unused_helper'] == 9
+    assert (DiffClass.NEW, 'fresh') in by_class
     assert not report_has_failures(report)
 
 
@@ -191,7 +193,7 @@ def test_expected_clean_violation_warns_but_comparison_runs(tmp_path: Path) -> N
     assert warning.tool == 'vulture'
     assert '1 finding(s)' in warning.detail
     assert 'exit code 3' in warning.detail
-    assert project_report.totals.changed == 1
+    assert project_report.totals == DiffTotals(new=1, dropped=1)
 
 
 def test_expected_clean_pass_produces_no_warning(tmp_path: Path) -> None:
@@ -267,9 +269,9 @@ def test_evaluate_gates_matrix(tmp_path: Path, corpus_project: CorpusProject) ->
     report = make_gate_report(tmp_path, corpus_project)
     comparable = report.model_copy(update={'manifest': report.manifest.model_copy(update={'comparable': True})})
     assert evaluate_gates(comparable, ()) == ()
-    assert evaluate_gates(comparable, ('dropped',)) == ()
-    assert evaluate_gates(comparable, ('new',)) == ('new: 1',)
-    assert evaluate_gates(comparable, ('any',)) == ('new: 1', 'changed: 1')
+    assert evaluate_gates(comparable, ('changed',)) == ()
+    assert evaluate_gates(comparable, ('new',)) == ('new: 2',)
+    assert evaluate_gates(comparable, ('any',)) == ('new: 2', 'dropped: 1')
     assert evaluate_gates(comparable, ('corpus-integrity',)) == ()
 
 
@@ -588,7 +590,7 @@ def test_managed_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, f
     assert manifest.installer == 'fake 1.0'
     assert manifest.environment_delta == ()
     assert manifest.base_cmd is None
-    assert report.totals == DiffTotals(new=1, changed=1)
+    assert report.totals == DiffTotals(new=2, dropped=1)
     assert not report_has_failures(report)
     git_fetches = [record for record in manifest.fetches if record.kind == 'git']
     assert fake_detector_repo in {record.name for record in git_fetches}
@@ -601,16 +603,20 @@ def test_run_collects_source_evidence_from_pinned_checkout(tmp_path: Path, corpu
     # out-of-range locations produce bounded warnings, not fabricated text.
     report = escape_run(tmp_path, corpus_project, [BASE_FINDING], [MOVED_FINDING, NEW_FINDING])
     (project_report,) = report.projects
-    changed = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.CHANGED)
-    assert changed.base_occurrence is not None
-    excerpt = changed.base_occurrence.source_excerpt
+    dropped = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.DROPPED)
+    assert dropped.base_occurrence is not None
+    excerpt = dropped.base_occurrence.source_excerpt
     assert excerpt is not None
     assert excerpt.start_line == 5
     assert excerpt.lines[0] == 'def unused_helper() -> int:'
     assert excerpt.omitted_lines == 0
-    # The moved head side (line 9) is beyond the 6-line file: no excerpt.
-    assert changed.head_occurrence is not None
-    assert changed.head_occurrence.source_excerpt is None
+    # The moved helper's new side (line 9) is beyond the 6-line file: no
+    # excerpt, one bounded warning.
+    moved = next(
+        diff for diff in project_report.diffs if diff.diff_class is DiffClass.NEW and diff.symbol == 'unused_helper'
+    )
+    assert moved.head_occurrence is not None
+    assert moved.head_occurrence.source_excerpt is None
     assert 'pkg/mod.py:L9: reported line 9 is beyond the end of the file (6 line(s))' in project_report.source_warnings
     assert 'pkg/extra.py: not a regular non-symlink file' in project_report.source_warnings
 
@@ -643,11 +649,20 @@ def test_rendered_finding_content_never_leaks_disposable_paths(tmp_path: Path, c
         assert trusted_marker in rendered
 
 
-def test_fake_skylos_rule_change_pairs_as_one_changed_diff(tmp_path: Path, corpus_project: CorpusProject) -> None:
+def skylos_runner(tmp_path: Path) -> PrimerRunner:
+    return PrimerRunner(
+        adapter=get_adapter('skylos'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+    )
+
+
+def test_fake_skylos_rule_change_splits_into_dropped_plus_new(tmp_path: Path, corpus_project: CorpusProject) -> None:
     # Reporting acceptance 3, end to end through the skylos adapter: the
-    # same target with different explicit rule IDs is one `changed` diff
-    # with `rule` in changed_fields; a bucket move that also changes kind
-    # stays a `new` plus a `dropped` finding.
+    # rule ID is part of the finding identity, so the same target with
+    # different explicit rule IDs is a `dropped` plus a `new` finding, as
+    # is a bucket move that also changes kind.
     base_cmd = write_fake_detector_script(
         tmp_path / 'sky-base.json',
         [
@@ -668,25 +683,79 @@ def test_fake_skylos_rule_change_pairs_as_one_changed_diff(tmp_path: Path, corpu
         ],
         output_format='skylos',
     )
-    runner = PrimerRunner(
-        adapter=get_adapter('skylos'),
-        store=CheckoutStore(tmp_path / 'cache'),
-        isolation=UNENFORCED,
-        options=DEFAULT_OPTIONS,
-    )
-    report = runner.run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
+    report = skylos_runner(tmp_path).run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
     (project_report,) = report.projects
     assert project_report.errors == ()
-    assert project_report.totals == DiffTotals(new=1, dropped=1, changed=1)
-    changed = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.CHANGED)
-    assert changed.changed_fields == (ChangedField.RULE,)
-    assert changed.base_occurrence is not None
-    assert changed.base_occurrence.rule_id == 'SKY-U001'
-    assert changed.head_occurrence is not None
-    assert changed.head_occurrence.rule_id == 'SKY-U009'
+    assert project_report.totals == DiffTotals(new=2, dropped=2)
+    renamed = {
+        diff.diff_class: diff.reference_occurrence.rule_id
+        for diff in project_report.diffs
+        if diff.symbol == 'unused_helper'
+    }
+    assert renamed == {DiffClass.DROPPED: 'SKY-U001', DiffClass.NEW: 'SKY-U009'}
     moved_kinds = {diff.diff_class: diff.kind for diff in project_report.diffs if diff.symbol == 'shifty'}
     assert moved_kinds == {DiffClass.DROPPED: 'variable', DiffClass.NEW: 'parameter'}
     # The bucket mapping stamps the fallback rule IDs on the moved pair.
     assert DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U006', kind=None, count=1) in project_report.rollups
     assert DiffRollup(diff_class=DiffClass.DROPPED, rule_id='SKY-U003', kind=None, count=1) in project_report.rollups
     assert report.rollups == project_report.rollups
+
+
+def test_fake_skylos_danger_severity_change_end_to_end(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    # Reporting acceptance 32, end to end through the skylos adapter's
+    # danger ingestion: a severity change pairs as one `changed` diff, and
+    # a second security diagnostic on the same line keeps its own identity.
+    base_cmd = write_fake_detector_script(
+        tmp_path / 'sky-base.json',
+        [
+            FakeFinding(
+                path='pkg/mod.py',
+                line=3,
+                symbol='runner',
+                bucket='danger',
+                rule_id='SKY-D203',
+                severity='Medium',
+                message='Use of os.system()',
+            ),
+        ],
+        output_format='skylos',
+    )
+    head_cmd = write_fake_detector_script(
+        tmp_path / 'sky-head.json',
+        [
+            FakeFinding(
+                path='pkg/mod.py',
+                line=3,
+                symbol='runner',
+                bucket='danger',
+                rule_id='SKY-D203',
+                severity='HIGH',
+                message='Use of os.system()',
+            ),
+            FakeFinding(
+                path='pkg/mod.py',
+                line=3,
+                symbol='runner',
+                bucket='danger',
+                rule_id='SKY-D212',
+                severity='CRITICAL',
+                message='Possible command injection',
+            ),
+        ],
+        output_format='skylos',
+    )
+    report = skylos_runner(tmp_path).run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
+    (project_report,) = report.projects
+    assert project_report.errors == ()
+    assert project_report.totals == DiffTotals(new=1, changed=1, changed_severity_only=1)
+    changed = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.CHANGED)
+    assert changed.kind == 'danger'
+    assert changed.changed_fields == (ChangedField.SEVERITY,)
+    assert changed.base_occurrence is not None
+    # The scripted 'Medium' label normalized at the adapter boundary.
+    assert changed.base_occurrence.severity == 'MEDIUM'
+    assert changed.head_occurrence is not None
+    assert changed.head_occurrence.severity == 'HIGH'
+    fresh = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.NEW)
+    assert fresh.reference_occurrence.rule_id == 'SKY-D212'
+    assert fresh.reference_occurrence.severity == 'CRITICAL'

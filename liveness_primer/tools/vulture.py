@@ -51,7 +51,11 @@ class VultureAdapter:
     executable: str = 'vulture'
     default_args: tuple[str, ...] = ()
     success_exit_codes: frozenset[int] = frozenset({0, 3})
-    capabilities: AdapterCapabilities = AdapterCapabilities(has_confidence=True, output_format='text')
+    capabilities: AdapterCapabilities = AdapterCapabilities(
+        has_confidence=True,
+        has_severity=False,
+        output_format='text',
+    )
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod

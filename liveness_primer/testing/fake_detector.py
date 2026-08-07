@@ -6,7 +6,8 @@ The fake detector reads a JSON script and emits vulture-format report lines
 or a skylos-format JSON document, so runs parse through the real adapters.
 Pointing the escape hatch (``--old-cmd``/``--new-cmd``) at two different
 scripts simulates two fake pinned detector commits; the skylos format can
-carry explicit rule IDs (reporting contract §3.1).
+carry explicit rule IDs (reporting contract §3.1), and its ``danger``
+bucket emits security diagnostics with severity labels.
 """
 
 import json
@@ -39,9 +40,14 @@ class FakeFinding:
     confidence : int
         Confidence percentage.
     bucket : str
-        Skylos dead-code array the finding lands in (skylos format only).
+        Skylos array the finding lands in (skylos format only); the
+        ``danger`` bucket emits the security-diagnostic entry shape.
     rule_id : str | None
         Explicit detector rule ID (skylos format only).
+    severity : str | None
+        Severity label (skylos ``danger`` bucket only).
+    message : str | None
+        Message override (skylos ``danger`` bucket only).
     """
 
     path: str
@@ -51,6 +57,8 @@ class FakeFinding:
     confidence: int = 60
     bucket: str = 'unused_functions'
     rule_id: str | None = None
+    severity: str | None = None
+    message: str | None = None
 
     def report_line(self) -> str:
         """Format the finding as a vulture report line.
@@ -68,8 +76,22 @@ class FakeFinding:
         Returns
         -------
         dict[str, object]
-            The entry, with ``rule_id`` present only when scripted.
+            The dead-code entry shape, or the security-diagnostic shape for
+            the ``danger`` bucket; optional fields are present only when
+            scripted.
         """
+        if self.bucket == 'danger':
+            diagnostic: dict[str, object] = {
+                'message': self.message if self.message is not None else f"dangerous use of '{self.symbol}'",
+                'file': self.path,
+                'line': self.line,
+                'symbol': self.symbol,
+            }
+            if self.rule_id is not None:
+                diagnostic['rule_id'] = self.rule_id
+            if self.severity is not None:
+                diagnostic['severity'] = self.severity
+            return diagnostic
         entry: dict[str, object] = {
             'name': self.symbol,
             'full_name': self.symbol,
@@ -156,6 +178,8 @@ def write_fake_detector_script(
                 'confidence': finding.confidence,
                 'bucket': finding.bucket,
                 'rule_id': finding.rule_id,
+                'severity': finding.severity,
+                'message': finding.message,
             }
             for finding in findings
         ],
@@ -187,6 +211,8 @@ def _scripted_findings(script: dict[str, object]) -> list[FakeFinding]:
         for entry in entries:
             if isinstance(entry, dict):
                 rule_id = entry.get('rule_id')
+                severity = entry.get('severity')
+                message = entry.get('message')
                 findings.append(
                     FakeFinding(
                         path=str(entry['path']),
@@ -196,6 +222,8 @@ def _scripted_findings(script: dict[str, object]) -> list[FakeFinding]:
                         confidence=int(str(entry['confidence'])),
                         bucket=str(entry.get('bucket', 'unused_functions')),
                         rule_id=str(rule_id) if rule_id is not None else None,
+                        severity=str(severity) if severity is not None else None,
+                        message=str(message) if message is not None else None,
                     )
                 )
     return findings

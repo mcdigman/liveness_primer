@@ -47,6 +47,36 @@ test('the export states count, digest, revisions, safety state, and project coun
   assert.match(text, /## alpha @ 33333333 — \d+ selected/u);
 });
 
+test('severity appears in finding lines exactly when the report carries it', () => {
+  const projection = projectReport(goldenReport());
+  const sev = projection.rows.find((row) => row.symbol === 'sev');
+  const withSeverity = renderMarkdown({
+    filename: 'r.json',
+    digest: DIGEST,
+    projection,
+    selectedRows: [sev],
+  });
+  assert.match(withSeverity, /MEDIUM → HIGH/u);
+  const stripped = goldenReport();
+  for (const project of stripped.projects) {
+    for (const diff of project.diffs) {
+      for (const occurrence of [diff.base_occurrence, diff.head_occurrence]) {
+        if (occurrence !== null) {
+          occurrence.severity = null;
+        }
+      }
+    }
+  }
+  const plainProjection = projectReport(stripped);
+  const withoutSeverity = renderMarkdown({
+    filename: 'r.json',
+    digest: DIGEST,
+    projection: plainProjection,
+    selectedRows: plainProjection.rows.slice(0, 2),
+  });
+  assert.ok(!withoutSeverity.includes('MEDIUM'));
+});
+
 test('a clean comparable run states so plainly', () => {
   const report = goldenReport();
   report.manifest.comparable = true;

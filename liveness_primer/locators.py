@@ -3,7 +3,9 @@
 Copyright (C) 2026 Matthew C. Digman
 
 ``line`` is the diff class's reference-side start line (head for ``new``,
-base for ``dropped`` and ``changed``); ``occurrence`` is the diff's
+base for ``dropped`` and ``changed``); the identity hash covers the start
+line, so every diff sharing an identity shares ``line``, which stays
+serialized as denormalized display data. ``occurrence`` is the diff's
 zero-based position within the subsequence of the same serialized
 ``ProjectReport.diffs`` tuple whose identity and reference-side start line
 equal ``(identity, line)``, without changing its serialized order.

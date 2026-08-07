@@ -78,22 +78,30 @@ test('sorting restores exact report order after other sorts', async ({ page }) =
 
 test('paired changed values show base and head in the row', async ({ page }) => {
   await openReportAndWait(page, goldenReport());
+  // A severity change pairs as one changed row with a base → head cell.
+  await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('sev');
+  const sevRow = page.locator('.tabulator-row:not(.tabulator-group)');
+  await expect(sevRow).toHaveCount(1);
+  await expect(sevRow.first()).toContainText('MEDIUM → HIGH');
+  // A moved span is a dropped row plus a new row, each at its own line:
+  // the identity pins the line span (contract §7).
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('mover');
-  await expect(page.locator('.tabulator-row:not(.tabulator-group) .cell-location').first()).toHaveText(
-    'pkg/a.py:10 → 20',
-  );
+  const locations = page.locator('.tabulator-row:not(.tabulator-group) .cell-location');
+  await expect(locations).toHaveCount(2);
+  await expect(locations.nth(0)).toHaveText('pkg/a.py:10');
+  await expect(locations.nth(1)).toHaveText('pkg/a.py:20');
 });
 
 test('selecting a row opens context without resetting filters or scroll', async ({ page }) => {
   await openReportAndWait(page, goldenReport());
-  await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('mover');
+  await page.getByPlaceholder('Search path, symbol, message, rule, kind').fill('sev');
   await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(1);
   await page
     .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
     .first()
     .click();
   const panel = page.locator('.context-panel');
-  await expect(panel.locator('.context-location')).toHaveText('pkg/a.py:10 → 20');
+  await expect(panel.locator('.context-location')).toHaveText('pkg/a.py:18');
   await expect(panel).toContainText('Analyzer output');
   await expect(panel).toContainText('occurrence 0');
   // Filters survived.

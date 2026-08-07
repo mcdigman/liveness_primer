@@ -275,6 +275,39 @@ def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.Captur
     assert json.loads(capsys.readouterr().out) == {}
 
 
+def test_main_emits_skylos_danger_diagnostics(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The danger bucket emits the security-diagnostic entry shape with the
+    # scripted severity and message, defaulting the message when unset.
+    command = write_fake_detector_script(
+        tmp_path / 'script.json',
+        [
+            FakeFinding(
+                path='a.py',
+                line=9,
+                symbol='run',
+                bucket='danger',
+                rule_id='SKY-D203',
+                severity='HIGH',
+                message='Use of os.system()',
+            ),
+            FakeFinding(path='a.py', line=12, symbol='load', bucket='danger'),
+        ],
+        output_format='skylos',
+    )
+    assert main([*command[3:], '.']) == 0
+    document = json.loads(capsys.readouterr().out)
+    scripted, defaulted = document['danger']
+    assert scripted == {
+        'message': 'Use of os.system()',
+        'file': 'a.py',
+        'line': 9,
+        'symbol': 'run',
+        'rule_id': 'SKY-D203',
+        'severity': 'HIGH',
+    }
+    assert defaulted == {'message': "dangerous use of 'load'", 'file': 'a.py', 'line': 12, 'symbol': 'load'}
+
+
 def test_main_tolerates_malformed_script_documents(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     # Hand-written scripts may be sloppy: non-list findings and non-dict
     # entries are skipped rather than crashing the fake detector.

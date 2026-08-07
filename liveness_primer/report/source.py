@@ -111,15 +111,12 @@ def _sides_to_collect(diff: FindingDiff) -> tuple[tuple[str, FindingOccurrence],
     Returns
     -------
     tuple[tuple[str, FindingOccurrence], ...]
-        ``(field name, occurrence)`` pairs: head for ``new``, base for
-        ``dropped``, both for a moved ``changed`` span, and the
-        reference-side base occurrence for other ``changed`` diffs.
+        ``(field name, occurrence)`` pairs: head for ``new``, else the
+        reference-side base occurrence; both sides of a ``changed`` pair
+        share their identity-pinned span.
     """
-    sides: list[tuple[str, FindingOccurrence]] = []
-    for label, occurrence in excerpt_sides(diff):
-        head_side = label == 'head' or (label is None and diff.diff_class is DiffClass.NEW)
-        sides.append(('head_occurrence' if head_side else 'base_occurrence', occurrence))
-    return tuple(sides)
+    field_name = 'head_occurrence' if diff.diff_class is DiffClass.NEW else 'base_occurrence'
+    return tuple((field_name, occurrence) for occurrence in excerpt_sides(diff))
 
 
 class _SourceCache:

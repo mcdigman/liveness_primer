@@ -50,6 +50,7 @@ def mk(
     path: str = 'pkg/a.py',
     message: str = 'm',
     confidence: int | None = 60,
+    severity: str | None = None,
     rule_id: str | None = None,
     end_line: int | None = None,
 ) -> Finding:
@@ -63,6 +64,7 @@ def mk(
         start_line=line,
         end_line=end_line if end_line is not None else line,
         confidence=confidence,
+        severity=severity,
         rule_id=rule_id,
     )
 
@@ -82,14 +84,16 @@ def alpha_sides() -> tuple[list[Finding], list[Finding]]:
         mk('alpha', 'mixed', 8, message='zz'),
         # Identical reference occurrence keys, different diff classes.
         mk('alpha', 'ghost-a', 9, message='same', confidence=None),
-        # A moved span: the locator addresses the base side.
+        # A moved span changes identity: dropped base side plus new head side.
         mk('alpha', 'mover', 10, end_line=11),
         # Zero confidence versus missing confidence stays observable.
         mk('alpha', 'zero', 12, message='z', confidence=0),
-        # An explicit rule-ID change on one target.
+        # An explicit rule-ID change changes identity the same way.
         mk('alpha', 'ruled', 15, message='r', rule_id='SKY-U001'),
         # A rule ID appearing where none existed.
         mk('alpha', 'gain', 17, message='g'),
+        # A severity change on one target pairs as one `changed` diff.
+        mk('alpha', 'sev', 18, message='sv', confidence=None, severity='MEDIUM', rule_id='SKY-D203'),
     ]
     head = [
         mk('alpha', 'triple', 7, message='cc'),
@@ -105,6 +109,7 @@ def alpha_sides() -> tuple[list[Finding], list[Finding]]:
         mk('alpha', 'ruled', 15, message='r', rule_id='SKY-U003'),
         mk('alpha', 'gain', 17, message='g', rule_id='SKY-U002'),
         mk('alpha', 'ruleless', 16, message='q'),
+        mk('alpha', 'sev', 18, message='sv', confidence=None, severity='HIGH', rule_id='SKY-D203'),
     ]
     return base, head
 
@@ -149,11 +154,12 @@ def build_locator_report() -> Report:
         ),
     )
     base, head = alpha_sides()
-    alpha_diff = diff_findings(base, head, confidence_capable=True)
+    alpha_diff = diff_findings(base, head, confidence_capable=True, severity_capable=True)
     beta_diff = diff_findings(
         [],
         [mk('beta', 'solo', 5, path='lib/b.py', message='s', confidence=None)],
         confidence_capable=True,
+        severity_capable=True,
     )
     projects = [
         ProjectReport(
@@ -177,6 +183,7 @@ def build_locator_report() -> Report:
         changed=sum(entry.totals.changed for entry in projects),
         changed_confidence=sum(entry.totals.changed_confidence for entry in projects),
         changed_message_only=sum(entry.totals.changed_message_only for entry in projects),
+        changed_severity_only=sum(entry.totals.changed_severity_only for entry in projects),
     )
     return Report(
         manifest=manifest,
@@ -230,17 +237,21 @@ def test_every_serialized_diff_carries_a_unique_locator() -> None:
 def test_locator_line_is_the_reference_side() -> None:
     report = build_locator_report()
     (alpha, _beta) = report.projects
-    by_symbol = {diff.symbol: diff for diff in alpha.diffs}
-    mover = by_symbol['mover']
-    assert mover.diff_class is DiffClass.CHANGED
-    assert mover.base_occurrence is not None
-    assert mover.head_occurrence is not None
-    assert (mover.base_occurrence.start_line, mover.head_occurrence.start_line) == (10, 20)
-    assert mover.locator is not None
+    by_class = {(diff.symbol, diff.diff_class): diff for diff in alpha.diffs}
+    # A moved span is a dropped base-side finding plus a new head-side one;
+    # each locator addresses its own diff's reference side.
+    dropped_mover = by_class['mover', DiffClass.DROPPED]
+    assert dropped_mover.locator is not None
+    assert dropped_mover.locator.line == 10
+    new_mover = by_class['mover', DiffClass.NEW]
+    assert new_mover.locator is not None
+    assert new_mover.locator.line == 20
+    changed_sev = by_class['sev', DiffClass.CHANGED]
+    assert changed_sev.base_occurrence is not None
+    assert changed_sev.locator is not None
     # Base side for `changed` and `dropped`; head only for `new`.
-    assert mover.locator.line == 10
-    fresh = by_symbol['ruleless']
-    assert fresh.diff_class is DiffClass.NEW
+    assert changed_sev.locator.line == changed_sev.base_occurrence.start_line
+    fresh = by_class['ruleless', DiffClass.NEW]
     assert fresh.head_occurrence is not None
     assert fresh.locator is not None
     assert fresh.locator.line == fresh.head_occurrence.start_line
@@ -248,7 +259,10 @@ def test_locator_line_is_the_reference_side() -> None:
 
 def test_truncation_retains_complete_sequence_ordinals() -> None:
     base, head = alpha_sides()
-    complete = attach_locators('alpha', diff_findings(base, head, confidence_capable=True).diffs)
+    complete = attach_locators(
+        'alpha',
+        diff_findings(base, head, confidence_capable=True, severity_capable=True).diffs,
+    )
     # An ordinal depends only on earlier diffs in the sequence, so
     # re-indexing any canonical prefix reproduces the complete-sequence
     # locators for the retained diffs (explorer contract §4.2).
@@ -270,14 +284,17 @@ def test_fixture_covers_required_shapes() -> None:
     assert sorted(by_symbol['mixed']) == ['changed', 'changed', 'changed', 'dropped']
     assert by_symbol['ghost-a'] == ['dropped']
     assert by_symbol['ghost-b'] == ['new']
-    assert by_symbol['mover'] == ['changed']
+    # A moved span and a changed rule code each split into dropped plus new
+    # under the identity that covers the rule ID and line span.
+    assert by_symbol['mover'] == ['dropped', 'new']
     assert by_symbol['zero'] == ['changed']
-    assert by_symbol['ruled'] == ['changed']
-    assert by_symbol['gain'] == ['changed']
+    assert by_symbol['ruled'] == ['dropped', 'new']
+    assert by_symbol['gain'] == ['dropped', 'new']
     assert by_symbol['ruleless'] == ['new']
+    assert by_symbol['sev'] == ['changed']
     assert [diff.symbol for diff in beta.diffs] == ['solo']
-    ruled = next(diff for diff in alpha.diffs if diff.symbol == 'ruled')
-    assert [field.value for field in ruled.changed_fields] == ['rule']
+    sev = next(diff for diff in alpha.diffs if diff.symbol == 'sev')
+    assert [field.value for field in sev.changed_fields] == ['severity']
 
 
 def test_checked_in_fixture_report_validates_and_agrees() -> None:

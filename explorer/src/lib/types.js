@@ -5,7 +5,7 @@
 
 /**
  * @typedef {'new' | 'dropped' | 'changed'} DiffClass
- * @typedef {'line-span' | 'message' | 'confidence' | 'rule'} ChangedField
+ * @typedef {'message' | 'confidence' | 'severity'} ChangedField
  */
 
 /**
@@ -22,6 +22,7 @@
  * @property {number} end_line
  * @property {string} message
  * @property {number | null} confidence
+ * @property {string | null} severity
  * @property {string | null} rule_id
  * @property {string | null} raw_excerpt
  * @property {SourceExcerpt | null} source_excerpt
@@ -58,6 +59,7 @@
  * @property {number} changed
  * @property {number} changed_confidence
  * @property {number} changed_message_only
+ * @property {number} changed_severity_only
  */
 
 /**

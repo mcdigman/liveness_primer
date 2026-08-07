@@ -10,13 +10,13 @@ import {
   rowPredicate,
   searchTerms,
 } from '../../src/lib/facets.js';
-import { NO_RULE, projectReport } from '../../src/lib/projection.js';
+import { NO_RULE, NO_SEVERITY, projectReport } from '../../src/lib/projection.js';
 import { goldenReport } from './helpers.mjs';
 
 const projection = projectReport(goldenReport());
 const rows = projection.rows;
 
-test('facet counts are full-report counts with a clear no-rule value', () => {
+test('facet counts are full-report counts with clear no-rule and no-severity values', () => {
   const counts = facetCounts(rows);
   const total = rows.length;
   assert.equal(
@@ -28,6 +28,12 @@ test('facet counts are full-report counts with a clear no-rule value', () => {
   assert.ok(counts.kind.get('function') > 0);
   assert.equal(
     [...counts.confidence.values()].reduce((a, b) => a + b, 0),
+    total,
+  );
+  assert.ok(counts.severity.get(NO_SEVERITY) > 0);
+  assert.ok(counts.severity.get('MEDIUM') > 0);
+  assert.equal(
+    [...counts.severity.values()].reduce((a, b) => a + b, 0),
     total,
   );
   // Open-ended categories order by descending count, then label.
@@ -62,6 +68,19 @@ test('selections OR within a category and AND across categories', () => {
   assert.ok(rows.every((row) => !matchesFacets(row, ruleMiss)));
   const projectMiss = { ...emptySelections(), project: new Set(['no-such-project']) };
   assert.ok(rows.every((row) => !matchesFacets(row, projectMiss)));
+});
+
+test('severity selections filter by label with a clear no-severity value', () => {
+  const withSeverity = { ...emptySelections(), severity: new Set(['MEDIUM']) };
+  const medium = rows.filter((row) => matchesFacets(row, withSeverity));
+  assert.ok(medium.length > 0);
+  assert.ok(medium.every((row) => row.severityValue === 'MEDIUM'));
+  const withoutSeverity = { ...emptySelections(), severity: new Set([NO_SEVERITY]) };
+  const unlabelled = rows.filter((row) => matchesFacets(row, withoutSeverity));
+  assert.ok(unlabelled.length > 0);
+  assert.ok(unlabelled.every((row) => row.severityValue === null));
+  const severityMiss = { ...emptySelections(), severity: new Set(['NOT-A-SEVERITY']) };
+  assert.ok(rows.every((row) => !matchesFacets(row, severityMiss)));
 });
 
 test('search terms are case-insensitive and ANDed', () => {

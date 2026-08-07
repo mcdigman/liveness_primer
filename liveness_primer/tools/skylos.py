@@ -2,9 +2,11 @@
 
 Copyright (C) 2026 Matthew C. Digman
 
-Skylos emits a JSON document on stdout under ``--json``. Only the dead-code
-arrays are ingested; its security, secrets, and quality categories live in
-separate top-level keys and are filtered at the adapter (contract §4).
+Skylos emits a JSON document on stdout under ``--json``. The dead-code
+arrays are always ingested, and the ``danger`` security array is ingested
+when present (it only appears when a corpus config opts into ``--danger``);
+the secrets and quality categories live in separate top-level keys and are
+filtered at the adapter (contract §4).
 """
 
 import json
@@ -22,8 +24,15 @@ from liveness_primer.tools.base import (
 )
 
 # Dead-code finding arrays in the skylos JSON document; other report
-# categories (danger, secrets, quality, ...) are deliberately not ingested.
+# categories (secrets, quality, ...) are deliberately not ingested.
 _DEAD_CODE_KEYS = ('unused_functions', 'unused_imports', 'unused_classes', 'unused_variables', 'unused_parameters')
+
+# Security-diagnostic array emitted only under ``--danger``; entries carry a
+# severity label and rule ID instead of a confidence value.
+_DANGER_KEY = 'danger'
+
+# Normalized kind stamped onto ingested security diagnostics.
+_DANGER_KIND = 'danger'
 
 # Documented, versioned mapping from each ingested skylos structured output
 # bucket to its canonical rule ID (reporting contract §3.1). A rule ID
@@ -54,6 +63,19 @@ class _SkylosEntry(BaseModel):
     rule_id: str | None = None
 
 
+class _SkylosDiagnosticEntry(BaseModel):
+    """One security diagnostic from the skylos ``danger`` array (untrusted input)."""
+
+    model_config = ConfigDict(frozen=True, extra='ignore')
+
+    rule_id: str | None = None
+    severity: str | None = None
+    message: str
+    file: str
+    line: int
+    symbol: str | None = None
+
+
 class SkylosAdapter:
     """Adapter for skylos's JSON report (contract §4).
 
@@ -70,7 +92,7 @@ class SkylosAdapter:
     success_exit_codes : frozenset[int]
         0 only; skylos exits 2 when analysis errors occurred.
     capabilities : AdapterCapabilities
-        Confidence-capable JSON output.
+        Confidence- and severity-capable JSON output.
     build_recipe : BuildRecipe
         Generic Python source install; compiled dependencies arrive as
         prefetched wheels (contract §4).
@@ -81,7 +103,11 @@ class SkylosAdapter:
     executable: str = 'skylos'
     default_args: tuple[str, ...] = ('--json',)
     success_exit_codes: frozenset[int] = frozenset({0})
-    capabilities: AdapterCapabilities = AdapterCapabilities(has_confidence=True, output_format='json')
+    capabilities: AdapterCapabilities = AdapterCapabilities(
+        has_confidence=True,
+        has_severity=True,
+        output_format='json',
+    )
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
@@ -100,7 +126,8 @@ class SkylosAdapter:
         Returns
         -------
         list[Finding]
-            One finding per dead-code entry.
+            One finding per dead-code entry and, when the document carries
+            the ``danger`` array, per security diagnostic.
 
         Raises
         ------
@@ -116,12 +143,13 @@ class SkylosAdapter:
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
         findings: list[Finding] = []
-        for key in _DEAD_CODE_KEYS:
+        for key in (*_DEAD_CODE_KEYS, _DANGER_KEY):
             bucket = document.get(key, [])
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
                 raise AdapterError(msg)
-            findings.extend(_parse_entry(raw, key=key, project=project, root=root) for raw in bucket)
+            parse_entry = _parse_diagnostic_entry if key == _DANGER_KEY else _parse_entry
+            findings.extend(parse_entry(raw, key=key, project=project, root=root) for raw in bucket)
         return findings
 
 
@@ -168,5 +196,54 @@ def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
         # An explicit detector rule ID wins; the documented bucket mapping
         # is the fallback (reporting contract §3.1).
         rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS.get(key),
+        raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
+    )
+
+
+def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
+    """Convert one skylos security diagnostic into a finding.
+
+    Diagnostics carry a severity label and rule ID instead of a confidence
+    value, and may omit the symbol; the line number is therefore an
+    inseparable part of the finding identity.
+
+    Parameters
+    ----------
+    raw : object
+        Untrusted JSON entry.
+    key : str
+        Array name the entry came from, for error context.
+    project : str
+        Corpus project name to stamp onto the finding.
+    root : Path
+        Checkout directory skylos analyzed.
+
+    Returns
+    -------
+    Finding
+        The normalized finding.
+
+    Raises
+    ------
+    AdapterError
+        If the entry does not carry the guaranteed skylos fields.
+    """
+    try:
+        entry = _SkylosDiagnosticEntry.model_validate(raw)
+    except ValidationError as exc:
+        msg = f'malformed skylos entry in {key!r}: {exc}'
+        raise AdapterError(msg) from exc
+    line = max(entry.line, 1)
+    return Finding(
+        tool=SkylosAdapter.name,
+        project=project,
+        path=normalize_finding_path(entry.file, root),
+        symbol=entry.symbol,
+        kind=_DANGER_KIND,
+        message=entry.message,
+        start_line=line,
+        end_line=line,
+        severity=entry.severity,
+        rule_id=entry.rule_id,
         raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
     )

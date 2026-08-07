@@ -8,6 +8,7 @@ Pydantic models are the source of truth; JSON Schema files under
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from datetime import date, datetime
 from enum import StrEnum
@@ -21,7 +22,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 # and the additive `rule` changed-field value (reporting contract §3.6).
 # 1.2.0 adds the additive serialized finding locator and the portable
 # explorer review record (explorer contract §4.2, §6).
-SCHEMA_VERSION = '1.2.0'
+# 2.0.0 folds the rule ID and line span into the finding identity, drops the
+# `line-span` and `rule` changed-field values, and adds the normalized
+# severity occurrence field with its changed-field value and severity-only
+# total (reporting contract §3.1, §3.6).
+SCHEMA_VERSION = '2.0.0'
 
 
 def _validated_schema_version(value: str) -> str:
@@ -77,22 +82,23 @@ class DiffClass(StrEnum):
 class ChangedField(StrEnum):
     """Observable occurrence field that may differ within a ``changed`` diff.
 
+    The line span and rule ID are part of the finding identity and can
+    never differ within one ``changed`` pair: a moved span or a renamed
+    rule code is a dropped finding plus a new one.
+
     Attributes
     ----------
-    LINE_SPAN
-        The start/end line span moved.
     MESSAGE
         The message text changed.
     CONFIDENCE
         The confidence value changed (only for tools declaring the capability).
-    RULE
-        The detector rule ID changed.
+    SEVERITY
+        The severity label changed (only for tools declaring the capability).
     """
 
-    LINE_SPAN = 'line-span'
     MESSAGE = 'message'
     CONFIDENCE = 'confidence'
-    RULE = 'rule'
+    SEVERITY = 'severity'
 
 
 class BindingPoint(StrEnum):
@@ -161,11 +167,24 @@ class _FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra='forbid')
 
 
-def finding_identity(tool: str, project: str, path: str, symbol: str | None, kind: str) -> str:
+def finding_identity(
+    tool: str,
+    project: str,
+    path: str,
+    symbol: str | None,
+    kind: str,
+    rule_id: str | None,
+    start_line: int,
+    end_line: int,
+) -> str:
     """Compute the stable identity hash naming a finding across runs.
 
-    The hash covers (tool, project, path, symbol, kind) and excludes line and
-    confidence; it carries no positional ordinal.
+    The hash covers (tool, project, path, symbol, kind, rule ID, line span)
+    and excludes message, confidence, and severity; it carries no positional
+    ordinal. The rule ID and line span are identity rather than observable
+    change: a renamed rule code is not semantically one finding, and for
+    detectors reporting truncated symbol names the line number is the only
+    thing separating two findings on one symbol.
 
     Parameters
     ----------
@@ -179,6 +198,12 @@ def finding_identity(tool: str, project: str, path: str, symbol: str | None, kin
         Symbol name, when the detector reports one.
     kind : str
         Normalized finding kind.
+    rule_id : str | None
+        Detector rule ID, when one is supplied.
+    start_line : int
+        First line of the reported span (1-based).
+    end_line : int
+        Last line of the reported span (1-based, inclusive).
 
     Returns
     -------
@@ -186,10 +211,44 @@ def finding_identity(tool: str, project: str, path: str, symbol: str | None, kin
         Hex SHA-256 digest of the canonical identity tuple.
     """
     # Canonical JSON keeps distinct tuples distinct: delimiters occurring
-    # inside attacker-controlled fields are escaped, and a null symbol is
-    # structurally different from any string.
-    material = json.dumps([tool, project, path, symbol, kind], ensure_ascii=False, separators=(',', ':'))
+    # inside attacker-controlled fields are escaped, and a null symbol or
+    # rule ID is structurally different from any string.
+    material = json.dumps(
+        [tool, project, path, symbol, kind, rule_id, start_line, end_line],
+        ensure_ascii=False,
+        separators=(',', ':'),
+    )
     return hashlib.sha256(material.encode('utf-8')).hexdigest()
+
+
+# Severity labels compare in canonical form only: uppercased and stripped to
+# ASCII letters and digits, so 'High' and 'HIGH ' never read as a change.
+_SEVERITY_DISALLOWED = re.compile(r'[^A-Z0-9]')
+
+
+def normalized_severity(value: str | None) -> str | None:
+    """Normalize a detector severity label to its canonical form.
+
+    Parameters
+    ----------
+    value : str | None
+        Severity label as reported, when any.
+
+    Returns
+    -------
+    str | None
+        The uppercased label with every character other than ASCII letters
+        and digits removed, or ``None`` when nothing remains.
+    """
+    if value is None:
+        return None
+    canonical = _SEVERITY_DISALLOWED.sub('', value.upper())
+    return canonical or None
+
+
+# Every severity field normalizes on validation, wherever the payload
+# entered (adapter parse, JSON load, or the hook bridge).
+SeverityLabel = Annotated[str | None, AfterValidator(normalized_severity)]
 
 
 class SourceExcerpt(_FrozenModel):
@@ -233,6 +292,9 @@ class FindingOccurrence(_FrozenModel):
         Normalized message text.
     confidence : int | None
         Confidence percentage, for tools declaring the capability.
+    severity : SeverityLabel
+        Canonical severity label (e.g. ``HIGH``), for tools declaring the
+        capability; normalized on validation.
     rule_id : str | None
         Detector rule ID, when the detector or its documented output
         category supplies one.
@@ -247,6 +309,7 @@ class FindingOccurrence(_FrozenModel):
     end_line: int = Field(ge=1)
     message: str
     confidence: int | None = Field(default=None, ge=0, le=100)
+    severity: SeverityLabel = None
     rule_id: str | None = None
     raw_excerpt: str | None = None
     source_excerpt: SourceExcerpt | None = None
@@ -271,14 +334,14 @@ class FindingOccurrence(_FrozenModel):
         return self
 
 
-def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, str, int, int, int, str]:
+def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, str, int, int, int, str, int, str]:
     """Compute the canonical occurrence key governing all diff-engine ordering.
 
     The key is the complete normalized occurrence tuple in fixed field order:
-    start line, end line, message, confidence, rule ID. Each presence
-    component is 0 when its field is absent and 1 when present, so absent
-    sorts before present. Derived source evidence and the raw excerpt never
-    participate.
+    start line, end line, message, confidence, rule ID, severity. Each
+    presence component is 0 when its field is absent and 1 when present, so
+    absent sorts before present. Derived source evidence and the raw excerpt
+    never participate.
 
     Parameters
     ----------
@@ -287,9 +350,9 @@ def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, s
 
     Returns
     -------
-    tuple[int, int, str, int, int, int, str]
+    tuple[int, int, str, int, int, int, str, int, str]
         Sort key: (start, end, message, confidence-presence, confidence,
-        rule-presence, rule ID).
+        rule-presence, rule ID, severity-presence, severity).
     """
     return (
         occurrence.start_line,
@@ -299,6 +362,8 @@ def canonical_occurrence_key(occurrence: FindingOccurrence) -> tuple[int, int, s
         0 if occurrence.confidence is None else occurrence.confidence,
         0 if occurrence.rule_id is None else 1,
         '' if occurrence.rule_id is None else occurrence.rule_id,
+        0 if occurrence.severity is None else 1,
+        '' if occurrence.severity is None else occurrence.severity,
     )
 
 
@@ -327,6 +392,9 @@ class Finding(_FrozenModel):
         Last line of the reported span (1-based, inclusive).
     confidence : int | None
         Confidence percentage, for tools declaring the capability.
+    severity : SeverityLabel
+        Canonical severity label (e.g. ``HIGH``), for tools declaring the
+        capability; normalized on validation.
     rule_id : str | None
         Detector rule ID, when the detector or its documented output
         category supplies one.
@@ -344,6 +412,7 @@ class Finding(_FrozenModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     confidence: int | None = Field(default=None, ge=0, le=100)
+    severity: SeverityLabel = None
     rule_id: str | None = None
     raw_excerpt: str | None = None
 
@@ -373,9 +442,19 @@ class Finding(_FrozenModel):
         Returns
         -------
         str
-            Hex SHA-256 digest over (tool, project, path, symbol, kind).
+            Hex SHA-256 digest over (tool, project, path, symbol, kind,
+            rule ID, line span).
         """
-        return finding_identity(self.tool, self.project, self.path, self.symbol, self.kind)
+        return finding_identity(
+            self.tool,
+            self.project,
+            self.path,
+            self.symbol,
+            self.kind,
+            self.rule_id,
+            self.start_line,
+            self.end_line,
+        )
 
     def occurrence(self) -> FindingOccurrence:
         """Project this finding onto its occurrence fields.
@@ -383,14 +462,15 @@ class Finding(_FrozenModel):
         Returns
         -------
         FindingOccurrence
-            The occurrence (line span, message, confidence, rule ID, raw
-            excerpt).
+            The occurrence (line span, message, confidence, severity, rule
+            ID, raw excerpt).
         """
         return FindingOccurrence(
             start_line=self.start_line,
             end_line=self.end_line,
             message=self.message,
             confidence=self.confidence,
+            severity=self.severity,
             rule_id=self.rule_id,
             raw_excerpt=self.raw_excerpt,
         )
@@ -400,10 +480,13 @@ class FindingLocator(_FrozenModel):
     """Persistent reference to one serialized finding diff (explorer contract §4.2).
 
     ``line`` is the diff class's reference-side start line — head for
-    ``new``, base for ``dropped`` and ``changed``. ``occurrence`` is the
-    diff's zero-based position within the subsequence of the same serialized
-    ``ProjectReport.diffs`` tuple whose identity and reference-side start
-    line equal ``(identity, line)``, in serialized order.
+    ``new``, base for ``dropped`` and ``changed``. The identity hash covers
+    the start line, so every diff sharing ``identity`` shares ``line``; the
+    field stays serialized as denormalized display data. ``occurrence`` is
+    the diff's zero-based position within the subsequence of the same
+    serialized ``ProjectReport.diffs`` tuple whose identity and
+    reference-side start line equal ``(identity, line)``, in serialized
+    order.
 
     Attributes
     ----------
@@ -499,6 +582,41 @@ class FindingDiff(_FrozenModel):
         if not all(by_class[self.diff_class]):
             msg = f'inconsistent sides or changed_fields for diff class {self.diff_class.value!r}'
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode='after')
+    def _check_identity(self) -> Self:
+        """Reject occurrences whose recomputed hash contradicts ``identity``.
+
+        The identity hash covers the rule ID and line span, so this also
+        enforces that both sides of a ``changed`` pair agree on them.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If either populated side hashes to a different identity.
+        """
+        for occurrence in (self.base_occurrence, self.head_occurrence):
+            if occurrence is None:
+                continue
+            recomputed = finding_identity(
+                self.tool,
+                self.project,
+                self.path,
+                self.symbol,
+                self.kind,
+                occurrence.rule_id,
+                occurrence.start_line,
+                occurrence.end_line,
+            )
+            if recomputed != self.identity:
+                msg = f'occurrence contradicts the declared identity {self.identity!r}'
+                raise ValueError(msg)
         return self
 
     @property
@@ -751,6 +869,8 @@ class DiffTotals(_FrozenModel):
         ``changed`` diffs whose ``changed_fields`` include confidence.
     changed_message_only : int
         ``changed`` diffs whose only changed field is the message.
+    changed_severity_only : int
+        ``changed`` diffs whose only changed field is the severity.
     """
 
     new: int = 0
@@ -758,6 +878,7 @@ class DiffTotals(_FrozenModel):
     changed: int = 0
     changed_confidence: int = 0
     changed_message_only: int = 0
+    changed_severity_only: int = 0
 
 
 class DiffRollup(_FrozenModel):
@@ -938,6 +1059,7 @@ class Report(_FrozenModel):
             changed=sum(project.totals.changed for project in self.projects),
             changed_confidence=sum(project.totals.changed_confidence for project in self.projects),
             changed_message_only=sum(project.totals.changed_message_only for project in self.projects),
+            changed_severity_only=sum(project.totals.changed_severity_only for project in self.projects),
         )
         if self.totals != summed:
             msg = 'overall totals are stale: they are not the sum of the project totals'

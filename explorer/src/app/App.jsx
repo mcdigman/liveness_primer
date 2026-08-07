@@ -276,6 +276,7 @@ export function App() {
             counts={/** @type {NonNullable<typeof counts>} */ (counts)}
             selections={state.selections}
             visibleCount={visibleRows.length}
+            hasSeverity={projection.hasSeverity}
             onToggle={(category, value) => dispatch({ type: 'facet-toggled', category, value })}
             onReset={() => dispatch({ type: 'filters-reset' })}
             onClose={() => setNarrowPanel('none')}
@@ -297,6 +298,7 @@ export function App() {
               selectedCount={selectedRows.length}
             />
             <FindingsTable
+              key={projection.hasSeverity ? 'with-severity' : 'without-severity'}
               rows={visibleRows}
               projection={projection}
               workspace={workspace}

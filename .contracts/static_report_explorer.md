@@ -78,8 +78,9 @@ The left rail provides collapsible facets for:
 - diff class;
 - project;
 - rule ID, with a clear no-rule value;
-- kind; and
-- confidence, including unavailable confidence.
+- kind;
+- confidence, including unavailable confidence; and
+- severity, including unavailable severity, shown only when the report carries severities.
 
 Every option has a visible count. `Reset all` clears filters without clearing selected or
 hidden state. Facet counts are full-report counts unless explicitly labelled as filtered; the
@@ -103,12 +104,13 @@ can be collapsed. Grouping by rule and an ungrouped view may also be offered.
 Each finding row presents, in this order:
 
 ```text
-diff class | rule | confidence | kind | location | message | export | hide
+diff class | rule | confidence | severity | kind | location | message | export | hide
 ```
 
 Diff class uses both glyph and text: `+ New`, `- Dropped`, and `~ Changed`. Changed confidence
 or other paired values show base and head values rather than collapsing them into one value.
-The row remains compact enough to compare findings across projects.
+The severity column shows the normalized label with a clear no-severity value. The row
+remains compact enough to compare findings across projects.
 
 Selecting a row opens finding context in the right region without resetting filters,
 group expansion, selection, or central scroll position.
@@ -121,7 +123,8 @@ stored locally.
 
 With a finding open, it shows:
 
-- location, class, rule, confidence, message, project, kind, symbol, and serialized locator;
+- location, class, rule, confidence, severity, message, project, kind, symbol, and
+  serialized locator;
 - labelled base and head analyzer values;
 - the report's source excerpt with real line numbers and a highlighted reported span;
 - pinned-source and optional complete-file actions; and
@@ -202,9 +205,11 @@ FindingLocator:
 ```
 
 `line` is the diff class's reference-side start line: head for `new`, base for `dropped` and
-`changed`. `occurrence` is the diff's zero-based position within the subsequence of the same
-serialized `ProjectReport.diffs` tuple whose identity and reference-side start line equal
-`(identity, line)`, without changing its serialized order. Occurrences removed by the diff
+`changed`. The identity hash covers the start line, so every diff sharing `identity` shares
+`line`; the field stays serialized as denormalized display data. `occurrence` is the diff's
+zero-based position within the subsequence of the same serialized `ProjectReport.diffs`
+tuple whose identity and reference-side start line equal `(identity, line)`, without
+changing its serialized order. Occurrences removed by the diff
 engine's equal-occurrence intersection are not indexed, and truncation retains a canonical
 prefix, so retained indices match the complete canonical sequence. This fixes the indexing set
 and zero-based convention left implicit by initial contract §12; `bisect --occurrence` must
@@ -317,8 +322,8 @@ unchanged, so any chain of exports points at one origin.
 
 The Markdown export covers selected findings only and clearly states the selected count,
 report digest, detector revisions, comparison safety/completeness state, and affected project
-counts. Each finding includes class, project, rule or kind, confidence, message, symbol,
-location, and pinned source link when available. The same bytes can be downloaded or copied.
+counts. Each finding includes class, project, rule or kind, confidence, severity when
+present, message, symbol, location, and pinned source link when available. The same bytes can be downloaded or copied.
 Untrusted values are escaped as text and cannot create Markdown structure or link targets.
 
 ## 7. Source inspection

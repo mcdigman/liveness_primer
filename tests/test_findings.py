@@ -90,11 +90,11 @@ def make_manifest() -> RunManifest:
     )
 
 
-def test_identity_is_stable_and_excludes_position() -> None:
+def test_identity_is_stable_across_observable_fields() -> None:
     base = make_finding()
-    moved = make_finding(start_line=99, end_line=99, confidence=10, message='different message')
-    assert base.identity == moved.identity
-    assert base.identity == finding_identity('vulture', 'demo', 'pkg/mod.py', 'unused_fn', 'function')
+    observed = make_finding(confidence=10, message='different message', severity='HIGH')
+    assert base.identity == observed.identity
+    assert base.identity == finding_identity('vulture', 'demo', 'pkg/mod.py', 'unused_fn', 'function', None, 10, 10)
 
 
 def test_identity_distinguishes_each_component() -> None:
@@ -104,18 +104,29 @@ def test_identity_distinguishes_each_component() -> None:
     assert base.identity != make_finding(path='pkg/other.py').identity
     assert base.identity != make_finding(symbol='other_fn').identity
     assert base.identity != make_finding(kind='method').identity
+    assert base.identity != make_finding(rule_id='SKY-U001').identity
+    assert base.identity != make_finding(start_line=9).identity
+    assert base.identity != make_finding(end_line=11).identity
 
 
 def test_identity_distinguishes_no_symbol_from_empty_like_symbol() -> None:
-    assert finding_identity('t', 'p', 'f.py', None, 'k') != finding_identity('t', 'p', 'f.py', '', 'k')
+    assert finding_identity('t', 'p', 'f.py', None, 'k', None, 1, 1) != finding_identity(
+        't', 'p', 'f.py', '', 'k', None, 1, 1
+    )
 
 
 def test_identity_serialization_is_unambiguous_across_field_boundaries() -> None:
     # Regression: delimiter characters inside attacker-controlled fields
     # must never make distinct (path, symbol) pairs collide.
-    assert finding_identity('t', 'p', 'a\x1fsb', 'c', 'k') != finding_identity('t', 'p', 'a', 'b\x1fsc', 'k')
-    assert finding_identity('t', 'p', 'a"b', 'c', 'k') != finding_identity('t', 'p', 'a', 'b"c', 'k')
-    assert finding_identity('t', 'p\x1f', 'a', None, 'k') != finding_identity('t', 'p', '\x1fa', None, 'k')
+    assert finding_identity('t', 'p', 'a\x1fsb', 'c', 'k', None, 1, 1) != finding_identity(
+        't', 'p', 'a', 'b\x1fsc', 'k', None, 1, 1
+    )
+    assert finding_identity('t', 'p', 'a"b', 'c', 'k', None, 1, 1) != finding_identity(
+        't', 'p', 'a', 'b"c', 'k', None, 1, 1
+    )
+    assert finding_identity('t', 'p\x1f', 'a', None, 'k', None, 1, 1) != finding_identity(
+        't', 'p', '\x1fa', None, 'k', None, 1, 1
+    )
 
 
 def test_finding_rejects_inverted_span() -> None:
@@ -129,12 +140,13 @@ def test_occurrence_rejects_inverted_span() -> None:
 
 
 def test_occurrence_projection_carries_all_fields() -> None:
-    occurrence = make_finding(rule_id='SKY-U001').occurrence()
+    occurrence = make_finding(rule_id='SKY-U001', severity='HIGH').occurrence()
     assert occurrence == FindingOccurrence(
         start_line=10,
         end_line=10,
         message="unused function 'unused_fn'",
         confidence=60,
+        severity='HIGH',
         rule_id='SKY-U001',
         raw_excerpt="pkg/mod.py:10: unused function 'unused_fn' (60% confidence)",
     )
@@ -147,23 +159,43 @@ def test_canonical_key_orders_missing_confidence_first() -> None:
 
 
 def test_canonical_key_field_order() -> None:
-    occurrence = FindingOccurrence(start_line=3, end_line=4, message='m', confidence=80, rule_id='SKY-U001')
-    assert canonical_occurrence_key(occurrence) == (3, 4, 'm', 1, 80, 1, 'SKY-U001')
+    occurrence = FindingOccurrence(
+        start_line=3,
+        end_line=4,
+        message='m',
+        confidence=80,
+        severity='HIGH',
+        rule_id='SKY-U001',
+    )
+    assert canonical_occurrence_key(occurrence) == (3, 4, 'm', 1, 80, 1, 'SKY-U001', 1, 'HIGH')
 
 
-def test_canonical_key_orders_missing_rule_id_first() -> None:
-    # Reporting contract §3.1: rule_id is appended after confidence with a
-    # presence component, so absent sorts before present.
+def test_canonical_key_orders_missing_rule_id_and_severity_first() -> None:
+    # Reporting contract §3.1: rule_id and severity carry presence
+    # components, so absent sorts before present.
     with_rule = FindingOccurrence(start_line=1, end_line=1, message='m', rule_id='A')
     without_rule = FindingOccurrence(start_line=1, end_line=1, message='m', rule_id=None)
     assert canonical_occurrence_key(without_rule) < canonical_occurrence_key(with_rule)
-    assert canonical_occurrence_key(without_rule) == (1, 1, 'm', 0, 0, 0, '')
+    assert canonical_occurrence_key(without_rule) == (1, 1, 'm', 0, 0, 0, '', 0, '')
+    with_severity = FindingOccurrence(start_line=1, end_line=1, message='m', severity='LOW')
+    assert canonical_occurrence_key(without_rule) < canonical_occurrence_key(with_severity)
 
 
-def test_rule_id_stays_outside_finding_identity() -> None:
-    # Reporting contract §3.1: a rule-code change on the same target must
-    # pair as one `changed` diff, so identity excludes the rule ID.
-    assert make_finding(rule_id='SKY-U001').identity == make_finding(rule_id='SKY-U999').identity
+def test_rule_id_and_span_are_part_of_finding_identity() -> None:
+    # A rule-code change on the same target is a dropped finding plus a new
+    # one, never a `changed` pair; the line span pins identity the same way.
+    assert make_finding(rule_id='SKY-U001').identity != make_finding(rule_id='SKY-U999').identity
+
+
+def test_severity_normalizes_on_validation() -> None:
+    # Casing and punctuation variants of one label must never read as a
+    # changed field, and a label with nothing left normalizes to absent.
+    assert make_finding(severity='High').severity == 'HIGH'
+    assert make_finding(severity=' very-high! ').severity == 'VERYHIGH'
+    assert make_finding(severity='!!').severity is None
+    assert make_finding(severity=None).severity is None
+    occurrence = FindingOccurrence(start_line=1, end_line=1, message='m', severity='Medium ')
+    assert occurrence.severity == 'MEDIUM'
 
 
 def test_source_excerpt_shape_is_validated() -> None:
@@ -246,56 +278,75 @@ def test_overall_aggregates_must_be_the_sum_of_the_projects() -> None:
         Report(manifest=manifest, projects=(project,), totals=DiffTotals(new=1), rollups=(), truncated=False)
 
 
-def occurrence_at(line: int) -> FindingOccurrence:
-    return FindingOccurrence(start_line=line, end_line=line, message='m', confidence=None)
+def occurrence_at(line: int, *, message: str = 'm') -> FindingOccurrence:
+    return FindingOccurrence(start_line=line, end_line=line, message=message, confidence=None)
 
 
-def test_diff_requires_consistent_sides() -> None:
-    identity = make_finding().identity
-    common: dict[str, object] = {
-        'identity': identity,
+def diff_identity(line: int) -> str:
+    return finding_identity('vulture', 'demo', 'pkg/mod.py', 'unused_fn', 'function', None, line, line)
+
+
+def diff_common(line: int) -> dict[str, object]:
+    return {
+        'identity': diff_identity(line),
         'tool': 'vulture',
         'project': 'demo',
         'path': 'pkg/mod.py',
         'symbol': 'unused_fn',
         'kind': 'function',
     }
+
+
+def test_diff_requires_consistent_sides() -> None:
     with pytest.raises(ValidationError, match='inconsistent'):
-        FindingDiff.model_validate({**common, 'diff_class': DiffClass.NEW, 'base_occurrence': occurrence_at(1)})
+        FindingDiff.model_validate({**diff_common(1), 'diff_class': DiffClass.NEW, 'base_occurrence': occurrence_at(1)})
     with pytest.raises(ValidationError, match='inconsistent'):
-        FindingDiff.model_validate({**common, 'diff_class': DiffClass.DROPPED, 'head_occurrence': occurrence_at(1)})
+        FindingDiff.model_validate(
+            {**diff_common(1), 'diff_class': DiffClass.DROPPED, 'head_occurrence': occurrence_at(1)}
+        )
     with pytest.raises(ValidationError, match='inconsistent'):
         FindingDiff.model_validate(
             {
-                **common,
+                **diff_common(1),
                 'diff_class': DiffClass.CHANGED,
                 'base_occurrence': occurrence_at(1),
-                'head_occurrence': occurrence_at(2),
+                'head_occurrence': occurrence_at(1, message='m2'),
+            }
+        )
+
+
+def test_diff_rejects_occurrences_contradicting_the_identity_hash() -> None:
+    # The identity hash covers the rule ID and line span; a side whose
+    # recomputed hash disagrees is an invalid diff, which also forbids a
+    # `changed` pair whose sides differ in rule or span.
+    with pytest.raises(ValidationError, match='contradicts the declared identity'):
+        FindingDiff.model_validate({**diff_common(1), 'diff_class': DiffClass.NEW, 'head_occurrence': occurrence_at(2)})
+    with pytest.raises(ValidationError, match='contradicts the declared identity'):
+        FindingDiff.model_validate(
+            {
+                **diff_common(1),
+                'diff_class': DiffClass.CHANGED,
+                'base_occurrence': occurrence_at(1),
+                'head_occurrence': occurrence_at(2, message='m2'),
+                'changed_fields': (ChangedField.MESSAGE,),
             }
         )
 
 
 def test_diff_reference_side_follows_class() -> None:
-    identity = make_finding().identity
-    common: dict[str, object] = {
-        'identity': identity,
-        'tool': 'vulture',
-        'project': 'demo',
-        'path': 'pkg/mod.py',
-        'symbol': 'unused_fn',
-        'kind': 'function',
-    }
-    new = FindingDiff.model_validate({**common, 'diff_class': DiffClass.NEW, 'head_occurrence': occurrence_at(2)})
+    new = FindingDiff.model_validate(
+        {**diff_common(2), 'diff_class': DiffClass.NEW, 'head_occurrence': occurrence_at(2)}
+    )
     dropped = FindingDiff.model_validate(
-        {**common, 'diff_class': DiffClass.DROPPED, 'base_occurrence': occurrence_at(1)}
+        {**diff_common(1), 'diff_class': DiffClass.DROPPED, 'base_occurrence': occurrence_at(1)}
     )
     changed = FindingDiff.model_validate(
         {
-            **common,
+            **diff_common(1),
             'diff_class': DiffClass.CHANGED,
             'base_occurrence': occurrence_at(1),
-            'head_occurrence': occurrence_at(2),
-            'changed_fields': (ChangedField.LINE_SPAN,),
+            'head_occurrence': occurrence_at(1, message='m2'),
+            'changed_fields': (ChangedField.MESSAGE,),
         }
     )
     assert new.reference_occurrence == occurrence_at(2)
@@ -479,7 +530,7 @@ def test_schema_version_is_constrained_to_the_supported_version() -> None:
     with pytest.raises(ValidationError, match='is not the supported'):
         make_finding(schema_version='0.9.0')
     with pytest.raises(ValidationError, match='is not the supported'):
-        FindingOccurrence(schema_version='2.0.0', start_line=1, end_line=1, message='m')
+        FindingOccurrence(schema_version='1.2.0', start_line=1, end_line=1, message='m')
     manifest = make_manifest()
     with pytest.raises(ValidationError, match='is not the supported'):
         Report(schema_version='1.0.1', manifest=manifest, projects=(), totals=DiffTotals(), rollups=(), truncated=False)

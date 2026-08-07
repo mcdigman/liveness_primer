@@ -49,7 +49,7 @@ test('the review workflow is keyboard operable', async ({ page }) => {
   await openReportAndWait(page, goldenReport());
   // Search from the keyboard.
   await page.getByPlaceholder('Search path, symbol, message, rule, kind').focus();
-  await page.keyboard.type('mover');
+  await page.keyboard.type('ruleless');
   await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(1);
   // Toggle export selection with Space on the row checkbox.
   await page

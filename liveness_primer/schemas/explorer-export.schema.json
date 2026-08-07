@@ -1,12 +1,11 @@
 {
   "$defs": {
     "ChangedField": {
-      "description": "Observable occurrence field that may differ within a ``changed`` diff.\n\nAttributes\n----------\nLINE_SPAN\n    The start/end line span moved.\nMESSAGE\n    The message text changed.\nCONFIDENCE\n    The confidence value changed (only for tools declaring the capability).\nRULE\n    The detector rule ID changed.",
+      "description": "Observable occurrence field that may differ within a ``changed`` diff.\n\nThe line span and rule ID are part of the finding identity and can\nnever differ within one ``changed`` pair: a moved span or a renamed\nrule code is a dropped finding plus a new one.\n\nAttributes\n----------\nMESSAGE\n    The message text changed.\nCONFIDENCE\n    The confidence value changed (only for tools declaring the capability).\nSEVERITY\n    The severity label changed (only for tools declaring the capability).",
       "enum": [
-        "line-span",
         "message",
         "confidence",
-        "rule"
+        "severity"
       ],
       "title": "ChangedField",
       "type": "string"
@@ -161,7 +160,7 @@
     },
     "DiffTotals": {
       "additionalProperties": false,
-      "description": "Diff totals before truncation.\n\nAttributes\n----------\nnew : int\n    Count of ``new`` diffs.\ndropped : int\n    Count of ``dropped`` diffs.\nchanged : int\n    Count of ``changed`` diffs.\nchanged_confidence : int\n    ``changed`` diffs whose ``changed_fields`` include confidence.\nchanged_message_only : int\n    ``changed`` diffs whose only changed field is the message.",
+      "description": "Diff totals before truncation.\n\nAttributes\n----------\nnew : int\n    Count of ``new`` diffs.\ndropped : int\n    Count of ``dropped`` diffs.\nchanged : int\n    Count of ``changed`` diffs.\nchanged_confidence : int\n    ``changed`` diffs whose ``changed_fields`` include confidence.\nchanged_message_only : int\n    ``changed`` diffs whose only changed field is the message.\nchanged_severity_only : int\n    ``changed`` diffs whose only changed field is the severity.",
       "properties": {
         "changed": {
           "default": 0,
@@ -176,6 +175,11 @@
         "changed_message_only": {
           "default": 0,
           "title": "Changed Message Only",
+          "type": "integer"
+        },
+        "changed_severity_only": {
+          "default": 0,
+          "title": "Changed Severity Only",
           "type": "integer"
         },
         "dropped": {
@@ -357,8 +361,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "1.2.0",
-          "default": "1.2.0",
+          "const": "2.0.0",
+          "default": "2.0.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -392,7 +396,7 @@
     },
     "FindingLocator": {
       "additionalProperties": false,
-      "description": "Persistent reference to one serialized finding diff (explorer contract \u00a74.2).\n\n``line`` is the diff class's reference-side start line \u2014 head for\n``new``, base for ``dropped`` and ``changed``. ``occurrence`` is the\ndiff's zero-based position within the subsequence of the same serialized\n``ProjectReport.diffs`` tuple whose identity and reference-side start\nline equal ``(identity, line)``, in serialized order.\n\nAttributes\n----------\nproject : str\n    Corpus project name.\nidentity : str\n    Stable finding identity hash.\nline : int\n    Reference-side start line (1-based).\noccurrence : int\n    Zero-based index among diffs sharing ``(identity, line)``.",
+      "description": "Persistent reference to one serialized finding diff (explorer contract \u00a74.2).\n\n``line`` is the diff class's reference-side start line \u2014 head for\n``new``, base for ``dropped`` and ``changed``. The identity hash covers\nthe start line, so every diff sharing ``identity`` shares ``line``; the\nfield stays serialized as denormalized display data. ``occurrence`` is\nthe diff's zero-based position within the subsequence of the same\nserialized ``ProjectReport.diffs`` tuple whose identity and\nreference-side start line equal ``(identity, line)``, in serialized\norder.\n\nAttributes\n----------\nproject : str\n    Corpus project name.\nidentity : str\n    Stable finding identity hash.\nline : int\n    Reference-side start line (1-based).\noccurrence : int\n    Zero-based index among diffs sharing ``(identity, line)``.",
       "properties": {
         "identity": {
           "title": "Identity",
@@ -424,7 +428,7 @@
     },
     "FindingOccurrence": {
       "additionalProperties": false,
-      "description": "One occurrence of a finding identity in a report.\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.\nsource_excerpt : SourceExcerpt | None\n    Bounded pinned-source evidence.",
+      "description": "One occurrence of a finding identity in a report.\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nseverity : str | None\n    Canonical severity label (e.g. ``HIGH``), for tools declaring the\n    capability; normalized on validation.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.\nsource_excerpt : SourceExcerpt | None\n    Bounded pinned-source evidence.",
       "properties": {
         "confidence": {
           "anyOf": [
@@ -474,10 +478,22 @@
           "title": "Rule Id"
         },
         "schema_version": {
-          "const": "1.2.0",
-          "default": "1.2.0",
+          "const": "2.0.0",
+          "default": "2.0.0",
           "title": "Schema Version",
           "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
         },
         "source_excerpt": {
           "anyOf": [
@@ -707,8 +723,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "1.2.0",
-          "default": "1.2.0",
+          "const": "2.0.0",
+          "default": "2.0.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -887,8 +903,8 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "1.2.0",
-      "default": "1.2.0",
+      "const": "2.0.0",
+      "default": "2.0.0",
       "title": "Schema Version",
       "type": "string"
     },

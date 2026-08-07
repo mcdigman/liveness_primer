@@ -73,7 +73,7 @@ def test_run_escape_hatch_text_output(
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert 'liveness primer report - tool: vulture' in captured.out
-    assert '1 new, 0 dropped, 1 changed' in captured.out
+    assert '2 new, 1 dropped, 0 changed' in captured.out
     assert 'comparable: no' in captured.out
 
 
@@ -469,7 +469,7 @@ def test_managed_run_fires_gates_with_exit_three(
     captured = capsys.readouterr()
     assert code == EXIT_GATE
     assert 'comparable: yes' in captured.out
-    assert 'gate failure: new: 1' in captured.err
+    assert 'gate failure: new: 2; dropped: 1' in captured.err
 
 
 @pytest.mark.usefixtures('_isolated_cache')
@@ -495,7 +495,7 @@ def test_managed_run_without_firing_gates_exits_zero(
             '--new',
             'head-branch',
             '--fail-on',
-            'dropped',
+            'changed',
         ]
     )
     captured = capsys.readouterr()

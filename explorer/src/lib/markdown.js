@@ -99,6 +99,8 @@ export function renderMarkdown({ filename, digest, projection, selectedRows }) {
         `\`${presentation.glyph}\` ${presentation.label}`,
         escapeMarkdown(row.rule),
         escapeMarkdown(row.confidence),
+        // Severity appears when the report carries it (explorer §6).
+        ...(projection.hasSeverity ? [escapeMarkdown(row.severity)] : []),
         escapeMarkdown(row.kind),
         escapeMarkdown(row.location),
       ];

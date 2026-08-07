@@ -152,6 +152,7 @@ export function reduce(state, action) {
         rule: new Set(state.selections.rule),
         kind: new Set(state.selections.kind),
         confidence: new Set(state.selections.confidence),
+        severity: new Set(state.selections.severity),
       };
       const chosen = selections[action.category];
       if (chosen.has(action.value)) {

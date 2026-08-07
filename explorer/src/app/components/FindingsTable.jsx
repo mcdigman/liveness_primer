@@ -258,6 +258,11 @@ export function FindingsTable({
         },
         { title: 'Rule', field: 'rule', width: 100, responsive: 2, cssClass: 'cell-mono' },
         { title: '%', field: 'confidence', width: 72, responsive: 2, cssClass: 'cell-mono' },
+        // The severity column exists only for reports carrying severities
+        // (§2.4); the table remounts on that flag via its React key.
+        ...(handlersRef.current.projection.hasSeverity
+          ? [{ title: 'Severity', field: 'severity', width: 96, responsive: 2, cssClass: 'cell-mono' }]
+          : []),
         { title: 'Kind', field: 'kind', width: 84, responsive: 4 },
         {
           title: 'Location',

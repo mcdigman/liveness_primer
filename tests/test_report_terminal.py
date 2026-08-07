@@ -255,7 +255,7 @@ def test_rows_align_at_visible_column_boundaries_with_unicode() -> None:
         measured_cost_seconds=None,
     )
     report = build_report().model_copy(update={'projects': (project,), 'truncated': False})
-    text = render_text(report, TextRenderOptions(width=120))
+    text = render_text(report, TextRenderOptions(width=140))
     lines = text.splitlines()
     header = next(line for line in lines if 'location' in line and 'fields' in line)
     kind_offset = cell_len(header[: header.index('kind')])
@@ -265,7 +265,7 @@ def test_rows_align_at_visible_column_boundaries_with_unicode() -> None:
         assert cell_len(row[: row.index(kind)]) == kind_offset
     # No physical line exceeds the requested width.
     for line in lines:
-        assert cell_len(line) <= 120
+        assert cell_len(line) <= 140
 
 
 def test_narrow_output_uses_labelled_stacked_layout() -> None:

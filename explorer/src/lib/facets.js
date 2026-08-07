@@ -5,7 +5,7 @@
 // combine with AND. Facet counts are full-report counts; the toolbar
 // separately reports the visible count.
 
-import { NO_RULE } from './projection.js';
+import { NO_RULE, NO_SEVERITY } from './projection.js';
 
 /** @typedef {import('./projection.js').FindingRow} FindingRow */
 
@@ -16,6 +16,7 @@ import { NO_RULE } from './projection.js';
  * @property {Set<string>} rule NO_RULE stands for findings without a rule
  * @property {Set<string>} kind
  * @property {Set<string>} confidence bucket values
+ * @property {Set<string>} severity NO_SEVERITY stands for findings without one
  */
 
 /**
@@ -28,6 +29,7 @@ export function emptySelections() {
     rule: new Set(),
     kind: new Set(),
     confidence: new Set(),
+    severity: new Set(),
   };
 }
 
@@ -48,15 +50,23 @@ function ruleFacetValue(row) {
 }
 
 /**
+ * @param {FindingRow} row
+ * @returns {string}
+ */
+function severityFacetValue(row) {
+  return row.severityValue ?? NO_SEVERITY;
+}
+
+/**
  * Full-report option counts per facet category, in first-seen order for
  * projects and descending count for the open-ended categories.
  *
  * @param {FindingRow[]} rows
  * @returns {{diffClass: Map<string, number>, project: Map<string, number>, rule: Map<string, number>,
- *   kind: Map<string, number>, confidence: Map<string, number>}}
+ *   kind: Map<string, number>, confidence: Map<string, number>, severity: Map<string, number>}}
  */
 export function facetCounts(rows) {
-  /** @type {Record<'diffClass' | 'project' | 'rule' | 'kind' | 'confidence', Map<string, number>>} */
+  /** @type {Record<'diffClass' | 'project' | 'rule' | 'kind' | 'confidence' | 'severity', Map<string, number>>} */
   const counts = {
     diffClass: new Map([
       ['new', 0],
@@ -67,6 +77,7 @@ export function facetCounts(rows) {
     rule: new Map(),
     kind: new Map(),
     confidence: new Map(),
+    severity: new Map(),
   };
   /**
    * @param {Map<string, number>} map
@@ -79,8 +90,9 @@ export function facetCounts(rows) {
     bump(counts.rule, ruleFacetValue(row));
     bump(counts.kind, row.kind);
     bump(counts.confidence, row.confidenceBucket);
+    bump(counts.severity, severityFacetValue(row));
   }
-  for (const category of /** @type {const} */ (['rule', 'kind'])) {
+  for (const category of /** @type {const} */ (['rule', 'kind', 'severity'])) {
     counts[category] = new Map(
       [...counts[category].entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     );
@@ -115,6 +127,9 @@ export function matchesFacets(row, selections) {
     return false;
   }
   if (selections.kind.size > 0 && !selections.kind.has(row.kind)) {
+    return false;
+  }
+  if (selections.severity.size > 0 && !selections.severity.has(severityFacetValue(row))) {
     return false;
   }
   return selections.confidence.size === 0 || selections.confidence.has(row.confidenceBucket);

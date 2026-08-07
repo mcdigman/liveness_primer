@@ -40,35 +40,49 @@ export function confidenceDisplay(diff) {
 }
 
 /**
- * The rule cell: `-` without a rule, or `base → head` when a changed pair
- * moved rules.
+ * @param {string | null} severity
+ * @returns {string}
+ */
+export function severityText(severity) {
+  return severity === null ? '-' : severity;
+}
+
+/**
+ * The severity cell: one value, or `base → head` when a changed pair
+ * differs (explorer contract §2.4).
+ *
+ * @param {FindingDiff} diff
+ * @returns {string}
+ */
+export function severityDisplay(diff) {
+  const base = diff.base_occurrence;
+  const head = diff.head_occurrence;
+  if (base !== null && head !== null && base.severity !== head.severity) {
+    return `${severityText(base.severity)} → ${severityText(head.severity)}`;
+  }
+  return severityText(referenceOccurrence(diff).severity);
+}
+
+/**
+ * The rule cell: the reference-side rule ID, or `-` without one. The
+ * finding identity pins the rule ID, so a changed pair never differs.
  *
  * @param {FindingDiff} diff
  * @returns {string}
  */
 export function ruleDisplay(diff) {
-  const base = diff.base_occurrence;
-  const head = diff.head_occurrence;
-  if (base !== null && head !== null && base.rule_id !== head.rule_id) {
-    return `${base.rule_id ?? '-'} → ${head.rule_id ?? '-'}`;
-  }
   const rule = referenceOccurrence(diff).rule_id;
   return rule === null ? '-' : rule;
 }
 
 /**
- * The location cell: `path:line`, with `base → head` line spans when a
- * changed pair moved.
+ * The location cell: `path:line`. The finding identity pins the line
+ * span, so a changed pair never differs.
  *
  * @param {FindingDiff} diff
  * @returns {string}
  */
 export function locationDisplay(diff) {
-  const base = diff.base_occurrence;
-  const head = diff.head_occurrence;
-  if (base !== null && head !== null && base.start_line !== head.start_line) {
-    return `${diff.path}:${base.start_line} → ${head.start_line}`;
-  }
   return `${diff.path}:${referenceOccurrence(diff).start_line}`;
 }
 

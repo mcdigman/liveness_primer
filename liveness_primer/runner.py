@@ -209,6 +209,7 @@ def _assemble_report(manifest: RunManifest, project_reports: Sequence[ProjectRep
         changed=sum(entry.totals.changed for entry in project_reports),
         changed_confidence=sum(entry.totals.changed_confidence for entry in project_reports),
         changed_message_only=sum(entry.totals.changed_message_only for entry in project_reports),
+        changed_severity_only=sum(entry.totals.changed_severity_only for entry in project_reports),
     )
     return Report(
         manifest=manifest,
@@ -484,6 +485,7 @@ class PrimerRunner:
                 base.findings,
                 head.findings,
                 confidence_capable=self._adapter.capabilities.has_confidence,
+                severity_capable=self._adapter.capabilities.has_severity,
             )
             # Locators index the complete canonical sequence before
             # truncation, so retained indices match it (explorer §4.2).

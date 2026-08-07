@@ -2,7 +2,7 @@
   "$defs": {
     "FindingLocator": {
       "additionalProperties": false,
-      "description": "Persistent reference to one serialized finding diff (explorer contract \u00a74.2).\n\n``line`` is the diff class's reference-side start line \u2014 head for\n``new``, base for ``dropped`` and ``changed``. ``occurrence`` is the\ndiff's zero-based position within the subsequence of the same serialized\n``ProjectReport.diffs`` tuple whose identity and reference-side start\nline equal ``(identity, line)``, in serialized order.\n\nAttributes\n----------\nproject : str\n    Corpus project name.\nidentity : str\n    Stable finding identity hash.\nline : int\n    Reference-side start line (1-based).\noccurrence : int\n    Zero-based index among diffs sharing ``(identity, line)``.",
+      "description": "Persistent reference to one serialized finding diff (explorer contract \u00a74.2).\n\n``line`` is the diff class's reference-side start line \u2014 head for\n``new``, base for ``dropped`` and ``changed``. The identity hash covers\nthe start line, so every diff sharing ``identity`` shares ``line``; the\nfield stays serialized as denormalized display data. ``occurrence`` is\nthe diff's zero-based position within the subsequence of the same\nserialized ``ProjectReport.diffs`` tuple whose identity and\nreference-side start line equal ``(identity, line)``, in serialized\norder.\n\nAttributes\n----------\nproject : str\n    Corpus project name.\nidentity : str\n    Stable finding identity hash.\nline : int\n    Reference-side start line (1-based).\noccurrence : int\n    Zero-based index among diffs sharing ``(identity, line)``.",
       "properties": {
         "identity": {
           "title": "Identity",
@@ -50,8 +50,8 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "1.2.0",
-      "default": "1.2.0",
+      "const": "2.0.0",
+      "default": "2.0.0",
       "title": "Schema Version",
       "type": "string"
     },

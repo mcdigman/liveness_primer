@@ -2,16 +2,13 @@
 
 Copyright (C) 2026 Matthew C. Digman
 
-Both revisions see identical files; matching proceeds in four stages per
+Both revisions see identical files; matching proceeds in three stages per
 finding identity: (1) full-field-equal occurrences are removed by multiset
-intersection; (2) occurrences sharing (identity, start line) are paired in
-canonical-key order as ``changed``; (3) occurrences sharing identity are
-paired across lines by a deterministic order-preserving alignment minimizing
-total start-line distance, ties broken toward earlier lines, as ``changed``;
-(4) leftovers classify as ``new`` or ``dropped``.
+intersection; (2) surviving occurrences sharing the identity — which covers
+the rule ID and line span — are paired in canonical-key order as
+``changed``; (3) leftovers classify as ``new`` or ``dropped``.
 """
 
-from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -153,7 +150,7 @@ def _remove_equal(
     return base_left, head_left
 
 
-def _pair_same_line(
+def _pair_canonical(
     base: Sequence[FindingOccurrence],
     head: Sequence[FindingOccurrence],
 ) -> tuple[
@@ -161,7 +158,12 @@ def _pair_same_line(
     list[FindingOccurrence],
     list[FindingOccurrence],
 ]:
-    """Pair occurrences sharing a start line in canonical-key order (stage 2).
+    """Pair surviving same-identity occurrences in canonical-key order (stage 2).
+
+    The identity covers the rule ID and line span, so every surviving
+    occurrence of one identity names the same target: the sides pair
+    positionally in canonical order, and the longer side's tail is left
+    over.
 
     Parameters
     ----------
@@ -176,90 +178,9 @@ def _pair_same_line(
         The ``changed`` pairs plus the base and head leftovers in canonical
         order.
     """
-    base_by_line: dict[int, list[FindingOccurrence]] = defaultdict(list)
-    head_by_line: dict[int, list[FindingOccurrence]] = defaultdict(list)
-    for occurrence in base:
-        base_by_line[occurrence.start_line].append(occurrence)
-    for occurrence in head:
-        head_by_line[occurrence.start_line].append(occurrence)
-    pairs: list[tuple[FindingOccurrence, FindingOccurrence]] = []
-    base_left: list[FindingOccurrence] = []
-    head_left: list[FindingOccurrence] = []
-    for line in sorted(base_by_line.keys() | head_by_line.keys()):
-        base_group = base_by_line.get(line, [])
-        head_group = head_by_line.get(line, [])
-        paired = min(len(base_group), len(head_group))
-        pairs.extend(zip(base_group[:paired], head_group[:paired], strict=True))
-        base_left.extend(base_group[paired:])
-        head_left.extend(head_group[paired:])
-    base_left.sort(key=canonical_occurrence_key)
-    head_left.sort(key=canonical_occurrence_key)
-    return pairs, base_left, head_left
-
-
-def _align_across_lines(
-    base: Sequence[FindingOccurrence],
-    head: Sequence[FindingOccurrence],
-) -> tuple[
-    list[tuple[FindingOccurrence, FindingOccurrence]],
-    list[FindingOccurrence],
-    list[FindingOccurrence],
-]:
-    """Align remaining occurrences across lines (stage 3).
-
-    Both sides are in canonical-key order; the alignment is order-preserving
-    with gaps, pairs exactly ``min(len(base), len(head))`` occurrences, and
-    minimizes total start-line distance. Ties are broken toward pairing at the
-    earliest positions, i.e. toward earlier lines.
-
-    Parameters
-    ----------
-    base : Sequence[FindingOccurrence]
-        Base leftovers in canonical order.
-    head : Sequence[FindingOccurrence]
-        Head leftovers in canonical order.
-
-    Returns
-    -------
-    tuple[list[tuple[FindingOccurrence, FindingOccurrence]], list[FindingOccurrence], list[FindingOccurrence]]
-        The ``changed`` pairs plus unpaired base and head occurrences.
-    """
-    m, n = len(base), len(head)
-    if m == 0 or n == 0:
-        return [], list(base), list(head)
-    # cost[i][j]: minimal total start-line distance aligning base[i:] with
-    # head[j:] while pairing exactly min(m - i, n - j) occurrences.
-    cost = [[0] * (n + 1) for _ in range(m + 1)]
-    for i in range(m - 1, -1, -1):
-        for j in range(n - 1, -1, -1):
-            match = abs(base[i].start_line - head[j].start_line) + cost[i + 1][j + 1]
-            remaining_base = m - i
-            remaining_head = n - j
-            if remaining_base == remaining_head:
-                cost[i][j] = match
-            elif remaining_base < remaining_head:
-                cost[i][j] = min(match, cost[i][j + 1])
-            else:
-                cost[i][j] = min(match, cost[i + 1][j])
-    pairs: list[tuple[FindingOccurrence, FindingOccurrence]] = []
-    base_left: list[FindingOccurrence] = []
-    head_left: list[FindingOccurrence] = []
-    i = j = 0
-    while i < m and j < n:
-        match = abs(base[i].start_line - head[j].start_line) + cost[i + 1][j + 1]
-        if cost[i][j] == match:
-            pairs.append((base[i], head[j]))
-            i += 1
-            j += 1
-        elif m - i < n - j:
-            head_left.append(head[j])
-            j += 1
-        else:
-            base_left.append(base[i])
-            i += 1
-    base_left.extend(base[i:])
-    head_left.extend(head[j:])
-    return pairs, base_left, head_left
+    paired = min(len(base), len(head))
+    pairs = list(zip(base[:paired], head[:paired], strict=True))
+    return pairs, list(base[paired:]), list(head[paired:])
 
 
 def _changed_fields(
@@ -267,6 +188,7 @@ def _changed_fields(
     head: FindingOccurrence,
     *,
     confidence_capable: bool,
+    severity_capable: bool,
 ) -> tuple[ChangedField, ...]:
     """Compute the changed-field set of a paired occurrence (contract §8).
 
@@ -278,6 +200,8 @@ def _changed_fields(
         Head-side occurrence.
     confidence_capable : bool
         Whether the tool declares the has-confidence capability.
+    severity_capable : bool
+        Whether the tool declares the has-severity capability.
 
     Returns
     -------
@@ -287,12 +211,10 @@ def _changed_fields(
     Raises
     ------
     DiffEngineError
-        If confidence differs for a tool without the has-confidence
+        If confidence or severity differs for a tool without the matching
         capability, or no observable field differs at all.
     """
     changed: list[ChangedField] = []
-    if (base.start_line, base.end_line) != (head.start_line, head.end_line):
-        changed.append(ChangedField.LINE_SPAN)
     if base.message != head.message:
         changed.append(ChangedField.MESSAGE)
     if base.confidence != head.confidence:
@@ -300,10 +222,11 @@ def _changed_fields(
             msg = 'confidence differs for a tool without the has-confidence capability'
             raise DiffEngineError(msg)
         changed.append(ChangedField.CONFIDENCE)
-    if base.rule_id != head.rule_id:
-        # A rule-code change on the same target pairs as one `changed` diff
-        # and must never disappear from the blast radius (reporting §3.1).
-        changed.append(ChangedField.RULE)
+    if base.severity != head.severity:
+        if not severity_capable:
+            msg = 'severity differs for a tool without the has-severity capability'
+            raise DiffEngineError(msg)
+        changed.append(ChangedField.SEVERITY)
     if not changed:
         msg = 'paired occurrences with no changed observable field survived stage 1'
         raise DiffEngineError(msg)
@@ -312,15 +235,22 @@ def _changed_fields(
 
 class _DiffSortKey(NamedTuple):
     path: str
-    symbol: str
-    kind: str
+    start_line: int
+    rule_presence: int
+    rule_id: str
+    end_line: int
     identity: str
     class_rank: int
-    reference_occurrence: tuple[int, int, str, int, int, int, str]
+    reference_occurrence: tuple[int, int, str, int, int, int, str, int, str]
 
 
 def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
     """Compute the deterministic report-order key of a diff (contract §8, §12).
+
+    Diffs read in file order: path, then start line, rule ID (absent
+    first), end line, and identity hash. The class rank and the
+    reference-side canonical occurrence key that ``--occurrence`` indexes
+    keep same-identity diffs deterministic.
 
     Parameters
     ----------
@@ -330,16 +260,19 @@ def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
     Returns
     -------
     _DiffSortKey
-        Sort key: path, symbol, kind, identity, class rank, then the
-        reference-side canonical occurrence key that ``--occurrence`` indexes.
+        Sort key: path, start line, rule ID, end line, identity, class
+        rank, then the reference-side canonical occurrence key.
     """
+    reference = diff.reference_occurrence
     return _DiffSortKey(
         path=diff.path,
-        symbol='' if diff.symbol is None else diff.symbol,
-        kind=diff.kind,
+        start_line=reference.start_line,
+        rule_presence=0 if reference.rule_id is None else 1,
+        rule_id='' if reference.rule_id is None else reference.rule_id,
+        end_line=reference.end_line,
         identity=diff.identity,
         class_rank=_CLASS_RANK[diff.diff_class],
-        reference_occurrence=canonical_occurrence_key(diff.reference_occurrence),
+        reference_occurrence=canonical_occurrence_key(reference),
     )
 
 
@@ -439,6 +372,7 @@ def _totals(diffs: Sequence[FindingDiff]) -> DiffTotals:
         changed=len(changed),
         changed_confidence=sum(1 for diff in changed if ChangedField.CONFIDENCE in diff.changed_fields),
         changed_message_only=sum(1 for diff in changed if diff.changed_fields == (ChangedField.MESSAGE,)),
+        changed_severity_only=sum(1 for diff in changed if diff.changed_fields == (ChangedField.SEVERITY,)),
     )
 
 
@@ -447,6 +381,7 @@ def diff_findings(
     head: Iterable[Finding],
     *,
     confidence_capable: bool,
+    severity_capable: bool,
 ) -> ProjectDiff:
     """Diff the base and head findings of one (project, tool) pair (contract §8).
 
@@ -461,6 +396,8 @@ def diff_findings(
         Head-side findings.
     confidence_capable : bool
         Whether the tool declares the has-confidence capability.
+    severity_capable : bool
+        Whether the tool declares the has-severity capability.
 
     Returns
     -------
@@ -470,9 +407,9 @@ def diff_findings(
     Raises
     ------
     DiffEngineError
-        If confidence changes without declared support, a paired occurrence
-        has no changed field, or an indexed identity has no metadata on either
-        side.
+        If confidence or severity changes without declared support, a paired
+        occurrence has no changed field, or an indexed identity has no
+        metadata on either side.
     """
     base_index = _index_findings(base)
     head_index = _index_findings(head)
@@ -486,9 +423,8 @@ def diff_findings(
             msg = f'identity {identity!r} is absent from both base and head indexes'
             raise DiffEngineError(msg)
         base_rest, head_rest = _remove_equal(base_occurrences, head_occurrences)
-        line_pairs, base_rest, head_rest = _pair_same_line(base_rest, head_rest)
-        cross_pairs, base_rest, head_rest = _align_across_lines(base_rest, head_rest)
-        for base_occurrence, head_occurrence in (*line_pairs, *cross_pairs):
+        pairs, base_rest, head_rest = _pair_canonical(base_rest, head_rest)
+        for base_occurrence, head_occurrence in pairs:
             diffs.append(
                 FindingDiff(
                     diff_class=DiffClass.CHANGED,
@@ -504,6 +440,7 @@ def diff_findings(
                         base_occurrence,
                         head_occurrence,
                         confidence_capable=confidence_capable,
+                        severity_capable=severity_capable,
                     ),
                 )
             )

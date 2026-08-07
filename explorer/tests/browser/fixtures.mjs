@@ -25,7 +25,7 @@ export function goldenRowCount() {
   return report.projects.reduce((sum, project) => sum + project.diffs.length, 0);
 }
 
-const SCHEMA_VERSION = '1.2.0';
+const SCHEMA_VERSION = '2.0.0';
 
 /**
  * @param {number} index

@@ -209,7 +209,9 @@ def test_vulture_findings_carry_no_invented_rule_id() -> None:
     assert finding.rule_id is None
 
 
-def test_skylos_ignores_non_dead_code_categories() -> None:
+def test_skylos_ingests_danger_but_ignores_other_categories() -> None:
+    # The danger security array is ingested when present; the secrets and
+    # quality categories stay filtered at the adapter (contract §4).
     document: dict[str, list[dict[str, object]]] = {
         'unused_functions': [],
         'unused_imports': [],
@@ -220,7 +222,57 @@ def test_skylos_ignores_non_dead_code_categories() -> None:
         'secrets': [{'rule_id': 'SKY-S001'}],
         'quality': [{'rule_id': 'SKY-L001'}],
     }
-    assert SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT) == []
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.kind == 'danger'
+    assert finding.rule_id == 'SKY-D001'
+    assert finding.message == 'eval'
+    assert finding.symbol is None
+    assert finding.severity is None
+    assert finding.confidence is None
+
+
+def test_skylos_danger_entries_normalize_severity_and_keep_symbols() -> None:
+    document = {
+        'danger': [
+            {
+                'rule_id': 'SKY-D212',
+                'severity': 'Critical!',
+                'message': 'Possible command injection',
+                'file': 'a.py',
+                'line': 9,
+                'symbol': 'run',
+                'category': 'danger',
+                'compliance_tags': [{'framework': 'OWASP_TOP10'}],
+            }
+        ]
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.severity == 'CRITICAL'
+    assert finding.symbol == 'run'
+    assert finding.start_line == 9
+    assert finding.end_line == 9
+
+
+def test_skylos_declares_the_severity_capability() -> None:
+    assert SkylosAdapter.capabilities.has_severity is True
+    assert VultureAdapter.capabilities.has_severity is False
+
+
+def test_skylos_rejects_malformed_danger_entries() -> None:
+    document = {'danger': [{'rule_id': 'SKY-D001', 'file': 'a.py', 'line': 1}]}
+    with pytest.raises(AdapterError, match="malformed skylos entry in 'danger'"):
+        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+
+
+def test_skylos_rejects_non_array_danger_bucket() -> None:
+    with pytest.raises(AdapterError, match="key 'danger' is not an array"):
+        SkylosAdapter.parse(raw('{"danger": {}}'), project='demo', root=ROOT)
+
+
+def test_skylos_clamps_danger_line_zero_to_one() -> None:
+    document = {'danger': [{'rule_id': 'SKY-D001', 'message': 'eval', 'file': 'a.py', 'line': 0}]}
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.start_line == 1
 
 
 def test_skylos_falls_back_to_name_when_full_name_missing() -> None:

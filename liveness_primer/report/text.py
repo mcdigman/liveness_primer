@@ -40,7 +40,9 @@ from liveness_primer.report.common import (
     pin_for_project,
     rollup_lines,
     rule_text,
+    severity_text,
     span_text,
+    tool_has_severity,
     totals_text,
 )
 from liveness_primer.report.permalink import source_url, tree_reference
@@ -53,6 +55,7 @@ from liveness_primer.report.table import (
     continuation_lines,
     finding_lines,
     header_line,
+    layout_columns,
     measure_widths,
 )
 from liveness_primer.report.terminal import TextRenderOptions
@@ -71,6 +74,7 @@ STYLES: dict[str, str] = {
     'rule-dropped': 'red',
     'rule-changed': 'yellow',
     'confidence': 'magenta',
+    'severity': 'magenta',
     'kind': 'cyan',
     'location-link': 'blue underline',
     'fields': 'yellow',
@@ -85,6 +89,7 @@ STYLES: dict[str, str] = {
 # Independent per-cell length caps (reporting contract §8): no field may
 # consume another field's display budget.
 _RULE_CAP = 32
+_SEVERITY_CAP = 32
 _KIND_CAP = 32
 _LOCATION_CAP = 96
 _MESSAGE_CAP = 200
@@ -332,8 +337,14 @@ def _reference_url(diff: FindingDiff, pin: CorpusPinRecord | None) -> str | None
     return source_url(pin, diff.path, reference.start_line, reference.end_line)
 
 
-def _row_cells(diff: FindingDiff, *, url: str | None, options: TextRenderOptions) -> tuple[Cell, ...]:
-    """Build the eight sanitized cells of one finding row (reporting §4.2).
+def _row_cells(
+    diff: FindingDiff,
+    *,
+    url: str | None,
+    options: TextRenderOptions,
+    has_severity: bool,
+) -> tuple[Cell, ...]:
+    """Build the sanitized cells of one finding row (reporting §4.2).
 
     Parameters
     ----------
@@ -343,6 +354,8 @@ def _row_cells(diff: FindingDiff, *, url: str | None, options: TextRenderOptions
         Pinned permalink of the reference-side span, when any.
     options : TextRenderOptions
         Resolved presentation options.
+    has_severity : bool
+        Whether the severity column is part of the layout.
 
     Returns
     -------
@@ -352,12 +365,18 @@ def _row_cells(diff: FindingDiff, *, url: str | None, options: TextRenderOptions
     symbol = sanitize_inline(diff.symbol, max_length=_SYMBOL_CAP) if diff.symbol is not None else '-'
     location = sanitize_location(f'{diff.path}:{span_text(diff)}', max_length=_LOCATION_CAP)
     linked = url is not None and options.hyperlinks
+    severity_cells = (
+        (Cell(text=sanitize_inline(severity_text(diff), max_length=_SEVERITY_CAP), role='severity'),)
+        if has_severity
+        else ()
+    )
     return (
         Cell(text=CLASS_GLYPHS[diff.diff_class], role=f'class-{diff.diff_class.value}'),
         # The class accent continues through the rule column so findings
         # group by class without color carrying the meaning (§6.2).
         Cell(text=sanitize_inline(rule_text(diff), max_length=_RULE_CAP), role=f'rule-{diff.diff_class.value}'),
         Cell(text=confidence_text(diff), role='confidence'),
+        *severity_cells,
         Cell(text=sanitize_inline(diff.kind, max_length=_KIND_CAP), role='kind'),
         Cell(text=location, role='location-link' if linked else 'location', link=url if linked else None),
         Cell(text=symbol, role='symbol'),
@@ -369,8 +388,6 @@ def _row_cells(diff: FindingDiff, *, url: str | None, options: TextRenderOptions
 def _excerpt_block(
     occurrence: FindingOccurrence,
     *,
-    label: str | None,
-    side_url: str | None,
     indent: int,
     options: TextRenderOptions,
 ) -> list[Line]:
@@ -380,10 +397,6 @@ def _excerpt_block(
     ----------
     occurrence : FindingOccurrence
         The occurrence whose evidence renders.
-    label : str | None
-        ``base``/``head`` label for moved spans.
-    side_url : str | None
-        Pinned permalink of this side's span, when any.
     indent : int
         Indentation of the continuation region.
     options : TextRenderOptions
@@ -395,36 +408,8 @@ def _excerpt_block(
         The block's physical lines.
     """
     lines: list[Line] = []
-    if label is not None:
-        link = side_url if options.hyperlinks else None
-        lines.extend(
-            continuation_lines(
-                indent=indent,
-                body=Segment(text=f'{label}:', role='label', link=link),
-                total_width=options.width,
-            )
-        )
-        # The base-side span is already linked from the location cell (or
-        # its url line); only the head side needs its own url line, and
-        # only when the reviewer asked for them (reporting contract §5).
-        if side_url is not None and options.source_urls and label == 'head':
-            lines.extend(
-                continuation_lines(
-                    indent=indent,
-                    body=Segment(text=f'url: {side_url}'),
-                    total_width=options.width,
-                )
-            )
     excerpt = occurrence.source_excerpt
     if excerpt is None:
-        if label is not None:
-            lines.extend(
-                continuation_lines(
-                    indent=indent,
-                    body=Segment(text='(no source excerpt collected; see source warnings)', role='warning'),
-                    total_width=options.width,
-                )
-            )
         return lines
     number_width = len(str(excerpt.start_line + len(excerpt.lines) - 1))
     for offset, raw_line in enumerate(excerpt.lines):
@@ -456,7 +441,6 @@ def _excerpt_block(
 def _detail_lines(
     diff: FindingDiff,
     *,
-    pin: CorpusPinRecord | None,
     url: str | None,
     indent: int,
     excerpt_lines: int,
@@ -468,8 +452,6 @@ def _detail_lines(
     ----------
     diff : FindingDiff
         The diff to render.
-    pin : CorpusPinRecord | None
-        Resolved corpus pin of the project, when any.
     url : str | None
         Pinned permalink of the reference-side span, when any.
     indent : int
@@ -505,22 +487,18 @@ def _detail_lines(
         )
     if excerpt_lines == 0:
         return lines
-    sides = excerpt_sides(diff)
-    for label, occurrence in sides:
-        side_url = None
-        if label is not None and pin is not None:
-            side_url = source_url(pin, diff.path, occurrence.start_line, occurrence.end_line)
-        lines.extend(_excerpt_block(occurrence, label=label, side_url=side_url, indent=indent, options=options))
+    for occurrence in excerpt_sides(diff):
+        lines.extend(_excerpt_block(occurrence, indent=indent, options=options))
     return lines
 
 
 def _stacked_finding_lines(
     diff: FindingDiff,
     *,
-    pin: CorpusPinRecord | None,
     url: str | None,
     excerpt_lines: int,
     options: TextRenderOptions,
+    has_severity: bool,
 ) -> list[Line]:
     """Render one finding in the labelled stacked layout (reporting §4.6).
 
@@ -528,28 +506,28 @@ def _stacked_finding_lines(
     ----------
     diff : FindingDiff
         The diff to render.
-    pin : CorpusPinRecord | None
-        Resolved corpus pin of the project, when any.
     url : str | None
         Pinned permalink of the reference-side span, when any.
     excerpt_lines : int
         Source-evidence budget from the run settings.
     options : TextRenderOptions
         Resolved presentation options.
+    has_severity : bool
+        Whether the severity field is part of the layout.
 
     Returns
     -------
     list[Line]
         The stacked lines for the finding.
     """
-    cells = _row_cells(diff, url=url, options=options)
+    cells = _row_cells(diff, url=url, options=options, has_severity=has_severity)
     lines: list[Line] = [
         (
             Segment(text=CLASS_GLYPHS[diff.diff_class], role=f'class-{diff.diff_class.value}'),
             Segment(text=f' {diff.diff_class.value}'),
         )
     ]
-    labels = ('rule', '%', 'kind', 'location', 'symbol', 'message', 'fields')
+    labels = tuple(column.header for column in layout_columns(has_severity=has_severity)[1:])
     for label, cell in zip(labels, cells[1:], strict=True):
         lines.extend(
             continuation_lines(
@@ -562,7 +540,6 @@ def _stacked_finding_lines(
     lines.extend(
         _detail_lines(
             diff,
-            pin=pin,
             url=url,
             indent=_STACKED_INDENT,
             excerpt_lines=excerpt_lines,
@@ -578,6 +555,7 @@ def _finding_table(
     pin: CorpusPinRecord | None,
     manifest: RunManifest,
     options: TextRenderOptions,
+    has_severity: bool,
 ) -> list[Line]:
     """Render the aligned finding table or its stacked fallback.
 
@@ -591,6 +569,8 @@ def _finding_table(
         The run manifest supplying the evidence budget.
     options : TextRenderOptions
         Resolved presentation options.
+    has_severity : bool
+        Whether the severity column is part of the layout.
 
     Returns
     -------
@@ -599,8 +579,12 @@ def _finding_table(
     """
     excerpt_lines = manifest.settings.excerpt_lines
     urls = [_reference_url(diff, pin) for diff in shown]
-    rows = [_row_cells(diff, url=url, options=options) for diff, url in zip(shown, urls, strict=True)]
-    widths = measure_widths(rows, total_width=options.width)
+    rows = [
+        _row_cells(diff, url=url, options=options, has_severity=has_severity)
+        for diff, url in zip(shown, urls, strict=True)
+    ]
+    columns = layout_columns(has_severity=has_severity)
+    widths = measure_widths(rows, total_width=options.width, columns=columns)
     lines: list[Line] = []
     if widths is None:
         # The available width cannot satisfy the minimum column widths:
@@ -608,19 +592,26 @@ def _finding_table(
         for index, (diff, url) in enumerate(zip(shown, urls, strict=True)):
             if index:
                 lines.append(())
-            lines.extend(_stacked_finding_lines(diff, pin=pin, url=url, excerpt_lines=excerpt_lines, options=options))
+            lines.extend(
+                _stacked_finding_lines(
+                    diff,
+                    url=url,
+                    excerpt_lines=excerpt_lines,
+                    options=options,
+                    has_severity=has_severity,
+                )
+            )
         return lines
-    lines.append(header_line(widths))
+    lines.append(header_line(widths, columns=columns))
     separate = False
     for diff, url, row in zip(shown, urls, rows, strict=True):
         # One blank line separates a complete finding block from the next;
         # a report with no continuation regions stays a dense table (§4.5).
         if separate:
             lines.append(())
-        lines.extend(finding_lines(row, widths))
+        lines.extend(finding_lines(row, widths, columns=columns))
         details = _detail_lines(
             diff,
-            pin=pin,
             url=url,
             indent=_DETAIL_INDENT,
             excerpt_lines=excerpt_lines,
@@ -661,7 +652,13 @@ def _corpus_line(pin: CorpusPinRecord, *, options: TextRenderOptions) -> Line:
     return _plain_line(f'  corpus: {pinned_tree}')
 
 
-def _project_lines(project: ProjectReport, *, manifest: RunManifest, options: TextRenderOptions) -> list[Line]:
+def _project_lines(
+    project: ProjectReport,
+    *,
+    manifest: RunManifest,
+    options: TextRenderOptions,
+    has_severity: bool,
+) -> list[Line]:
     """Render one project section (reporting contract §4).
 
     Parameters
@@ -672,6 +669,8 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest, options: Te
         The run manifest supplying the corpus pin.
     options : TextRenderOptions
         Resolved presentation options.
+    has_severity : bool
+        Whether the severity column is part of the layout.
 
     Returns
     -------
@@ -704,7 +703,7 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest, options: Te
         lines.append(_plain_line(f'  {capped}'))
     shown, suppressed = cap_message_only(project.diffs)
     if shown:
-        lines.extend(_finding_table(shown, pin=pin, manifest=manifest, options=options))
+        lines.extend(_finding_table(shown, pin=pin, manifest=manifest, options=options, has_severity=has_severity))
     if suppressed:
         lines.extend(
             (
@@ -799,10 +798,11 @@ def render_text(report: Report, options: TextRenderOptions | None = None) -> str
         The full text report, newline-terminated.
     """
     resolved = options if options is not None else TextRenderOptions()
+    has_severity = tool_has_severity(report.manifest.tool)
     lines = _manifest_lines(report.manifest)
     lines.extend(_overview_lines(report))
     for project in report.projects:
         lines.append(())
-        lines.extend(_project_lines(project, manifest=report.manifest, options=resolved))
+        lines.extend(_project_lines(project, manifest=report.manifest, options=resolved, has_severity=has_severity))
     lines.extend(_footer_lines(report))
     return _emit(lines, resolved)
