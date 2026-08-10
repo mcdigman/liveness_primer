@@ -36,4 +36,4 @@ base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence, 0 message-on
 | 🟢 + | SKY-D205 | NA | CRITICAL | [app/load.py:L6](https://github.com/example/sec/blob/5555555555555555555555555555555555555555/app/load.py#L6) | Untrusted deserialization via pickle.loads<br>6 \| `    return pickle.loads(data)` |
 | 🟡 ~ | SKY-D203 | NA | MEDIUM->HIGH | [app/exec.py:L9](https://github.com/example/sec/blob/5555555555555555555555555555555555555555/app/exec.py#L9) | Use of os.system()<br>severity: MEDIUM -> HIGH<br>9 \| `    os.system(cmd)` |
 | 🔴 - | SKY-D401 | NA | MEDIUM | [app/hash.py:L12](https://github.com/example/sec/blob/5555555555555555555555555555555555555555/app/hash.py#L12) | Weak hash algorithm md5<br>12 \| `digest = hashlib.md5(blob)` |
-| 🟢 + | SKY-U001 | 80% | - | [app/load.py:L20](https://github.com/example/sec/blob/5555555555555555555555555555555555555555/app/load.py#L20) | unused function 'unused'<br>20 \| `def unused():` |
+| 🟢 + | SKY-U001 | 80% | NA | [app/load.py:L20](https://github.com/example/sec/blob/5555555555555555555555555555555555555555/app/load.py#L20) | unused function 'unused'<br>20 \| `def unused():` |

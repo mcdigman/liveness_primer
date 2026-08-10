@@ -391,16 +391,26 @@ export function FindingsTable({
     // dead space beside them, and anything the old responsive layout had
     // dropped never came back. redraw(true) re-runs the width calculation.
     let lastWidth = container.clientWidth;
+    // A window drag changes the width every frame; redraw(true) is a full
+    // column-width recomputation, so coalesce to one per frame.
+    let frame = 0;
     const observer = new ResizeObserver(() => {
-      const width = container.clientWidth;
-      if (width === lastWidth || width === 0 || !builtRef.current) {
+      if (frame !== 0 || !builtRef.current) {
         return;
       }
-      lastWidth = width;
-      table.redraw(true);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const width = container.clientWidth;
+        if (width === lastWidth || width === 0) {
+          return;
+        }
+        lastWidth = width;
+        table.redraw(true);
+      });
     });
     observer.observe(container);
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
       builtRef.current = false;
       tableRef.current = null;

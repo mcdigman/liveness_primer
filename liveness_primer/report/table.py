@@ -110,9 +110,9 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec(header='fields', role='fields', minimum=6),
 )
 
-# The severity column appears only for severity-capable tools, between the
-# confidence and kind columns; like confidence it measures to the widest
-# value actually present (reporting contract §4.3).
+# The severity column appears only when the report carries a severity,
+# between the confidence and kind columns; like confidence it measures to
+# the widest value actually present (reporting contract §4.3).
 _SEVERITY_COLUMN = ColumnSpec(header='severity', role='severity', minimum=1)
 _SEVERITY_INDEX = 3
 
@@ -123,13 +123,13 @@ def layout_columns(*, has_severity: bool) -> tuple[ColumnSpec, ...]:
     Parameters
     ----------
     has_severity : bool
-        Whether the reporting tool declares the has-severity capability.
+        Whether the report carries any severity label to render.
 
     Returns
     -------
     tuple[ColumnSpec, ...]
         :data:`COLUMNS`, with the severity column inserted after the
-        confidence column when the tool declares severities.
+        confidence column when the report carries severities.
     """
     if not has_severity:
         return COLUMNS

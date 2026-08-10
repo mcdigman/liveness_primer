@@ -92,8 +92,9 @@ def tool_has_severity(tool: str) -> bool:
     """Report whether a tool's adapter declares the has-severity capability.
 
     Renderers omit the severity column for tools without the capability
-    (reporting contract §4.3); an unregistered tool name renders without
-    severities rather than failing.
+    (reporting contract §4.3); an unregistered tool name is assumed capable
+    and left to :func:`report_has_severity`, which suppresses the column
+    when no finding carries a severity anyway.
 
     Parameters
     ----------
@@ -103,13 +104,42 @@ def tool_has_severity(tool: str) -> bool:
     Returns
     -------
     bool
-        True when a registered adapter declares has-severity.
+        True when a registered adapter declares has-severity, or the tool
+        is unregistered.
     """
     try:
         adapter = get_adapter(tool)
     except UnknownToolError:
-        return False
+        return True
     return adapter.capabilities.has_severity
+
+
+def report_has_severity(report: Report) -> bool:
+    """Report whether a rendered severity column would carry any value.
+
+    A severity-capable tool can still produce a report in which no finding
+    has a severity; the column is suppressed rather than rendered wholly
+    absent (reporting contract §4.3).
+
+    Parameters
+    ----------
+    report : Report
+        The report to render.
+
+    Returns
+    -------
+    bool
+        True when the tool is severity-capable and at least one occurrence
+        carries a severity label.
+    """
+    if not tool_has_severity(report.manifest.tool):
+        return False
+    return any(
+        occurrence is not None and occurrence.severity is not None
+        for project in report.projects
+        for diff in project.diffs
+        for occurrence in (diff.base_occurrence, diff.head_occurrence)
+    )
 
 
 def occurrence_span_text(occurrence: FindingOccurrence) -> str:
@@ -200,9 +230,9 @@ def severity_value_text(severity: str | None) -> str:
     Returns
     -------
     str
-        ``-`` when absent, else the label; sanitize before display.
+        ``NA`` when absent, else the label; sanitize before display.
     """
-    return '-' if severity is None else severity
+    return 'NA' if severity is None else severity
 
 
 def severity_text(diff: FindingDiff) -> str:
@@ -216,8 +246,8 @@ def severity_text(diff: FindingDiff) -> str:
     Returns
     -------
     str
-        ``-`` or ``HIGH``, with changed pairs as ``base->head`` arrows of
-        those forms; raw text to sanitize before display.
+        ``NA``, ``HIGH``, ``NA->HIGH``, ``HIGH->NA``, or ``HIGH->LOW``;
+        raw text to sanitize before display.
     """
     if (
         ChangedField.SEVERITY in diff.changed_fields

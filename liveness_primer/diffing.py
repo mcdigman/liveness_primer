@@ -239,6 +239,9 @@ class _DiffSortKey(NamedTuple):
     rule_presence: int
     rule_id: str
     end_line: int
+    symbol_presence: int
+    symbol: str
+    kind: str
     identity: str
     class_rank: int
     reference_occurrence: tuple[int, int, str, int, int, int, str, int, str]
@@ -248,9 +251,9 @@ def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
     """Compute the deterministic report-order key of a diff (contract §8, §12).
 
     Diffs read in file order: path, then start line, rule ID (absent
-    first), end line, and identity hash. The class rank and the
-    reference-side canonical occurrence key that ``--occurrence`` indexes
-    keep same-identity diffs deterministic.
+    first), end line, symbol (absent first), kind, and identity hash. The
+    class rank and the reference-side canonical occurrence key that
+    ``--occurrence`` indexes keep same-identity diffs deterministic.
 
     Parameters
     ----------
@@ -260,8 +263,9 @@ def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
     Returns
     -------
     _DiffSortKey
-        Sort key: path, start line, rule ID, end line, identity, class
-        rank, then the reference-side canonical occurrence key.
+        Sort key: path, start line, rule ID, end line, symbol, kind,
+        identity, class rank, then the reference-side canonical
+        occurrence key.
     """
     reference = diff.reference_occurrence
     return _DiffSortKey(
@@ -270,6 +274,9 @@ def _diff_sort_key(diff: FindingDiff) -> _DiffSortKey:
         rule_presence=0 if reference.rule_id is None else 1,
         rule_id='' if reference.rule_id is None else reference.rule_id,
         end_line=reference.end_line,
+        symbol_presence=0 if diff.symbol is None else 1,
+        symbol='' if diff.symbol is None else diff.symbol,
+        kind=diff.kind,
         identity=diff.identity,
         class_rank=_CLASS_RANK[diff.diff_class],
         reference_occurrence=canonical_occurrence_key(reference),

@@ -30,7 +30,7 @@ project sec - base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence
 -  SKY-D401  NA   MEDIUM        danger    app/hash.py:L12  -           Weak hash algorithm md5                     -
   12 | digest = hashlib.md5(blob)
 
-+  SKY-U001  80%  -             function  app/load.py:L20  app.unused  unused function 'unused'                    -
++  SKY-U001  80%  NA            function  app/load.py:L20  app.unused  unused function 'unused'                    -
   20 | def unused():
 
 summary

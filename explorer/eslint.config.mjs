@@ -25,6 +25,7 @@ const sharedGlobals = {
   URLSearchParams: 'readonly',
   Worker: 'readonly',
   AbortController: 'readonly',
+  cancelAnimationFrame: 'readonly',
   console: 'readonly',
   crypto: 'readonly',
   document: 'readonly',

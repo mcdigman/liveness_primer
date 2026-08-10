@@ -9,6 +9,7 @@ and hyperlink behavior is asserted separately from the unstyled goldens in
 """
 
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -46,6 +47,7 @@ from liveness_primer.report.common import (
     confidence_text,
     excerpt_sides,
     pin_for_project,
+    report_has_severity,
     rollup_lines,
     tool_has_severity,
 )
@@ -509,12 +511,54 @@ def test_severity_column_appears_only_for_severity_capable_tools() -> None:
     assert 'totals: 2 new, 1 dropped, 1 changed (0 confidence, 0 message-only, 1 severity-only)' in skylos_text
 
 
-def test_absent_severity_renders_dash_for_capable_tools() -> None:
+def test_severity_column_is_suppressed_when_no_finding_carries_one() -> None:
+    # A severity-capable tool can still produce a report in which nothing
+    # has a severity: text and GitHub drop the column rather than render a
+    # wholly absent one.
+    report = build_severity_report()
+    stripped = report.model_copy(
+        update={
+            'projects': tuple(
+                project.model_copy(
+                    update={
+                        'diffs': tuple(
+                            diff.model_copy(
+                                update={
+                                    'changed_fields': (),
+                                    'diff_class': DiffClass.NEW,
+                                    'base_occurrence': None,
+                                    'head_occurrence': diff.reference_occurrence.model_copy(update={'severity': None}),
+                                }
+                            )
+                            for diff in project.diffs
+                        )
+                    }
+                )
+                for project in report.projects
+            )
+        }
+    )
+    assert report_has_severity(report) is True
+    assert report_has_severity(stripped) is False
+    text = render_text(stripped, WIDE)
+    header_row = next(line for line in text.splitlines() if 'rule' in line and 'fields' in line)
+    assert 'severity' not in header_row
+    markdown = render_github(stripped)
+    header = next(line for line in markdown.splitlines() if line.startswith('|  | rule'))
+    assert header == '|  | rule | % | location | message |'
+
+
+def test_absent_severity_renders_na_for_capable_tools() -> None:
     # The dead-code finding in a severity-capable report has no severity:
-    # its cell is `-`, and no label is invented.
+    # its cell is `NA`, and no label is invented. Reporting contract §4.3
+    # forbids ambiguous forms, so absence must not render as a bare arrow
+    # side such as `->HIGH`.
     text = render_text(build_severity_report(), WIDE)
     row = next(line for line in text.splitlines() if line.startswith('+') and 'SKY-U001' in line)
-    assert row.split()[3] == '-'
+    assert row.split()[3] == 'NA'
+    # No cell may open with a bare arrow: an absent side renders as `NA`,
+    # so `NA->HIGH` appears where `->HIGH` would have been.
+    assert re.search(r'\s->\S', text) is None
 
 
 def test_golden_check_rejects_traversal() -> None:
@@ -974,12 +1018,13 @@ def test_excerpt_sides_tolerate_invalidly_constructed_diffs() -> None:
     assert pin_for_project(build_manifest(), 'unknown-project') is None
 
 
-def test_tool_has_severity_defaults_to_false_for_unknown_tools() -> None:
-    # A transformed report may carry an unregistered tool name: it renders
-    # without a severity column rather than failing.
+def test_tool_has_severity_defaults_to_true_for_unknown_tools() -> None:
+    # A transformed report may carry an unregistered tool name: it is
+    # assumed capable, and report_has_severity suppresses the column when
+    # no finding actually carries a severity.
     assert tool_has_severity('vulture') is False
     assert tool_has_severity('skylos') is True
-    assert tool_has_severity('no-such-tool') is False
+    assert tool_has_severity('no-such-tool') is True
 
 
 def test_text_report_ends_with_the_repeated_summary_and_impact_table() -> None:

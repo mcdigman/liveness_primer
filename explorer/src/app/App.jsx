@@ -345,6 +345,12 @@ export function App() {
                 onClose={() => {
                   setNarrowPanel('none');
                   setExportDismissed(true);
+                  requestAnimationFrame(() => {
+                    const control = document.querySelector('.export-toggle');
+                    if (control instanceof HTMLElement) {
+                      control.focus();
+                    }
+                  });
                 }}
               />
             ) : (

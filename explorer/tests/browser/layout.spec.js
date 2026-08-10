@@ -126,6 +126,8 @@ test.describe('narrow width', () => {
     await expect(page.locator('.export-panel')).toBeVisible();
     await page.getByRole('button', { name: 'Close export summary' }).click();
     await expect(page.locator('.export-panel')).toBeHidden();
+    // Dismissal removes the focused control; focus returns to the invoker.
+    await expect(page.locator('.export-toggle')).toBeFocused();
     await page.getByRole('button', { name: /Export \(/ }).click();
     await expect(page.locator('.export-panel')).toBeVisible();
   });

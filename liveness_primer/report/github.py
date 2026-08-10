@@ -32,11 +32,11 @@ from liveness_primer.report.common import (
     excerpt_sides,
     overall_summary,
     pin_for_project,
+    report_has_severity,
     rollup_lines,
     rule_text,
     severity_text,
     span_text,
-    tool_has_severity,
     totals_text,
 )
 from liveness_primer.report.permalink import source_url, tree_url
@@ -307,7 +307,7 @@ def render_github(report: Report) -> str:
     """
     lines = _manifest_lines(report.manifest)
     summary = overall_summary(report)
-    has_severity = tool_has_severity(report.manifest.tool)
+    has_severity = report_has_severity(report)
     lines.extend(
         [
             '',
