@@ -43,6 +43,12 @@ export function App() {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [theme, setTheme] = useState(storedTheme);
   const [narrowPanel, setNarrowPanel] = useState(/** @type {'none' | 'filters' | 'export'} */ ('none'));
+  // Whether the user dismissed the export summary. Separate from
+  // narrowPanel because the responsive default differs by width: the right
+  // region is present at desktop widths and absent below the drawer
+  // breakpoint, so one boolean cannot express both defaults. This one only
+  // ever hides; the toolbar's Export button is the way back at any width.
+  const [exportDismissed, setExportDismissed] = useState(false);
   const workerRef = useRef(/** @type {Worker | null} */ (null));
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -271,7 +277,11 @@ export function App() {
           </section>
         </main>
       ) : (
-        <div className="workbench" data-narrow-panel={narrowPanel}>
+        <div
+          className="workbench"
+          data-narrow-panel={narrowPanel}
+          data-side-hidden={openRow === null && exportDismissed ? 'true' : 'false'}
+        >
           <FilterRail
             counts={/** @type {NonNullable<typeof counts>} */ (counts)}
             selections={state.selections}
@@ -294,7 +304,14 @@ export function App() {
               onSortChange={(sort) => dispatch({ type: 'sort-changed', sort })}
               onShowHiddenChange={(showHidden) => dispatch({ type: 'show-hidden-changed', showHidden })}
               onToggleFilters={() => setNarrowPanel(narrowPanel === 'filters' ? 'none' : 'filters')}
-              onToggleExport={() => setNarrowPanel(narrowPanel === 'export' ? 'none' : 'export')}
+              // Shows the export summary at any width; the panel's own ✕ is
+              // the single dismissal. A toggle here would have to sense the
+              // breakpoint in JS to know whether the pane is currently up,
+              // duplicating the media query that already decides it.
+              onToggleExport={() => {
+                setNarrowPanel('export');
+                setExportDismissed(false);
+              }}
               selectedCount={selectedRows.length}
             />
             <FindingsTable
@@ -325,6 +342,10 @@ export function App() {
                 onCopyMarkdown={handleCopyMarkdown}
                 onDownloadReport={handleDownloadReport}
                 onClearSelection={() => dispatch({ type: 'clear-selection' })}
+                onClose={() => {
+                  setNarrowPanel('none');
+                  setExportDismissed(true);
+                }}
               />
             ) : (
               <ContextPanel

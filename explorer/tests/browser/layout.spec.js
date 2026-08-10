@@ -114,6 +114,47 @@ test.describe('narrow width', () => {
     await expect(page.locator('.filter-rail')).toBeHidden();
     await expect(page.locator('.tabulator-row:not(.tabulator-group)').first()).toBeVisible();
   });
+
+  // The overlay covers the toolbar's Export button at this width, so the
+  // panel's own control is the only way out. Without it the export summary
+  // could be opened and never dismissed.
+  test('the export summary opened as an overlay can be dismissed and reopened', async ({ page }) => {
+    await page.goto('./');
+    await openReportAndWait(page, goldenReport());
+    await expect(page.locator('.export-panel')).toBeHidden();
+    await page.getByRole('button', { name: /Export \(/ }).click();
+    await expect(page.locator('.export-panel')).toBeVisible();
+    await page.getByRole('button', { name: 'Close export summary' }).click();
+    await expect(page.locator('.export-panel')).toBeHidden();
+    await page.getByRole('button', { name: /Export \(/ }).click();
+    await expect(page.locator('.export-panel')).toBeVisible();
+  });
+});
+
+test.describe('dismissing the export summary at desktop width', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test('the findings region takes the column back, and a finding context reclaims it', async ({ page }) => {
+    await page.goto('./');
+    await openReportAndWait(page, goldenReport());
+    const table = page.locator('[data-testid="findings-table"]');
+    const before = (await table.boundingBox()).width;
+    await page.getByRole('button', { name: 'Close export summary' }).click();
+    await expect(page.locator('.export-panel')).toBeHidden();
+    expect((await table.boundingBox()).width).toBeGreaterThan(before);
+    // A finding context still gets the region while the summary stays dismissed.
+    await page
+      .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+      .first()
+      .click();
+    await expect(page.locator('.context-panel')).toBeVisible();
+    await page.getByRole('button', { name: 'Close finding context' }).click();
+    await expect(page.locator('.context-panel')).toBeHidden();
+    await expect(page.locator('.export-panel')).toBeHidden();
+    await page.getByRole('button', { name: /Export \(/ }).click();
+    await expect(page.locator('.export-panel')).toBeVisible();
+    expect((await table.boundingBox()).width).toBe(before);
+  });
 });
 
 test.describe('200% zoom equivalent', () => {
