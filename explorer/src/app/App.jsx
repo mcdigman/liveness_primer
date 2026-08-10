@@ -39,6 +39,20 @@ function knownLocatorKeys(report) {
   return keys;
 }
 
+/**
+ * Return focus to a dismissed overlay's invoking control (§9).
+ *
+ * @param {string} selector
+ */
+function restoreFocus(selector) {
+  requestAnimationFrame(() => {
+    const control = document.querySelector(selector);
+    if (control instanceof HTMLElement) {
+      control.focus();
+    }
+  });
+}
+
 export function App() {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [theme, setTheme] = useState(storedTheme);
@@ -177,6 +191,36 @@ export function App() {
     }
   }, [state.openKey]);
 
+  const closeFilters = useCallback(() => {
+    setNarrowPanel('none');
+    restoreFocus('.filters-toggle');
+  }, []);
+
+  const closeExport = useCallback(() => {
+    setNarrowPanel('none');
+    setExportDismissed(true);
+    restoreFocus('.export-toggle');
+  }, []);
+
+  // Both narrow-width panels are overlays: Escape closes whichever is up,
+  // through the same path as its ✕ so focus lands on the invoking control.
+  useEffect(() => {
+    if (narrowPanel === 'none') {
+      return undefined;
+    }
+    const onKeyDown = (/** @type {KeyboardEvent} */ event) => {
+      if (event.key === 'Escape') {
+        if (narrowPanel === 'filters') {
+          closeFilters();
+        } else {
+          closeExport();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [narrowPanel, closeFilters, closeExport]);
+
   const exportMarkdown = useCallback(() => {
     if (projection === null || digest === null || state.filename === null) {
       return '';
@@ -289,7 +333,7 @@ export function App() {
             hasSeverity={projection.hasSeverity}
             onToggle={(category, value) => dispatch({ type: 'facet-toggled', category, value })}
             onReset={() => dispatch({ type: 'filters-reset' })}
-            onClose={() => setNarrowPanel('none')}
+            onClose={closeFilters}
           />
           <section id="findings-region" className="findings-region" aria-label="Findings" tabIndex={-1}>
             <StatusStrip status={projection.status} projects={projection.projects} />
@@ -307,8 +351,12 @@ export function App() {
               // Shows the export summary at any width; the panel's own ✕ is
               // the single dismissal. A toggle here would have to sense the
               // breakpoint in JS to know whether the pane is currently up,
-              // duplicating the media query that already decides it.
+              // duplicating the media query that already decides it. An open
+              // finding owns the same region, so it closes: otherwise the
+              // click does nothing visible and the summary arrives later,
+              // unprompted, when the finding is closed.
               onToggleExport={() => {
+                dispatch({ type: 'context-closed' });
                 setNarrowPanel('export');
                 setExportDismissed(false);
               }}
@@ -342,16 +390,7 @@ export function App() {
                 onCopyMarkdown={handleCopyMarkdown}
                 onDownloadReport={handleDownloadReport}
                 onClearSelection={() => dispatch({ type: 'clear-selection' })}
-                onClose={() => {
-                  setNarrowPanel('none');
-                  setExportDismissed(true);
-                  requestAnimationFrame(() => {
-                    const control = document.querySelector('.export-toggle');
-                    if (control instanceof HTMLElement) {
-                      control.focus();
-                    }
-                  });
-                }}
+                onClose={closeExport}
               />
             ) : (
               <ContextPanel

@@ -315,7 +315,7 @@ def render_github(report: Report) -> str:
             '',
             f'base findings {summary.base_findings}, head findings {summary.head_findings}',
             '',
-            '| new | dropped | changed | confidence changes | message-only | severity-only |',
+            '| new | dropped | changed | confidence-only | message-only | severity-only |',
             '| --- | --- | --- | --- | --- | --- |',
             (
                 f'| {report.totals.new} | {report.totals.dropped} | {report.totals.changed} '

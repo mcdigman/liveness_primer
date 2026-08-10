@@ -12,7 +12,7 @@
 
 base findings 2, head findings 3
 
-| new | dropped | changed | confidence changes | message-only | severity-only |
+| new | dropped | changed | confidence-only | message-only | severity-only |
 | --- | --- | --- | --- | --- | --- |
 | 2 | 1 | 1 | 0 | 0 | 1 |
 
@@ -25,7 +25,7 @@ legend: + new; - dropped; ~ changed
 
 ## `sec`
 
-base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence, 0 message-only, 1 severity-only); cost 0.90s
+base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only); cost 0.90s
 - **corpus**: [https://github.com/example/sec @ 555555555555](https://github.com/example/sec/tree/5555555555555555555555555555555555555555)
 - **rollup**: new 2: SKY-D205 1, SKY-U001 1
 - **rollup**: dropped 1: SKY-D401 1

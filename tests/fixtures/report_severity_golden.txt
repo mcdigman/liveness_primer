@@ -7,14 +7,14 @@ comparable: yes
 isolation: NOT ENFORCED - build/analysis ran without a network sandbox
 installer: pip 26.0
 base findings 2, head findings 3
-totals: 2 new, 1 dropped, 1 changed (0 confidence, 0 message-only, 1 severity-only)
+totals: 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only)
 new 2: SKY-D205 1, SKY-U001 1
 dropped 1: SKY-D401 1
 changed 1: SKY-D203 1
 cost: 0.90s
 legend: + new; - dropped; ~ changed
 
-project sec - base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence, 0 message-only, 1 severity-only); cost 0.90s
+project sec - base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only); cost 0.90s
   corpus: https://github.com/example/sec/tree/5555555555555555555555555555555555555555
   new 2: SKY-D205 1, SKY-U001 1
   dropped 1: SKY-D401 1
@@ -35,7 +35,7 @@ project sec - base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence
 
 summary
 base findings 2, head findings 3
-totals: 2 new, 1 dropped, 1 changed (0 confidence, 0 message-only, 1 severity-only)
+totals: 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only)
 new 2: SKY-D205 1, SKY-U001 1
 dropped 1: SKY-D401 1
 changed 1: SKY-D203 1

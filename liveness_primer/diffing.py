@@ -377,7 +377,7 @@ def _totals(diffs: Sequence[FindingDiff]) -> DiffTotals:
         new=new,
         dropped=dropped,
         changed=len(changed),
-        changed_confidence=sum(1 for diff in changed if ChangedField.CONFIDENCE in diff.changed_fields),
+        changed_confidence=sum(1 for diff in changed if diff.changed_fields == (ChangedField.CONFIDENCE,)),
         changed_message_only=sum(1 for diff in changed if diff.changed_fields == (ChangedField.MESSAGE,)),
         changed_severity_only=sum(1 for diff in changed if diff.changed_fields == (ChangedField.SEVERITY,)),
     )

@@ -471,12 +471,12 @@ def totals_text(totals: DiffTotals) -> str:
     Returns
     -------
     str
-        Counts per class with confidence, message-only, and severity-only
-        breakouts.
+        Counts per class with confidence-only, message-only, and
+        severity-only breakouts.
     """
     return (
         f'{totals.new} new, {totals.dropped} dropped, {totals.changed} changed '
-        f'({totals.changed_confidence} confidence, {totals.changed_message_only} message-only, '
+        f'({totals.changed_confidence} confidence-only, {totals.changed_message_only} message-only, '
         f'{totals.changed_severity_only} severity-only)'
     )
 

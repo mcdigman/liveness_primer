@@ -159,7 +159,7 @@ point*: pre-triage, triage, or post-triage (§10).
   tools declaring the matching capability). Every normalized observable field participates
   in the comparison; no identity-stable behavior change may go silently unclassified.
 - Caps on maximum results and excerpt lines are configurable; the report always states
-  totals before truncation (new/dropped/changed counts, with confidence changes,
+  totals before truncation (new/dropped/changed counts, with confidence-only changes,
   message-only changes, and severity-only changes broken out, per project and overall) and
   notes any truncation. Rendered reports cap message-only
   changes to a count plus bounded examples; the JSON report retains full detail.

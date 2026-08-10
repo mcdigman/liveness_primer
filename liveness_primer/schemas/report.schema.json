@@ -160,7 +160,7 @@
     },
     "DiffTotals": {
       "additionalProperties": false,
-      "description": "Diff totals before truncation.\n\nAttributes\n----------\nnew : int\n    Count of ``new`` diffs.\ndropped : int\n    Count of ``dropped`` diffs.\nchanged : int\n    Count of ``changed`` diffs.\nchanged_confidence : int\n    ``changed`` diffs whose ``changed_fields`` include confidence.\nchanged_message_only : int\n    ``changed`` diffs whose only changed field is the message.\nchanged_severity_only : int\n    ``changed`` diffs whose only changed field is the severity.",
+      "description": "Diff totals before truncation.\n\nAttributes\n----------\nnew : int\n    Count of ``new`` diffs.\ndropped : int\n    Count of ``dropped`` diffs.\nchanged : int\n    Count of ``changed`` diffs.\nchanged_confidence : int\n    ``changed`` diffs whose only changed field is the confidence.\nchanged_message_only : int\n    ``changed`` diffs whose only changed field is the message.\nchanged_severity_only : int\n    ``changed`` diffs whose only changed field is the severity.",
       "properties": {
         "changed": {
           "default": 0,

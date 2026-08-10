@@ -19,7 +19,7 @@ The human report therefore must provide, for every displayed finding:
 - its diff class;
 - its detector rule ID, when the detector or its documented output category supplies one;
 - confidence;
-- severity, for tools declaring the has-severity capability;
+- severity, for tools declaring the has-severity capability whose report carries one;
 - kind;
 - repository-relative location;
 - normalized diagnostic message;
@@ -299,7 +299,8 @@ Findings render in a compact, aligned table with this exact semantic column orde
 The first column has a blank header. There is no left border and no vertical border in text
 mode. Columns are separated by padding, not literal `|` characters. For a tool declaring the
 has-severity capability, a `severity` column appears between `%` and `kind`; tools without
-the capability render no severity column at all.
+the capability render no severity column at all, and a capable tool whose report carries no
+severity on any finding likewise renders none.
 
 Class glyphs are stable and output-independent:
 
@@ -327,10 +328,11 @@ every value is `90%` gets a three-cell column, and the reclaimed cells go to the
 columns. Its minimum is two cells, sufficient for `NA`. It must not emit ambiguous forms such
 as `-->90%`.
 
-The `severity` column, when present, follows the same rules with severity forms: `-` when
+The `severity` column, when present, follows the same rules with severity forms: `NA` when
 the applicable occurrence has no severity, the canonical label (e.g. `HIGH`) otherwise, and
 `base->head` arrows of those forms for a changed pair. It measures to the widest value
-actually present.
+actually present, and like the `%` column it must not emit ambiguous forms such as
+`->HIGH`: an absent side renders as `NA`.
 
 ### 4.4 Fields column
 
@@ -592,8 +594,8 @@ the link targets, set the rendered column width, because a Markdown link renders
 label. A row that serializes a whole excerpt into one cell violates this section.
 
 The width budget also decides the column set. GitHub output narrows the terminal renderer's
-columns to the blank class column, `rule`, `%`, `severity` (only for tools declaring the
-has-severity capability), `location`, and `message`, in that order. `kind`, `symbol`, and
+columns to the blank class column, `rule`, `%`, `severity` (only when the report carries a
+severity), `location`, and `message`, in that order. `kind`, `symbol`, and
 the changed-field summary column are dropped. `kind` remains in the
 JSON report and in text output; the symbol is already named inside the normalized diagnostic
 message and pinpointed by the pinned link in the location cell, so a dedicated column spends
@@ -617,7 +619,7 @@ marked rather than silent.
 
 GitHub table source may omit a leading and trailing `|`. GitHub's required separator row is
 not a user-facing semantic header. The first header cell is blank; the remaining headers are
-`rule`, `%`, `severity` (when the tool declares severities), `location`, and `message`.
+`rule`, `%`, `severity` (when the report carries a severity), `location`, and `message`.
 
 ## 8. Sanitization and truncation
 
@@ -723,15 +725,15 @@ Implementation is complete only when tests establish all of the following.
     rendering a zero baseline as `new` or `-`.
 30. No GitHub table row serializes more than the first retained source line of a side; the
     line renders as a code span, a continuing excerpt is marked `[...]`, and the header row
-    is exactly the blank class column, `rule`, `%`, `severity` (when the tool declares
-    severities), `location`, and `message`.
+    is exactly the blank class column, `rule`, `%`, `severity` (when the report carries a
+    severity), `location`, and `message`.
 31. `--json-out PATH` writes the byte-identical `--output json` payload for any `--output`
     mode without changing what reaches standard output.
 32. Severity labels normalize to uppercase ASCII letters and digits at the model boundary; a
     severity-only change pairs as one `changed` finding with `severity` in `changed_fields`
     and is counted by `changed_severity_only`; a severity change for a tool without the
     has-severity capability is a diff-engine error; and the severity column appears only for
-    severity-capable tools.
+    severity-capable tools whose report carries at least one severity.
 
 Plain-text and GitHub golden fixtures must cover a representative `new`, `dropped`, and
 multi-field `changed` finding, plus severity-capable findings carrying labels such as

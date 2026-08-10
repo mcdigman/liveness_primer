@@ -866,7 +866,7 @@ class DiffTotals(_FrozenModel):
     changed : int
         Count of ``changed`` diffs.
     changed_confidence : int
-        ``changed`` diffs whose ``changed_fields`` include confidence.
+        ``changed`` diffs whose only changed field is the confidence.
     changed_message_only : int
         ``changed`` diffs whose only changed field is the message.
     changed_severity_only : int

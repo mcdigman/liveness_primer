@@ -494,9 +494,9 @@ def test_severity_github_report_matches_golden() -> None:
     check_golden(render_github(build_severity_report()), 'report_severity_golden.md')
 
 
-def test_severity_column_appears_only_for_severity_capable_tools() -> None:
-    # Reporting acceptance 32: the severity column exists exactly for tools
-    # declaring the has-severity capability.
+def test_severity_column_appears_for_capable_tools_carrying_a_severity() -> None:
+    # Reporting acceptance 32: the severity column exists exactly for
+    # severity-capable tools whose report carries at least one severity.
     vulture_text = render_text(build_report(), WIDE)
     vulture_header = next(line for line in vulture_text.splitlines() if 'rule' in line and 'fields' in line)
     assert 'severity' not in vulture_header
@@ -508,7 +508,7 @@ def test_severity_column_appears_only_for_severity_capable_tools() -> None:
     markdown = render_github(build_severity_report())
     header = next(line for line in markdown.splitlines() if line.startswith('|  | rule'))
     assert header == '|  | rule | % | severity | location | message |'
-    assert 'totals: 2 new, 1 dropped, 1 changed (0 confidence, 0 message-only, 1 severity-only)' in skylos_text
+    assert 'totals: 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only)' in skylos_text
 
 
 def test_severity_column_is_suppressed_when_no_finding_carries_one() -> None:
@@ -679,7 +679,7 @@ def test_changed_fields_tokens() -> None:
     project = ProjectReport(
         project='orphan',
         diffs=(entry,),
-        totals=DiffTotals(changed=1, changed_confidence=1),
+        totals=DiffTotals(changed=1),
         rollups=compute_rollups((entry,)),
         truncated=False,
         base_findings=1,
@@ -731,7 +731,7 @@ def test_headers_carry_rollups_and_counts() -> None:
     text = render_text(build_report(), WIDE)
     overall = text[: text.index('project alpha')]
     assert 'base findings 13, head findings 15' in overall
-    assert 'totals: 4 new, 4 dropped, 8 changed (1 confidence, 6 message-only, 0 severity-only)' in overall
+    assert 'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only)' in overall
     assert 'new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in overall
     assert 'cost: 1.67s' in overall
     assert 'errors: 1' in overall
@@ -1031,7 +1031,7 @@ def test_text_report_ends_with_the_repeated_summary_and_impact_table() -> None:
     # Reporting acceptance 29.
     text = render_text(build_report(), WIDE)
     footer = text[text.rindex('\nsummary\n') :]
-    assert 'totals: 4 new, 4 dropped, 8 changed (1 confidence, 6 message-only, 0 severity-only)' in footer
+    assert 'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only)' in footer
     assert 'new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in footer
     assert 'cost: 1.67s' in footer
     assert 'errors: 1' in footer
@@ -1085,7 +1085,7 @@ def test_github_overall_header_carries_cost_and_warning_summaries() -> None:
     assert '- **corpus-integrity warnings**: 1' in overall
     assert '- **source warnings**: 1' in overall
     assert '- **rollup**: new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in overall
-    assert '| new | dropped | changed | confidence changes | message-only | severity-only |' in overall
+    assert '| new | dropped | changed | confidence-only | message-only | severity-only |' in overall
     assert '| 4 | 4 | 8 | 1 | 6 | 0 |' in overall
 
 

@@ -9,7 +9,7 @@ installer: pip 26.0
 environment delta - non-detector dependencies differ between the sides:
   tomli: 2.4.0 -> 2.5.0
 base findings 13, head findings 15
-totals: 4 new, 4 dropped, 8 changed (1 confidence, 6 message-only, 0 severity-only)
+totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only)
 new 4: kind:function 2, SKY-U001 1, SKY-U003 1
 dropped 4: kind:function 3, SKY-U001 1
 changed 8: kind:function 8
@@ -20,7 +20,7 @@ source warnings: 1
 note: some project diffs were truncated by --max-results; totals reflect the full comparison
 legend: + new; - dropped; ~ changed
 
-project alpha - base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confidence, 5 message-only, 0 severity-only); cost 1.25s
+project alpha - base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confidence-only, 5 message-only, 0 severity-only); cost 1.25s
   corpus: https://github.com/example/alpha/tree/3333333333333333333333333333333333333333
   new 3: SKY-U001 1, SKY-U003 1, kind:function 1
   dropped 4: kind:function 3, SKY-U001 1
@@ -67,7 +67,7 @@ project alpha - base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confid
 
   (2 more message-only change(s) not shown; the JSON report retains full detail)
 
-project beta - base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidence, 1 message-only, 0 severity-only); cost 0.42s
+project beta - base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidence-only, 1 message-only, 0 severity-only); cost 0.42s
   corpus: ssh://git@internal.invalid/beta.git @ 444444444444
   new 1: kind:function 1
   changed 1: kind:function 1
@@ -79,11 +79,11 @@ project beta - base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidenc
   message: old wording without a permalink -> new wording without a permalink
   7 | old = 7
 
-project gamma - base 0 findings, head 0; 0 new, 0 dropped, 0 changed (0 confidence, 0 message-only, 0 severity-only); cost n/a
+project gamma - base 0 findings, head 0; 0 new, 0 dropped, 0 changed (0 confidence-only, 0 message-only, 0 severity-only); cost n/a
 
 summary
 base findings 13, head findings 15
-totals: 4 new, 4 dropped, 8 changed (1 confidence, 6 message-only, 0 severity-only)
+totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only)
 new 4: kind:function 2, SKY-U001 1, SKY-U003 1
 dropped 4: kind:function 3, SKY-U001 1
 changed 8: kind:function 8

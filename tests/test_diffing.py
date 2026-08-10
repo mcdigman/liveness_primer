@@ -115,6 +115,19 @@ def test_same_identity_confidence_change_when_capable() -> None:
     assert result.totals == DiffTotals(changed=1, changed_confidence=1)
 
 
+def test_multi_field_change_counts_in_no_exclusive_breakout() -> None:
+    # All three breakouts are exclusive: a change touching more than one
+    # field is counted by `changed` alone.
+    result = run_diff(
+        [mk(5, message='before', confidence=60)],
+        [mk(5, message='after', confidence=90)],
+        confidence_capable=True,
+    )
+    (diff,) = result.diffs
+    assert diff.changed_fields == (ChangedField.MESSAGE, ChangedField.CONFIDENCE)
+    assert result.totals == DiffTotals(changed=1)
+
+
 def test_same_identity_severity_change_when_capable() -> None:
     result = run_diff([mk(5, severity='MEDIUM')], [mk(5, severity='HIGH')], severity_capable=True)
     (diff,) = result.diffs

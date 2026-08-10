@@ -112,7 +112,23 @@ test.describe('narrow width', () => {
     await expect(page.locator('.filter-rail')).toBeVisible();
     await page.getByRole('button', { name: 'Close filters' }).click();
     await expect(page.locator('.filter-rail')).toBeHidden();
+    await expect(page.locator('.filters-toggle')).toBeFocused();
     await expect(page.locator('.tabulator-row:not(.tabulator-group)').first()).toBeVisible();
+  });
+
+  test('Escape closes either overlay and returns focus to its invoking control', async ({ page }) => {
+    await page.goto('./');
+    await openReportAndWait(page, goldenReport());
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await expect(page.locator('.filter-rail')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.filter-rail')).toBeHidden();
+    await expect(page.locator('.filters-toggle')).toBeFocused();
+    await page.getByRole('button', { name: /Export \(/ }).click();
+    await expect(page.locator('.export-panel')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.export-panel')).toBeHidden();
+    await expect(page.locator('.export-toggle')).toBeFocused();
   });
 
   // The overlay covers the toolbar's Export button at this width, so the
@@ -156,6 +172,19 @@ test.describe('dismissing the export summary at desktop width', () => {
     await page.getByRole('button', { name: /Export \(/ }).click();
     await expect(page.locator('.export-panel')).toBeVisible();
     expect((await table.boundingBox()).width).toBe(before);
+  });
+
+  test('Export replaces an open finding context instead of queueing behind it', async ({ page }) => {
+    await page.goto('./');
+    await openReportAndWait(page, goldenReport());
+    await page
+      .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+      .first()
+      .click();
+    await expect(page.locator('.context-panel')).toBeVisible();
+    await page.getByRole('button', { name: /Export \(/ }).click();
+    await expect(page.locator('.context-panel')).toBeHidden();
+    await expect(page.locator('.export-panel')).toBeVisible();
   });
 });
 

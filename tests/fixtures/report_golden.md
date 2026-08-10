@@ -20,7 +20,7 @@ Non-detector dependencies differ between the sides:
 
 base findings 13, head findings 15
 
-| new | dropped | changed | confidence changes | message-only | severity-only |
+| new | dropped | changed | confidence-only | message-only | severity-only |
 | --- | --- | --- | --- | --- | --- |
 | 4 | 4 | 8 | 1 | 6 | 0 |
 
@@ -38,7 +38,7 @@ legend: + new; - dropped; ~ changed
 
 ## `alpha`
 
-base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confidence, 5 message-only, 0 severity-only); cost 1.25s
+base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confidence-only, 5 message-only, 0 severity-only); cost 1.25s
 - **corpus**: [https://github.com/example/alpha @ 333333333333](https://github.com/example/alpha/tree/3333333333333333333333333333333333333333)
 - **rollup**: new 3: SKY-U001 1, SKY-U003 1, kind:function 1
 - **rollup**: dropped 4: kind:function 3, SKY-U001 1
@@ -66,7 +66,7 @@ base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confidence, 5 message-
 
 ## `beta`
 
-base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidence, 1 message-only, 0 severity-only); cost 0.42s
+base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidence-only, 1 message-only, 0 severity-only); cost 0.42s
 - **corpus**: ssh://git@internal.invalid/beta.git @ 444444444444
 - **rollup**: new 1: kind:function 1
 - **rollup**: changed 1: kind:function 1
@@ -78,4 +78,4 @@ base 1 findings, head 2; 1 new, 0 dropped, 1 changed (0 confidence, 1 message-on
 
 ## `gamma`
 
-base 0 findings, head 0; 0 new, 0 dropped, 0 changed (0 confidence, 0 message-only, 0 severity-only); cost n/a
+base 0 findings, head 0; 0 new, 0 dropped, 0 changed (0 confidence-only, 0 message-only, 0 severity-only); cost n/a
