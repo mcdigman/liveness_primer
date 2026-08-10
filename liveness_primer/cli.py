@@ -244,7 +244,16 @@ def _add_schema_parser(subcommands: 'argparse._SubParsersAction[argparse.Argumen
     """
     schema_parser = subcommands.add_parser('schema', help='schema maintenance commands')
     schema_commands = schema_parser.add_subparsers(dest='schema_command', required=True)
-    schema_commands.add_parser('export', help='regenerate liveness_primer/schemas/ (§7)')
+    export_parser = schema_commands.add_parser('export', help='regenerate liveness_primer/schemas/ (§7)')
+    # The default target is resolved from the imported package, so a
+    # non-editable install exports into site-packages and leaves the
+    # checkout untouched. CI passes the repository directory explicitly
+    # so the sync check compares the files it is meant to guard.
+    export_parser.add_argument(
+        '--output-dir',
+        type=Path,
+        help='directory to write the schema files to (default: the in-package schemas/)',
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -537,15 +546,20 @@ def _command_license_check(args: argparse.Namespace) -> int:
     return EXIT_FAILURE
 
 
-def _command_schema_export() -> int:
+def _command_schema_export(args: argparse.Namespace) -> int:
     """Execute ``schema export`` (contract §7, §12).
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments carrying the optional output directory.
 
     Returns
     -------
     int
         0 after regenerating the schema files.
     """
-    for path in export_schemas():
+    for path in export_schemas(args.output_dir):
         sys.stdout.write(f'wrote {path}\n')
     return EXIT_OK
 
@@ -569,7 +583,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         if args.corpus_command == 'validate':
             return _command_validate(args)
         return _command_license_check(args)
-    return _command_schema_export()
+    return _command_schema_export(args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

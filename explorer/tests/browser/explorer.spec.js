@@ -24,7 +24,11 @@ test('an invalid replacement leaves the current report intact', async ({ page })
   const total = goldenRowCount();
   await openReport(page, '{"schema_version": "0.0.1"}', 'broken.json');
   await expect(page.locator('.import-errors')).toContainText('Unsupported schema version');
-  await expect(page.locator('.tabulator-row:not(.tabulator-group)')).toHaveCount(total);
+  // Assert the retained report, not the materialized row count: the error
+  // banner shortens the grid, and a virtualized table renders only the rows
+  // that fit. Counting DOM rows here measured the viewport, not the report.
+  await expect(page.locator('.findings-counts')).toContainText(`${total} total`);
+  await expect(page.locator('.tabulator-row:not(.tabulator-group)').first()).toBeVisible();
 });
 
 test('facets, search, and reset filter without touching workspace state', async ({ page }) => {

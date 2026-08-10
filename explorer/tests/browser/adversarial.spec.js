@@ -83,7 +83,7 @@ test('the report JSON export is a report the explorer reimports', async ({ page,
   const { readFileSync } = await import('node:fs');
   const text = readFileSync(await download.path(), 'utf8');
   const document = JSON.parse(text);
-  expect(document.schema_version).toBe('1.2.0');
+  expect(document.schema_version).toBe('2.0.0');
   expect(document.document_kind).toBe('explorer-export');
   expect(document.source_report_sha256).toMatch(/^[0-9a-f]{64}$/);
   expect(document.projects.flatMap((project) => project.diffs)).toHaveLength(1);

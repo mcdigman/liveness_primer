@@ -175,11 +175,13 @@ export function FindingsTable({
     const checkboxColumn = (flag) => ({
       title: flag === 'selected' ? 'Export' : 'Hide',
       field: flag === 'selected' ? 'selected' : 'hiddenFlag',
-      // 84 fits the checkbox plus an unclipped "Export" title while the
-      // default desktop widths still keep the Hide column visible.
+      // 84 fits the checkbox plus an unclipped "Export" title; "Hide" is a
+      // shorter title over the same checkbox. Export holds its floor at the
+      // full width because §10 requires its label never to clip; hide can
+      // give ground like the other value columns.
       width: flag === 'selected' ? 84 : 52,
+      minWidth: flag === 'selected' ? 84 : 44,
       hozAlign: /** @type {const} */ ('center'),
-      responsive: flag === 'selected' ? 0 : 3,
       /** @param {import('tabulator-tables').CellComponent} cell */
       formatter: (cell) => {
         const rowData = /** @type {{key: string, location: string}} */ (cell.getRow().getData());
@@ -202,7 +204,14 @@ export function FindingsTable({
       layout: 'fitColumns',
       height: '100%',
       renderVertical: 'virtual',
-      responsiveLayout: 'hide',
+      // Never drop columns. §2.4 fixes the nine columns every finding row
+      // presents, so a column silently vanishing is a contract violation
+      // the user cannot even see happen: `responsiveLayout: 'hide'` removed
+      // severity, kind, and hide below a width budget, taking the only
+      // per-row hide control with them. Below the budget the grid scrolls
+      // horizontally instead — the row stays complete and the shortfall is
+      // visible.
+      responsiveLayout: false,
       placeholder: 'No findings match the current filters.',
       groupBy: 'project',
       groupToggleElement: 'header',
@@ -244,8 +253,14 @@ export function FindingsTable({
         {
           title: 'Diff',
           field: 'diffClass',
+          // Widths below are the widest rendered value plus cell padding,
+          // measured against a severity-carrying report, so the default
+          // layout shows every column's content in full. minWidth is a
+          // legibility floor, deliberately well under width: it is also the
+          // limit a manual column drag can reach, so pinning it to width
+          // would freeze the columns at their defaults.
           width: 86,
-          responsive: 0,
+          minWidth: 48,
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
             const value = /** @type {import('../../lib/types.js').DiffClass} */ (cell.getValue());
@@ -256,20 +271,21 @@ export function FindingsTable({
             return badge;
           },
         },
-        { title: 'Rule', field: 'rule', width: 100, responsive: 2, cssClass: 'cell-mono' },
-        { title: '%', field: 'confidence', width: 72, responsive: 2, cssClass: 'cell-mono' },
+        { title: 'Rule', field: 'rule', width: 84, minWidth: 48, cssClass: 'cell-mono' },
+        { title: '%', field: 'confidence', width: 76, minWidth: 44, cssClass: 'cell-mono' },
         // The severity column exists only for reports carrying severities
-        // (§2.4); the table remounts on that flag via its React key.
+        // (§2.4); the table remounts on that flag via its React key. 120
+        // holds a changed pair ("MEDIUM → HIGH"), which is the widest
+        // value the column can render.
         ...(handlersRef.current.projection.hasSeverity
-          ? [{ title: 'Severity', field: 'severity', width: 96, responsive: 2, cssClass: 'cell-mono' }]
+          ? [{ title: 'Severity', field: 'severity', width: 120, minWidth: 56, cssClass: 'cell-mono' }]
           : []),
-        { title: 'Kind', field: 'kind', width: 84, responsive: 4 },
+        { title: 'Kind', field: 'kind', width: 68, minWidth: 44 },
         {
           title: 'Location',
           field: 'location',
-          minWidth: 130,
+          minWidth: 96,
           widthGrow: 2,
-          responsive: 0,
           cssClass: 'cell-mono',
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
@@ -281,9 +297,8 @@ export function FindingsTable({
         {
           title: 'Message',
           field: 'message',
-          minWidth: 150,
+          minWidth: 120,
           widthGrow: 3,
-          responsive: 0,
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
             const element = span(String(cell.getValue()), 'cell-message');
@@ -315,8 +330,9 @@ export function FindingsTable({
         {
           title: 'Open',
           field: 'open',
-          width: 42,
-          responsive: 0,
+          // 42 clipped the "Open" title; 50 clears it.
+          width: 50,
+          minWidth: 40,
           /** @param {import('tabulator-tables').CellComponent} cell */
           formatter: (cell) => {
             const rowData = /** @type {{key: string, location: string}} */ (cell.getRow().getData());
@@ -369,7 +385,23 @@ export function FindingsTable({
       handlersRef.current.onOpenContext(rowData.key);
     });
     tableRef.current = table;
+    // Tabulator's own auto-resize redraws rows only: it never recomputes
+    // column widths, so a table built narrow stayed narrow forever. Widening
+    // the window left the columns frozen at their build-time widths with
+    // dead space beside them, and anything the old responsive layout had
+    // dropped never came back. redraw(true) re-runs the width calculation.
+    let lastWidth = container.clientWidth;
+    const observer = new ResizeObserver(() => {
+      const width = container.clientWidth;
+      if (width === lastWidth || width === 0 || !builtRef.current) {
+        return;
+      }
+      lastWidth = width;
+      table.redraw(true);
+    });
+    observer.observe(container);
     return () => {
+      observer.disconnect();
       builtRef.current = false;
       tableRef.current = null;
       table.destroy();

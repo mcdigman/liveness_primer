@@ -15,6 +15,7 @@ const sharedGlobals = {
   Headers: 'readonly',
   HTMLElement: 'readonly',
   ReadableStream: 'readonly',
+  ResizeObserver: 'readonly',
   Response: 'readonly',
   Storage: 'readonly',
   __WORKER_ASSET__: 'readonly',
