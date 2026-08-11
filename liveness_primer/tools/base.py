@@ -35,11 +35,14 @@ class AdapterCapabilities:
     ----------
     has_confidence : bool
         Whether findings carry a confidence value.
+    has_severity : bool
+        Whether findings carry a severity label.
     output_format : str
         Raw output format the detector emits (``text`` or ``json``).
     """
 
     has_confidence: bool
+    has_severity: bool
     output_format: str
 
 

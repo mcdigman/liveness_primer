@@ -19,6 +19,7 @@ The human report therefore must provide, for every displayed finding:
 - its diff class;
 - its detector rule ID, when the detector or its documented output category supplies one;
 - confidence;
+- severity, for tools declaring the has-severity capability whose report carries one;
 - kind;
 - repository-relative location;
 - normalized diagnostic message;
@@ -94,27 +95,33 @@ The mapping is adapter normalization and must be covered by recorded-output test
 supported Skylos revision changes the documented mapping, the adapter must be updated rather
 than silently retaining a stale code.
 
-`rule_id` remains outside finding identity so that a rule-code change on the same target can
-pair as one `changed` diff. It participates in the canonical occurrence key and in
-`changed_fields`; the latter gains the value `rule`. A rule-code change must never disappear
-from the blast radius.
-
-To refine initial contract §8 without reordering occurrences distinguished by existing
-fields, `rule_id` is appended after confidence in the canonical occurrence key. The complete
-key under this contract is:
+`rule_id` is part of the finding identity (initial contract §7): a rule-code change on the
+same target is not semantically one finding and surfaces as one `dropped` diff plus one
+`new` diff, never as a `changed` pair. A rule-code change must never disappear from the
+blast radius. `rule_id` also participates in the canonical occurrence key, whose complete
+form under this contract is:
 
 ```text
 (start_line, end_line, message,
  confidence_presence, confidence_value,
- rule_id_presence, rule_id_value)
+ rule_id_presence, rule_id_value,
+ severity_presence, severity_value)
 ```
 
 Each presence component is `0` when its field is absent and `1` when present, so absent sorts
 before present. The paired value component is `0` for absent confidence and the empty string
-for an absent rule ID; it otherwise carries the normalized value. `raw_excerpt` and
-`SourceExcerpt` do not participate. Python diffing, serialized report ordering, browser
+for an absent rule ID or severity; it otherwise carries the normalized value. `raw_excerpt`
+and `SourceExcerpt` do not participate. Python diffing, serialized report ordering, browser
 locators, and `bisect --occurrence` must use this exact key wherever the canonical occurrence
 key is required.
+
+`Finding` and `FindingOccurrence` additionally carry a nullable `severity` field for tools
+declaring the has-severity capability (e.g. the Skylos `danger` security diagnostics).
+Severity labels are normalized at the model boundary — uppercased and stripped to ASCII
+letters and digits — so casing or punctuation variants of one label never read as a change;
+a label with nothing left after normalization is absent. Severity is an observable
+occurrence field outside the identity: a severity change on one target pairs as one
+`changed` diff with `severity` in `changed_fields`.
 
 ### 3.2 Aggregate rollups
 
@@ -205,8 +212,8 @@ occurrence:
 
 Source evidence is derived review context. It must not participate in finding identity, the
 canonical occurrence key, or changed-field classification. The corpus is identical across
-the two detector revisions; detector-reported line changes remain observable through the
-existing line-span field.
+the two detector revisions; a detector-reported line change surfaces as a dropped finding
+plus a new one, because the line span is part of the finding identity.
 
 Source extraction must use the repository's bounded, containment-enforcing filesystem
 helpers. Corpus-controlled symlinks, special files, oversized files, undecodable bytes, and
@@ -241,9 +248,13 @@ or source links.
 ### 3.6 Schema version
 
 Adding nullable `rule_id`, nullable `SourceExcerpt`, complete rollups, and the additive `rule`
-changed-field value requires an additive schema-version update and regenerated checked-in
-schemas. The source excerpt must be present in JSON when collected so an archived report
-remains self-contained after disposable workspaces are gone.
+changed-field value required an additive schema-version update and regenerated checked-in
+schemas. Folding the rule ID and line span into the finding identity, dropping the
+`line-span` and `rule` changed-field values, and adding the severity field with its
+`severity` changed-field value and severity-only total is a breaking change requiring a
+major schema-version bump (2.0.0) and regenerated checked-in schemas. The source excerpt
+must be present in JSON when collected so an archived report remains self-contained after
+disposable workspaces are gone.
 
 ## 4. Common finding presentation
 
@@ -286,7 +297,10 @@ Findings render in a compact, aligned table with this exact semantic column orde
 ```
 
 The first column has a blank header. There is no left border and no vertical border in text
-mode. Columns are separated by padding, not literal `|` characters.
+mode. Columns are separated by padding, not literal `|` characters. For a tool declaring the
+has-severity capability, a `severity` column appears between `%` and `kind`; tools without
+the capability render no severity column at all, and a capable tool whose report carries no
+severity on any finding likewise renders none.
 
 Class glyphs are stable and output-independent:
 
@@ -314,15 +328,20 @@ every value is `90%` gets a three-cell column, and the reclaimed cells go to the
 columns. Its minimum is two cells, sufficient for `NA`. It must not emit ambiguous forms such
 as `-->90%`.
 
+The `severity` column, when present, follows the same rules with severity forms: `NA` when
+the applicable occurrence has no severity, the canonical label (e.g. `HIGH`) otherwise, and
+`base->head` arrows of those forms for a changed pair. It measures to the widest value
+actually present, and like the `%` column it must not emit ambiguous forms such as
+`->HIGH`: an absent side renders as `NA`.
+
 ### 4.4 Fields column
 
 The `fields` column is `-` for `new` and `dropped`. A `changed` row contains a comma-separated
 combination of these compact tokens in canonical field order:
 
-- `line` for a changed line span;
 - `message` for a changed message;
 - `%` for changed confidence; and
-- `rule` for a changed rule ID.
+- `severity` for a changed severity.
 
 The renderer must additionally show both base and head values for each changed field. It may
 use indented continuation lines beneath the summary row. Listing only the field names is not
@@ -330,13 +349,9 @@ sufficient evidence.
 
 ### 4.5 Source continuation
 
-For `new`, the head excerpt follows the summary row. For `dropped`, the base excerpt follows
-it. For `changed` with an unchanged line span, the reference-side base excerpt appears once.
-For `changed` with `line` in `changed_fields`, both excerpts appear, labelled `base` and
-`head`, because the two reported locations are the evidence needed to review the move. Each
-side uses its own reported span and pinned permalink when one is available. If one side
-cannot be collected, the available side remains visible with the bounded warning for the
-missing side.
+For `new`, the head excerpt follows the summary row. For `dropped` and `changed`, the base
+excerpt follows it; both sides of a `changed` pair share their identity-pinned span, so one
+excerpt always suffices. If the excerpt cannot be collected, the bounded warning records it.
 
 A finding and its evidence must read as one visually coherent block. The continuation region
 is indented two cells from the left margin — not aligned under the location column, which
@@ -369,9 +384,9 @@ sanitize cells before measuring them and must use terminal display width, not Py
 length, so combining and wide Unicode characters do not make the table ragged. Styling and
 hyperlink escape sequences have zero display width.
 
-The class, rule, confidence, kind, and fields columns do not wrap. Location, message, and
-symbol are the flexible columns: they receive declared minimum and maximum widths and shrink
-toward the minimum only when the available width demands it.
+The class, rule, confidence, severity, kind, and fields columns do not wrap. Location,
+message, and symbol are the flexible columns: they receive declared minimum and maximum
+widths and shrink toward the minimum only when the available width demands it.
 
 Flexible columns must not be chopped at arbitrary character boundaries. Each declares how it
 degrades:
@@ -503,6 +518,7 @@ without color being load-bearing. The default terminal style map is:
 | `~` | bold yellow |
 | rule ID | the row's class accent: green, red, or yellow |
 | confidence | magenta |
+| severity | magenta |
 | kind | cyan |
 | linked location | blue and underlined |
 | message | default foreground |
@@ -578,8 +594,9 @@ the link targets, set the rendered column width, because a Markdown link renders
 label. A row that serializes a whole excerpt into one cell violates this section.
 
 The width budget also decides the column set. GitHub output narrows the terminal renderer's
-columns to the blank class column, `rule`, `%`, `location`, and `message`, in that order.
-`kind`, `symbol`, and the changed-field summary column are dropped. `kind` remains in the
+columns to the blank class column, `rule`, `%`, `severity` (only when the report carries a
+severity), `location`, and `message`, in that order. `kind`, `symbol`, and
+the changed-field summary column are dropped. `kind` remains in the
 JSON report and in text output; the symbol is already named inside the normalized diagnostic
 message and pinpointed by the pinned link in the location cell, so a dedicated column spends
 width on text the row states twice; and every changed field still appears beneath the
@@ -602,7 +619,7 @@ marked rather than silent.
 
 GitHub table source may omit a leading and trailing `|`. GitHub's required separator row is
 not a user-facing semantic header. The first header cell is blank; the remaining headers are
-`rule`, `%`, `location`, and `message`.
+`rule`, `%`, `severity` (when the report carries a severity), `location`, and `message`.
 
 ## 8. Sanitization and truncation
 
@@ -647,8 +664,8 @@ Implementation is complete only when tests establish all of the following.
 1. A recorded Skylos finding renders its canonical `SKY-Uxxx` code in text, GitHub, and JSON.
 2. A detector-provided rule ID takes precedence over the bucket mapping.
 3. A fake-detector finding with otherwise identical identity fields and different explicit
-   rule IDs becomes one `changed` finding with `rule` in `changed_fields`. A Skylos bucket
-   move that also changes kind remains a `new` plus a `dropped` finding.
+   rule IDs becomes one `dropped` plus one `new` finding — the rule ID is identity, and a
+   changed rule code must never pair as one `changed` finding.
 4. Vulture findings without a native rule ID render `-`, not an invented code.
 5. Project and overall rollups use the complete pre-truncation diffs, group by rule with kind
    fallback, apply the deterministic top-five ordering, and report the omitted finding and
@@ -658,8 +675,8 @@ Implementation is complete only when tests establish all of the following.
    long paths, long messages, and long symbols.
 8. Narrow output uses the defined stacked layout rather than uncontrolled wrapping.
 9. The source excerpt contains the actual pinned source line at the detector-reported location.
-10. A changed finding with a changed line span shows labelled base and head excerpts using
-    their respective locations; an unchanged span shows the reference-side excerpt once.
+10. A `changed` finding shows the reference-side excerpt once; a detector-reported line
+    change surfaces as a `dropped` plus a `new` finding, each with its own excerpt.
 11. For a GitHub-hosted project, the source permalink contains the corpus SHA and normalized
     path and opens the exact line or span. A non-GitHub ad-hoc project renders the same
     relative location as escaped plain text without an invented URL.
@@ -708,10 +725,17 @@ Implementation is complete only when tests establish all of the following.
     rendering a zero baseline as `new` or `-`.
 30. No GitHub table row serializes more than the first retained source line of a side; the
     line renders as a code span, a continuing excerpt is marked `[...]`, and the header row
-    is exactly the blank class column, `rule`, `%`, `location`, and `message`.
+    is exactly the blank class column, `rule`, `%`, `severity` (when the report carries a
+    severity), `location`, and `message`.
 31. `--json-out PATH` writes the byte-identical `--output json` payload for any `--output`
     mode without changing what reaches standard output.
+32. Severity labels normalize to uppercase ASCII letters and digits at the model boundary; a
+    severity-only change pairs as one `changed` finding with `severity` in `changed_fields`
+    and is counted by `changed_severity_only`; a severity change for a tool without the
+    has-severity capability is a diff-engine error; and the severity column appears only for
+    severity-capable tools whose report carries at least one severity.
 
 Plain-text and GitHub golden fixtures must cover a representative `new`, `dropped`, and
-multi-field `changed` finding. Color and hyperlink tests must assert capabilities and visible
-width separately from those unstyled golden files.
+multi-field `changed` finding, plus severity-capable findings carrying labels such as
+`MEDIUM` and `HIGH`. Color and hyperlink tests must assert capabilities and visible width
+separately from those unstyled golden files.

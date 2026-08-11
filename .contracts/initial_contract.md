@@ -131,33 +131,38 @@ point*: pre-triage, triage, or post-triage (§10).
 - A single package-wide `SCHEMA_VERSION` (semver) is embedded in every serialized payload.
   Minor versions are additive-only; breaking changes require a major bump.
 - `Finding` fields: tool, project, path (repo-relative POSIX), symbol (nullable), kind,
-  message, line span, `confidence: int | None`, raw excerpt reference.
-- Finding identity: a stable hash over (tool, project name, path, symbol, kind), excluding
-  line and confidence. Identity carries no positional ordinal; a report holds a *multiset*
-  of occurrences (line span, message, confidence) per identity. Persistent references — the
+  message, line span, `confidence: int | None`, `severity: str | None` (normalized:
+  uppercased, stripped to ASCII letters and digits), rule ID (nullable), raw excerpt
+  reference.
+- Finding identity: a stable hash over (tool, project name, path, symbol, kind, rule ID,
+  start line, end line), excluding message, confidence, and severity. A changed rule code
+  or a moved span is a dropped finding plus a new one, never one `changed` finding; for
+  detectors reporting truncated symbol names the line number is an inseparable part of the
+  identity. Identity carries no positional ordinal; a report holds a *multiset* of
+  occurrences (message, confidence, severity) per identity. Persistent references — the
   `bisect` input in particular — use a *finding locator* (report reference, identity, line),
-  never a position-dependent key.
+  never a position-dependent key; the identity pins the start line, so `line` is
+  denormalized display data.
 
 ## 8. Diff engine
 
 - Both revisions see identical files. Matching is deterministic and order-independent. The
   **canonical occurrence key** is the complete normalized occurrence tuple in fixed field
-  order (start line, end line, message, confidence, plus any observable field added later);
-  it governs all sorting below and the report ordering that `--occurrence` indexes (§12).
-  Stages: (1) full-field-equal occurrences are removed by multiset intersection;
-  (2) remaining occurrences sharing (identity, start line) are paired in canonical-key
-  order as `changed`; (3) remaining occurrences sharing identity are paired across lines
-  by a deterministic order-preserving alignment (both sides in canonical-key order, gaps
-  allowed) minimizing total start-line distance, ties broken toward earlier lines, as
-  `changed`; (4) leftovers classify as `new` or `dropped`. After
-  stage 1, canonical-key ties occur only between fully identical, interchangeable
-  occurrences. `changed` carries a `changed_fields ⊆ {line-span, message, confidence}` set
-  (confidence only for tools declaring that capability). Every normalized observable field
-  participates in the comparison; no identity-stable behavior change may go silently
-  unclassified.
+  order (start line, end line, message, confidence, rule ID, severity, plus any observable
+  field added later); it governs all sorting below and the report ordering that
+  `--occurrence` indexes (§12). Stages: (1) full-field-equal occurrences are removed by
+  multiset intersection; (2) surviving occurrences sharing the identity — which covers the
+  rule ID and line span — are paired positionally in canonical-key order as `changed`;
+  (3) leftovers classify as `new` or `dropped`. After stage 1, canonical-key ties occur
+  only between fully identical, interchangeable occurrences. `changed` carries a
+  `changed_fields ⊆ {message, confidence, severity}` set (confidence and severity only for
+  tools declaring the matching capability). Every normalized observable field participates
+  in the comparison; no identity-stable behavior change may go silently unclassified.
 - Caps on maximum results and excerpt lines are configurable; the report always states
-  totals before truncation (new/dropped/changed counts, with confidence changes broken out,
-  per project and overall) and notes any truncation. Rendered reports cap message-only
+  totals before truncation (new/dropped/changed counts, with confidence-only,
+  message-only, severity-only, and multiple-field changes broken out so they sum to the
+  changed count, per project and overall) and
+  notes any truncation. Rendered reports cap message-only
   changes to a count plus bounded examples; the JSON report retains full detail.
 
 ## 9. Reporting

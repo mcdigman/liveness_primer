@@ -39,10 +39,30 @@ function knownLocatorKeys(report) {
   return keys;
 }
 
+/**
+ * Return focus to a dismissed overlay's invoking control (§9).
+ *
+ * @param {string} selector
+ */
+function restoreFocus(selector) {
+  requestAnimationFrame(() => {
+    const control = document.querySelector(selector);
+    if (control instanceof HTMLElement) {
+      control.focus();
+    }
+  });
+}
+
 export function App() {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [theme, setTheme] = useState(storedTheme);
   const [narrowPanel, setNarrowPanel] = useState(/** @type {'none' | 'filters' | 'export'} */ ('none'));
+  // Whether the user dismissed the export summary. Separate from
+  // narrowPanel because the responsive default differs by width: the right
+  // region is present at desktop widths and absent below the drawer
+  // breakpoint, so one boolean cannot express both defaults. This one only
+  // ever hides; the toolbar's Export button is the way back at any width.
+  const [exportDismissed, setExportDismissed] = useState(false);
   const workerRef = useRef(/** @type {Worker | null} */ (null));
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -171,6 +191,50 @@ export function App() {
     }
   }, [state.openKey]);
 
+  // Opening a finding gives the right region to the context panel, so the
+  // export panel is no longer up: leaving narrowPanel at 'export' would
+  // keep state that no longer describes what is rendered, and the summary
+  // would reappear unprompted when the context closed.
+  const openContext = useCallback((/** @type {string} */ key) => {
+    setNarrowPanel('none');
+    dispatch({ type: 'context-opened', key });
+  }, []);
+
+  const closeFilters = useCallback(() => {
+    setNarrowPanel('none');
+    restoreFocus('.filters-toggle');
+  }, []);
+
+  const closeExport = useCallback(() => {
+    setNarrowPanel('none');
+    setExportDismissed(true);
+    restoreFocus('.export-toggle');
+  }, []);
+
+  // Escape closes whatever overlay is up, through the same path as that
+  // overlay's own control so focus lands on its invoker. The right region
+  // is owned by a finding context whenever one is open, which is why the
+  // openRow branch mirrors the JSX below rather than reading narrowPanel.
+  useEffect(() => {
+    if (narrowPanel === 'none' && openRow === null) {
+      return undefined;
+    }
+    const onKeyDown = (/** @type {KeyboardEvent} */ event) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      if (narrowPanel === 'filters') {
+        closeFilters();
+      } else if (openRow !== null) {
+        closeContext();
+      } else {
+        closeExport();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [narrowPanel, openRow, closeContext, closeFilters, closeExport]);
+
   const exportMarkdown = useCallback(() => {
     if (projection === null || digest === null || state.filename === null) {
       return '';
@@ -271,14 +335,19 @@ export function App() {
           </section>
         </main>
       ) : (
-        <div className="workbench" data-narrow-panel={narrowPanel}>
+        <div
+          className="workbench"
+          data-narrow-panel={narrowPanel}
+          data-side-hidden={openRow === null && exportDismissed ? 'true' : 'false'}
+        >
           <FilterRail
             counts={/** @type {NonNullable<typeof counts>} */ (counts)}
             selections={state.selections}
             visibleCount={visibleRows.length}
+            hasSeverity={projection.hasSeverity}
             onToggle={(category, value) => dispatch({ type: 'facet-toggled', category, value })}
             onReset={() => dispatch({ type: 'filters-reset' })}
-            onClose={() => setNarrowPanel('none')}
+            onClose={closeFilters}
           />
           <section id="findings-region" className="findings-region" aria-label="Findings" tabIndex={-1}>
             <StatusStrip status={projection.status} projects={projection.projects} />
@@ -293,10 +362,22 @@ export function App() {
               onSortChange={(sort) => dispatch({ type: 'sort-changed', sort })}
               onShowHiddenChange={(showHidden) => dispatch({ type: 'show-hidden-changed', showHidden })}
               onToggleFilters={() => setNarrowPanel(narrowPanel === 'filters' ? 'none' : 'filters')}
-              onToggleExport={() => setNarrowPanel(narrowPanel === 'export' ? 'none' : 'export')}
+              // Shows the export summary at any width; the panel's own ✕ is
+              // the single dismissal. A toggle here would have to sense the
+              // breakpoint in JS to know whether the pane is currently up,
+              // duplicating the media query that already decides it. An open
+              // finding owns the same region, so it closes: otherwise the
+              // click does nothing visible and the summary arrives later,
+              // unprompted, when the finding is closed.
+              onToggleExport={() => {
+                dispatch({ type: 'context-closed' });
+                setNarrowPanel('export');
+                setExportDismissed(false);
+              }}
               selectedCount={selectedRows.length}
             />
             <FindingsTable
+              key={projection.hasSeverity ? 'with-severity' : 'without-severity'}
               rows={visibleRows}
               projection={projection}
               workspace={workspace}
@@ -308,7 +389,7 @@ export function App() {
               onToggleAllVisible={(enable, keys) =>
                 dispatch({ type: 'set-flag-all', flag: 'selected', keys, enable })
               }
-              onOpenContext={(key) => dispatch({ type: 'context-opened', key })}
+              onOpenContext={openContext}
             />
           </section>
           <aside
@@ -323,6 +404,7 @@ export function App() {
                 onCopyMarkdown={handleCopyMarkdown}
                 onDownloadReport={handleDownloadReport}
                 onClearSelection={() => dispatch({ type: 'clear-selection' })}
+                onClose={closeExport}
               />
             ) : (
               <ContextPanel

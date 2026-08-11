@@ -9,17 +9,20 @@ import {
   messageDisplay,
   referenceOccurrence,
   ruleDisplay,
+  severityDisplay,
+  severityText,
   spanDisplay,
   totalsDisplay,
 } from '../../src/lib/format.js';
 
 function occurrence(overrides = {}) {
   return {
-    schema_version: '1.2.0',
+    schema_version: '2.0.0',
     start_line: 10,
     end_line: 10,
     message: 'unused',
     confidence: 60,
+    severity: null,
     rule_id: 'SKY-U001',
     raw_excerpt: null,
     source_excerpt: null,
@@ -29,7 +32,7 @@ function occurrence(overrides = {}) {
 
 function diff(overrides = {}) {
   return {
-    schema_version: '1.2.0',
+    schema_version: '2.0.0',
     diff_class: 'changed',
     identity: 'i',
     tool: 't',
@@ -64,13 +67,41 @@ test('confidence pairs show base and head instead of collapsing', () => {
   );
 });
 
-test('rule pairs and absent rules render without invention', () => {
-  assert.equal(ruleDisplay(diff()), 'SKY-U001');
+test('severity pairs show base and head instead of collapsing', () => {
+  assert.equal(severityText(null), '-');
+  assert.equal(severityText('HIGH'), 'HIGH');
+  assert.equal(severityDisplay(diff()), '-');
   assert.equal(
-    ruleDisplay(diff({ head_occurrence: occurrence({ rule_id: 'SKY-U003' }) })),
-    'SKY-U001 → SKY-U003',
+    severityDisplay(
+      diff({
+        base_occurrence: occurrence({ severity: 'MEDIUM' }),
+        head_occurrence: occurrence({ severity: 'HIGH' }),
+        changed_fields: ['severity'],
+      }),
+    ),
+    'MEDIUM → HIGH',
   );
-  assert.equal(ruleDisplay(diff({ base_occurrence: occurrence({ rule_id: null }) })), '- → SKY-U001');
+  assert.equal(
+    severityDisplay(diff({ head_occurrence: occurrence({ severity: 'LOW' }), changed_fields: ['severity'] })),
+    '- → LOW',
+  );
+  assert.equal(
+    severityDisplay(
+      diff({
+        diff_class: 'new',
+        base_occurrence: null,
+        head_occurrence: occurrence({ severity: 'CRITICAL' }),
+        changed_fields: [],
+      }),
+    ),
+    'CRITICAL',
+  );
+});
+
+test('rules and locations render the identity-pinned reference side', () => {
+  // The finding identity covers the rule ID and line span, so a changed
+  // pair never differs in either: no paired arrow form exists.
+  assert.equal(ruleDisplay(diff()), 'SKY-U001');
   assert.equal(
     ruleDisplay(
       diff({
@@ -82,14 +113,21 @@ test('rule pairs and absent rules render without invention', () => {
     ),
     '-',
   );
-});
-
-test('location and message pair changed values', () => {
   assert.equal(locationDisplay(diff()), 'pkg/a.py:10');
   assert.equal(
-    locationDisplay(diff({ head_occurrence: occurrence({ start_line: 20, end_line: 20 }) })),
-    'pkg/a.py:10 → 20',
+    locationDisplay(
+      diff({
+        diff_class: 'new',
+        base_occurrence: null,
+        head_occurrence: occurrence({ start_line: 20, end_line: 20 }),
+        changed_fields: [],
+      }),
+    ),
+    'pkg/a.py:20',
   );
+});
+
+test('messages pair changed values', () => {
   assert.equal(messageDisplay(diff()), 'unused');
   assert.equal(
     messageDisplay(diff({ head_occurrence: occurrence({ message: 'renamed' }) })),
@@ -122,7 +160,14 @@ test('span and totals fragments', () => {
   assert.equal(spanDisplay(occurrence()), 'L10');
   assert.equal(spanDisplay(occurrence({ end_line: 14 })), 'L10–14');
   assert.deepEqual(
-    totalsDisplay({ new: 168, dropped: 0, changed: 3, changed_confidence: 1, changed_message_only: 1 }),
+    totalsDisplay({
+      new: 168,
+      dropped: 0,
+      changed: 3,
+      changed_confidence_only: 1,
+      changed_message_only: 1,
+      changed_severity_only: 0,
+    }),
     {
       new: '+168',
       dropped: '-0',

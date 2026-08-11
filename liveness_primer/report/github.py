@@ -26,14 +26,17 @@ from liveness_primer.report.common import (
     CLASS_LEGEND,
     abbreviated_sha,
     cap_message_only,
+    changed_multiple,
     changed_value_details,
     confidence_text,
     displayed_text,
     excerpt_sides,
     overall_summary,
     pin_for_project,
+    report_has_severity,
     rollup_lines,
     rule_text,
+    severity_text,
     span_text,
     totals_text,
 )
@@ -131,8 +134,8 @@ def _location_cell(diff: FindingDiff, pin: CorpusPinRecord | None) -> str:
     Returns
     -------
     str
-        The cell text; a moved ``changed`` span links its base side
-        (reporting contract §5).
+        The cell text, linked to the reference-side span when a pinned
+        permalink exists (reporting contract §5).
     """
     label = sanitize_cell(f'{diff.path}:{span_text(diff)}')
     if pin is None:
@@ -170,15 +173,13 @@ def _excerpt_parts(excerpt: SourceExcerpt) -> list[str]:
     return parts
 
 
-def _source_parts(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lines: int) -> list[str]:
+def _source_parts(diff: FindingDiff, *, excerpt_lines: int) -> list[str]:
     """Render the in-row source evidence of one finding (reporting §7).
 
     Parameters
     ----------
     diff : FindingDiff
         The diff to render.
-    pin : CorpusPinRecord | None
-        Resolved corpus pin of the project, when any.
     excerpt_lines : int
         Source-evidence budget from the run settings; ``0`` disables.
 
@@ -190,33 +191,21 @@ def _source_parts(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lin
     if excerpt_lines == 0:
         return []
     parts: list[str] = []
-    for label, occurrence in excerpt_sides(diff):
-        if label is not None:
-            side_url = None
-            if pin is not None:
-                side_url = source_url(pin, diff.path, occurrence.start_line, occurrence.end_line)
-            if side_url is not None:
-                parts.append(f'[{label}]({side_url}):')
-            else:
-                parts.append(f'{label}:')
+    for occurrence in excerpt_sides(diff):
         excerpt = occurrence.source_excerpt
         if excerpt is None:
-            if label is not None:
-                parts.append('(no source excerpt collected; see source warnings)')
             continue
         parts.extend(_excerpt_parts(excerpt))
     return parts
 
 
-def _message_cell(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lines: int) -> str:
+def _message_cell(diff: FindingDiff, *, excerpt_lines: int) -> str:
     """Render the message cell: diagnostic, changed values, then evidence.
 
     Parameters
     ----------
     diff : FindingDiff
         The diff to render.
-    pin : CorpusPinRecord | None
-        Resolved corpus pin of the project, when any.
     excerpt_lines : int
         Source-evidence budget from the run settings.
 
@@ -231,11 +220,11 @@ def _message_cell(diff: FindingDiff, pin: CorpusPinRecord | None, *, excerpt_lin
         f'-> {sanitize_cell(head_value, max_length=_VALUE_CAP)}'
         for token, base_value, head_value in changed_value_details(diff)
     )
-    parts.extend(_source_parts(diff, pin, excerpt_lines=excerpt_lines))
+    parts.extend(_source_parts(diff, excerpt_lines=excerpt_lines))
     return '<br>'.join(parts)
 
 
-def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str]:
+def _project_lines(project: ProjectReport, *, manifest: RunManifest, has_severity: bool) -> list[str]:
     """Render one project section as markdown (reporting contract §4, §7).
 
     Parameters
@@ -244,6 +233,8 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str
         The per-project report.
     manifest : RunManifest
         The run manifest supplying the corpus pin and evidence budget.
+    has_severity : bool
+        Whether the severity column is part of the table.
 
     Returns
     -------
@@ -282,16 +273,20 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest) -> list[str
         lines.append(f'- note: {capped.replace("--max-results", "`--max-results`")}')
     shown, suppressed = cap_message_only(project.diffs)
     if shown:
-        lines.extend(['', '|  | rule | % | location | message |', '|' + ' --- |' * 5])
+        severity_header = ' severity |' if has_severity else ''
+        column_count = 6 if has_severity else 5
+        lines.extend(['', f'|  | rule | % |{severity_header} location | message |', '|' + ' --- |' * column_count])
         excerpt_lines = manifest.settings.excerpt_lines
         for diff in shown:
             marker = _CLASS_MARKERS[diff.diff_class.value]
+            severity_cell = f'| {sanitize_cell(severity_text(diff))} ' if has_severity else ''
             lines.append(
                 f'| {marker} {CLASS_GLYPHS[diff.diff_class]} '
                 f'| {sanitize_cell(rule_text(diff))} '
                 f'| {confidence_text(diff)} '
+                f'{severity_cell}'
                 f'| {_location_cell(diff, pin)} '
-                f'| {_message_cell(diff, pin, excerpt_lines=excerpt_lines)} |'
+                f'| {_message_cell(diff, excerpt_lines=excerpt_lines)} |'
             )
     if suppressed:
         lines.extend(('', f'({suppressed} more message-only change(s) not shown; the JSON report retains full detail)'))
@@ -313,6 +308,7 @@ def render_github(report: Report) -> str:
     """
     lines = _manifest_lines(report.manifest)
     summary = overall_summary(report)
+    has_severity = report_has_severity(report)
     lines.extend(
         [
             '',
@@ -320,11 +316,12 @@ def render_github(report: Report) -> str:
             '',
             f'base findings {summary.base_findings}, head findings {summary.head_findings}',
             '',
-            '| new | dropped | changed | confidence changes | message-only |',
-            '| --- | --- | --- | --- | --- |',
+            '| new | dropped | changed | confidence-only | message-only | severity-only | multiple |',
+            '| --- | --- | --- | --- | --- | --- | --- |',
             (
                 f'| {report.totals.new} | {report.totals.dropped} | {report.totals.changed} '
-                f'| {report.totals.changed_confidence} | {report.totals.changed_message_only} |'
+                f'| {report.totals.changed_confidence_only} | {report.totals.changed_message_only} '
+                f'| {report.totals.changed_severity_only} | {changed_multiple(report.totals)} |'
             ),
             '',
         ]
@@ -343,5 +340,5 @@ def render_github(report: Report) -> str:
         lines.extend(('', 'Some project diffs were truncated by `--max-results`; totals reflect the full comparison.'))
     lines.extend(('', f'legend: {CLASS_LEGEND}'))
     for project in report.projects:
-        lines.extend(_project_lines(project, manifest=report.manifest))
+        lines.extend(_project_lines(project, manifest=report.manifest, has_severity=has_severity))
     return '\n'.join(line.rstrip() for line in lines) + '\n'

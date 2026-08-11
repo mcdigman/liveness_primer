@@ -85,7 +85,12 @@ export function checkReport(text) {
   if (!validate(parsed)) {
     const failures = (validate.errors ?? []).slice(0, MAX_ERRORS).map((failure) => {
       const where = failure.instancePath === '' ? '/' : failure.instancePath;
-      return bounded(`${where}: ${failure.message ?? 'schema violation'}`);
+      // Ajv names the offending key in params but not in the message, so
+      // "must NOT have additional properties" alone cannot be acted on.
+      const offending = /** @type {{additionalProperty?: string}} */ (failure.params ?? {})
+        .additionalProperty;
+      const named = offending === undefined ? '' : `: ${offending}`;
+      return bounded(`${where}: ${failure.message ?? 'schema violation'}${named}`);
     });
     const lead =
       'This file is not structured like a liveness-primer report or export, so it cannot be opened.';

@@ -9,6 +9,7 @@ import {
   DIFF_CLASS_PRESENTATION,
   confidenceText,
   referenceOccurrence,
+  severityText,
   spanDisplay,
 } from '../../lib/format.js';
 import { rawSourceUrl } from '../../lib/permalink.js';
@@ -57,8 +58,9 @@ function SourceLines({ lines, startLine, highlightStart, highlightEnd }) {
  * @param {string} props.revision
  * @param {FindingOccurrence | null} props.occurrence
  * @param {boolean} props.soleReporter the only side that reported
+ * @param {boolean} props.showSeverity the report carries severity labels
  */
-function AnalyzerCard({ side, revision, occurrence, soleReporter }) {
+function AnalyzerCard({ side, revision, occurrence, soleReporter, showSeverity }) {
   return (
     <div className={`analyzer-card${occurrence === null ? ' analyzer-card-empty' : ''}`}>
       <p className="analyzer-title">
@@ -79,6 +81,12 @@ function AnalyzerCard({ side, revision, occurrence, soleReporter }) {
           <dd>{occurrence.rule_id ?? '-'}</dd>
           <dt>Confidence</dt>
           <dd>{confidenceText(occurrence.confidence)}</dd>
+          {showSeverity && (
+            <>
+              <dt>Severity</dt>
+              <dd>{severityText(occurrence.severity)}</dd>
+            </>
+          )}
           <dt>Reported span</dt>
           <dd>{spanDisplay(occurrence)}</dd>
         </dl>
@@ -173,6 +181,7 @@ export function ContextPanel({ row, projection, workspace, onClose, onAnnounce }
         </span>
         <span className="context-badge cell-mono">{row.rule}</span>
         <span className="context-badge cell-mono">{row.confidence}</span>
+        {projection.hasSeverity && <span className="context-badge cell-mono">{row.severity}</span>}
       </p>
       <p className="context-message">{row.message}</p>
       <dl className="context-facts">
@@ -201,12 +210,14 @@ export function ContextPanel({ row, projection, workspace, onClose, onAnnounce }
           revision={projection.revisions.base}
           occurrence={diff.base_occurrence}
           soleReporter={row.diffClass === 'dropped'}
+          showSeverity={projection.hasSeverity}
         />
         <AnalyzerCard
           side="Head"
           revision={projection.revisions.head}
           occurrence={diff.head_occurrence}
           soleReporter={row.diffClass === 'new'}
+          showSeverity={projection.hasSeverity}
         />
       </div>
       <h3 className="context-section">Source context</h3>

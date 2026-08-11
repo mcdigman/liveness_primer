@@ -9,6 +9,7 @@ and hyperlink behavior is asserted separately from the unstyled goldens in
 """
 
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -42,7 +43,14 @@ from liveness_primer.findings import (
     finding_identity,
 )
 from liveness_primer.report import render_github, render_json, render_text
-from liveness_primer.report.common import confidence_text, excerpt_sides, pin_for_project, rollup_lines
+from liveness_primer.report.common import (
+    confidence_text,
+    excerpt_sides,
+    pin_for_project,
+    report_has_severity,
+    rollup_lines,
+    tool_has_severity,
+)
 from liveness_primer.report.permalink import source_url, tree_url
 from liveness_primer.report.sanitize import (
     code_span,
@@ -64,6 +72,7 @@ def occurrence(
     *,
     end_line: int | None = None,
     confidence: int | None = 60,
+    severity: str | None = None,
     rule_id: str | None = None,
     excerpt: str | None = None,
     source: SourceExcerpt | None = None,
@@ -73,6 +82,7 @@ def occurrence(
         end_line=end_line if end_line is not None else line,
         message=message,
         confidence=confidence,
+        severity=severity,
         rule_id=rule_id,
         raw_excerpt=excerpt,
         source_excerpt=source,
@@ -81,7 +91,7 @@ def occurrence(
 
 def diff(
     diff_class: DiffClass,
-    symbol: str,
+    symbol: str | None,
     *,
     base: FindingOccurrence | None = None,
     head: FindingOccurrence | None = None,
@@ -91,9 +101,20 @@ def diff(
     project: str = 'alpha',
     tool: str = 'vulture',
 ) -> FindingDiff:
+    reference = base if base is not None else head
+    assert reference is not None
     return FindingDiff(
         diff_class=diff_class,
-        identity=finding_identity(tool, project, path, symbol, kind),
+        identity=finding_identity(
+            tool,
+            project,
+            path,
+            symbol,
+            kind,
+            reference.rule_id,
+            reference.start_line,
+            reference.end_line,
+        ),
         tool=tool,
         project=project,
         path=path,
@@ -180,6 +201,16 @@ def build_report() -> Report:
     hostile_excerpt = 'evil.py:9: unused function `x` \x1b[31mANSI\x07 (60% confidence)\nline two\nline three'
     alpha_diffs = (
         diff(
+            DiffClass.DROPPED,
+            'goner',
+            base=occurrence(
+                5,
+                "unused function 'goner'",
+                excerpt="pkg/mod.py:5: unused function 'goner'",
+                source=source_lines(5, 'def goner():'),
+            ),
+        ),
+        diff(
             DiffClass.NEW,
             'fresh | pipe`tick`',
             head=occurrence(
@@ -191,22 +222,17 @@ def build_report() -> Report:
                 source=source_lines(9, 'def fresh(request):', '    return request'),
             ),
         ),
+        # A moved span is a dropped finding plus a new one: the line span
+        # is part of the finding identity.
         diff(
             DiffClass.DROPPED,
-            'goner',
-            base=occurrence(
-                5,
-                "unused function 'goner'",
-                excerpt="pkg/mod.py:5: unused function 'goner'",
-                source=source_lines(5, 'def goner():'),
-            ),
-        ),
-        diff(
-            DiffClass.CHANGED,
             'mover',
             base=occurrence(10, "unused function 'mover'", source=source_lines(10, 'def mover():')),
+        ),
+        diff(
+            DiffClass.NEW,
+            'mover',
             head=occurrence(14, "unused function 'mover'", source=source_lines(14, 'def mover():  # moved')),
-            fields=(ChangedField.LINE_SPAN,),
         ),
         diff(
             DiffClass.CHANGED,
@@ -215,12 +241,22 @@ def build_report() -> Report:
             head=occurrence(21, "unused function 'flaky'", confidence=90),
             fields=(ChangedField.CONFIDENCE,),
         ),
+        message_only('reworded-1'),
+        message_only('reworded-2'),
+        message_only('reworded-3'),
+        message_only('reworded-4'),
+        message_only('reworded-5'),
+        # A renumbered rule code is likewise a dropped finding of the first
+        # code plus a new finding of the second.
         diff(
-            DiffClass.CHANGED,
+            DiffClass.DROPPED,
             'renumbered',
             base=occurrence(40, 'renumbered rule', rule_id='SKY-U001', source=source_lines(40, 'def renumbered():')),
+        ),
+        diff(
+            DiffClass.NEW,
+            'renumbered',
             head=occurrence(40, 'renumbered rule', rule_id='SKY-U003'),
-            fields=(ChangedField.RULE,),
         ),
         diff(
             DiffClass.DROPPED,
@@ -233,20 +269,18 @@ def build_report() -> Report:
                 source=source_lines(50, 'class Span:', '    a = 1', omitted=6),
             ),
         ),
-        message_only('reworded-1'),
-        message_only('reworded-2'),
-        message_only('reworded-3'),
-        message_only('reworded-4'),
-        message_only('reworded-5'),
     )
     alpha = ProjectReport(
         project='alpha',
         diffs=alpha_diffs,
-        totals=DiffTotals(new=2, dropped=2, changed=8, changed_confidence=1, changed_message_only=5),
+        totals=DiffTotals(new=3, dropped=4, changed=7, changed_confidence_only=1, changed_message_only=5),
         rollups=(
-            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=2),
-            DiffRollup(diff_class=DiffClass.DROPPED, rule_id=None, kind='function', count=2),
-            DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=8),
+            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U003', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind='function', count=1),
+            DiffRollup(diff_class=DiffClass.DROPPED, rule_id=None, kind='function', count=3),
+            DiffRollup(diff_class=DiffClass.DROPPED, rule_id='SKY-U001', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=7),
         ),
         truncated=True,
         base_findings=12,
@@ -275,15 +309,15 @@ def build_report() -> Report:
             'wanderer',
             project='beta',
             path='lib/move.py',
-            base=occurrence(7, 'moved without a permalink', confidence=None, source=source_lines(7, 'old = 7')),
-            head=occurrence(11, 'moved without a permalink', confidence=None, source=source_lines(11, 'new = 11')),
-            fields=(ChangedField.LINE_SPAN,),
+            base=occurrence(7, 'old wording without a permalink', confidence=None, source=source_lines(7, 'old = 7')),
+            head=occurrence(7, 'new wording without a permalink', confidence=None),
+            fields=(ChangedField.MESSAGE,),
         ),
     )
     beta = ProjectReport(
         project='beta',
         diffs=beta_diffs,
-        totals=DiffTotals(new=1, changed=1),
+        totals=DiffTotals(new=1, changed=1, changed_message_only=1),
         rollups=(
             DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind='function', count=1),
             DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=1),
@@ -304,18 +338,136 @@ def build_report() -> Report:
         head_findings=0,
         measured_cost_seconds=None,
     )
-    overall = DiffTotals(new=3, dropped=2, changed=9, changed_confidence=1, changed_message_only=5)
+    overall = DiffTotals(new=4, dropped=4, changed=8, changed_confidence_only=1, changed_message_only=6)
     return Report(
         manifest=build_manifest(),
         projects=(alpha, beta, gamma),
         totals=overall,
         rollups=(
-            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=2),
-            DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind='function', count=1),
-            DiffRollup(diff_class=DiffClass.DROPPED, rule_id=None, kind='function', count=2),
-            DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=9),
+            DiffRollup(diff_class=DiffClass.NEW, rule_id=None, kind='function', count=2),
+            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U003', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.DROPPED, rule_id=None, kind='function', count=3),
+            DiffRollup(diff_class=DiffClass.DROPPED, rule_id='SKY-U001', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.CHANGED, rule_id=None, kind='function', count=8),
         ),
         truncated=True,
+    )
+
+
+SEC_PIN = CorpusPinRecord(
+    name='sec',
+    repo='https://github.com/example/sec',
+    requested='branch:main',
+    resolved_sha='5' * 40,
+)
+
+
+def build_severity_report() -> Report:
+    """Build a severity-capable (skylos) report exercising the severity column.
+
+    Returns
+    -------
+    Report
+        One-project report with danger diagnostics carrying ``CRITICAL``,
+        ``HIGH``, and ``MEDIUM`` labels beside a severity-less dead-code
+        finding.
+    """
+    manifest = build_manifest().model_copy(
+        update={
+            'tool': 'skylos',
+            'detector_repo': 'https://github.com/duriantaco/skylos',
+            'corpus_pins': (SEC_PIN,),
+            'environment_delta': (),
+        }
+    )
+    sec_diffs = (
+        diff(
+            DiffClass.NEW,
+            'app.load',
+            tool='skylos',
+            project='sec',
+            path='app/load.py',
+            kind='danger',
+            head=occurrence(
+                6,
+                'Untrusted deserialization via pickle.loads',
+                confidence=None,
+                severity='CRITICAL',
+                rule_id='SKY-D205',
+                source=source_lines(6, '    return pickle.loads(data)'),
+            ),
+        ),
+        diff(
+            DiffClass.CHANGED,
+            None,
+            tool='skylos',
+            project='sec',
+            path='app/exec.py',
+            kind='danger',
+            base=occurrence(
+                9,
+                'Use of os.system()',
+                confidence=None,
+                severity='MEDIUM',
+                rule_id='SKY-D203',
+                source=source_lines(9, '    os.system(cmd)'),
+            ),
+            head=occurrence(9, 'Use of os.system()', confidence=None, severity='HIGH', rule_id='SKY-D203'),
+            fields=(ChangedField.SEVERITY,),
+        ),
+        diff(
+            DiffClass.DROPPED,
+            None,
+            tool='skylos',
+            project='sec',
+            path='app/hash.py',
+            kind='danger',
+            base=occurrence(
+                12,
+                'Weak hash algorithm md5',
+                confidence=None,
+                severity='MEDIUM',
+                rule_id='SKY-D401',
+                source=source_lines(12, 'digest = hashlib.md5(blob)'),
+            ),
+        ),
+        diff(
+            DiffClass.NEW,
+            'app.unused',
+            tool='skylos',
+            project='sec',
+            path='app/load.py',
+            head=occurrence(
+                20,
+                "unused function 'unused'",
+                confidence=80,
+                rule_id='SKY-U001',
+                source=source_lines(20, 'def unused():'),
+            ),
+        ),
+    )
+    sec = ProjectReport(
+        project='sec',
+        diffs=sec_diffs,
+        totals=DiffTotals(new=2, dropped=1, changed=1, changed_severity_only=1),
+        rollups=(
+            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-D205', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.DROPPED, rule_id='SKY-D401', kind=None, count=1),
+            DiffRollup(diff_class=DiffClass.CHANGED, rule_id='SKY-D203', kind=None, count=1),
+        ),
+        truncated=False,
+        base_findings=2,
+        head_findings=3,
+        measured_cost_seconds=0.9,
+    )
+    return Report(
+        manifest=manifest,
+        projects=(sec,),
+        totals=sec.totals,
+        rollups=sec.rollups,
+        truncated=False,
     )
 
 
@@ -332,6 +484,81 @@ def test_text_report_matches_golden() -> None:
 
 def test_github_report_matches_golden() -> None:
     check_golden(render_github(build_report()), 'report_golden.md')
+
+
+def test_severity_text_report_matches_golden() -> None:
+    check_golden(render_text(build_severity_report(), WIDE), 'report_severity_golden.txt')
+
+
+def test_severity_github_report_matches_golden() -> None:
+    check_golden(render_github(build_severity_report()), 'report_severity_golden.md')
+
+
+def test_severity_column_appears_for_capable_tools_carrying_a_severity() -> None:
+    # Reporting acceptance 32: the severity column exists exactly for
+    # severity-capable tools whose report carries at least one severity.
+    vulture_text = render_text(build_report(), WIDE)
+    vulture_header = next(line for line in vulture_text.splitlines() if 'rule' in line and 'fields' in line)
+    assert 'severity' not in vulture_header
+    skylos_text = render_text(build_severity_report(), WIDE)
+    header_row = next(line for line in skylos_text.splitlines() if 'severity' in line and 'fields' in line)
+    assert header_row.index('%') < header_row.index('severity') < header_row.index('kind')
+    assert 'CRITICAL' in skylos_text
+    assert 'MEDIUM->HIGH' in skylos_text
+    markdown = render_github(build_severity_report())
+    header = next(line for line in markdown.splitlines() if line.startswith('|  | rule'))
+    assert header == '|  | rule | % | severity | location | message |'
+    assert 'totals: 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only)' in skylos_text
+
+
+def test_severity_column_is_suppressed_when_no_finding_carries_one() -> None:
+    # A severity-capable tool can still produce a report in which nothing
+    # has a severity: text and GitHub drop the column rather than render a
+    # wholly absent one.
+    report = build_severity_report()
+    stripped = report.model_copy(
+        update={
+            'projects': tuple(
+                project.model_copy(
+                    update={
+                        'diffs': tuple(
+                            diff.model_copy(
+                                update={
+                                    'changed_fields': (),
+                                    'diff_class': DiffClass.NEW,
+                                    'base_occurrence': None,
+                                    'head_occurrence': diff.reference_occurrence.model_copy(update={'severity': None}),
+                                }
+                            )
+                            for diff in project.diffs
+                        )
+                    }
+                )
+                for project in report.projects
+            )
+        }
+    )
+    assert report_has_severity(report) is True
+    assert report_has_severity(stripped) is False
+    text = render_text(stripped, WIDE)
+    header_row = next(line for line in text.splitlines() if 'rule' in line and 'fields' in line)
+    assert 'severity' not in header_row
+    markdown = render_github(stripped)
+    header = next(line for line in markdown.splitlines() if line.startswith('|  | rule'))
+    assert header == '|  | rule | % | location | message |'
+
+
+def test_absent_severity_renders_na_for_capable_tools() -> None:
+    # The dead-code finding in a severity-capable report has no severity:
+    # its cell is `NA`, and no label is invented. Reporting contract §4.3
+    # forbids ambiguous forms, so absence must not render as a bare arrow
+    # side such as `->HIGH`.
+    text = render_text(build_severity_report(), WIDE)
+    row = next(line for line in text.splitlines() if line.startswith('+') and 'SKY-U001' in line)
+    assert row.split()[3] == 'NA'
+    # No cell may open with a bare arrow: an absent side renders as `NA`,
+    # so `NA->HIGH` appears where `->HIGH` would have been.
+    assert re.search(r'\s->\S', text) is None
 
 
 def test_golden_check_rejects_traversal() -> None:
@@ -433,9 +660,10 @@ def test_confidence_column_exact_forms() -> None:
 def test_changed_rows_show_base_and_head_values() -> None:
     # Reporting §4.4: listing only field names is not sufficient evidence.
     text = render_text(build_report(), WIDE)
-    assert 'line: L10 -> L14' in text
     assert '%: 60% -> 90%' in text
-    assert 'rule: SKY-U001 -> SKY-U003' in text
+    assert 'message: old wording for reworded-1 -> new wording for reworded-1' in text
+    severity_text_report = render_text(build_severity_report(), WIDE)
+    assert 'severity: MEDIUM -> HIGH' in severity_text_report
 
 
 def test_changed_fields_tokens() -> None:
@@ -443,15 +671,15 @@ def test_changed_fields_tokens() -> None:
         DiffClass.CHANGED,
         's',
         base=occurrence(1, 'old', confidence=10, rule_id='A'),
-        head=occurrence(2, 'new', confidence=20, rule_id='B'),
-        fields=(ChangedField.LINE_SPAN, ChangedField.MESSAGE, ChangedField.CONFIDENCE, ChangedField.RULE),
+        head=occurrence(1, 'new', confidence=20, rule_id='A'),
+        fields=(ChangedField.MESSAGE, ChangedField.CONFIDENCE),
     )
     # The project name has no corpus pin: locations render as escaped
     # plain text in both outputs without a fabricated URL.
     project = ProjectReport(
         project='orphan',
         diffs=(entry,),
-        totals=DiffTotals(changed=1, changed_confidence=1),
+        totals=DiffTotals(changed=1),
         rollups=compute_rollups((entry,)),
         truncated=False,
         base_findings=1,
@@ -460,10 +688,10 @@ def test_changed_fields_tokens() -> None:
     )
     report = build_report().model_copy(update={'projects': (project,), 'truncated': False})
     text = render_text(report, WIDE)
-    assert 'line,message,%,rule' in text
+    assert 'message,%' in text
     markdown = render_github(report)
-    assert '| pkg/mod.py:L1->L2 |' in markdown
-    assert 'base:' in markdown
+    assert '| pkg/mod.py:L1 |' in markdown
+    assert 'message: old -> new' in markdown
     assert '](http' not in markdown.split('## `orphan`')[1]
 
 
@@ -503,19 +731,22 @@ def test_headers_carry_rollups_and_counts() -> None:
     text = render_text(build_report(), WIDE)
     overall = text[: text.index('project alpha')]
     assert 'base findings 13, head findings 15' in overall
-    assert 'totals: 3 new, 2 dropped, 9 changed (1 confidence, 5 message-only)' in overall
-    assert 'new 3: SKY-U001 2, kind:function 1' in overall
+    assert (
+        'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only, 1 multiple)'
+        in overall
+    )
+    assert 'new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in overall
     assert 'cost: 1.67s' in overall
     assert 'errors: 1' in overall
     assert 'corpus-integrity warnings: 1' in overall
     assert 'source warnings: 1' in overall
     alpha_section = text[text.index('project alpha') : text.index('project beta')]
     assert 'base 12 findings, head 13' in alpha_section
-    assert 'new 2: SKY-U001 2' in alpha_section
+    assert 'new 3: SKY-U001 1, SKY-U003 1, kind:function 1' in alpha_section
     assert 'error[head]: stderr said  something  odd' in alpha_section
     assert 'warning[corpus-integrity]:' in alpha_section
     assert 'warning[source]: pkg/gone.py: not a regular non-symlink file' in alpha_section
-    assert 'showing 11 of 12 finding diffs (truncated by --max-results)' in alpha_section
+    assert 'showing 13 of 14 finding diffs (truncated by --max-results)' in alpha_section
 
 
 def test_project_header_links_pinned_tree_not_detector_repo() -> None:
@@ -547,18 +778,16 @@ def test_source_permalink_targets_corpus_sha_and_normalized_path() -> None:
     assert f'blob/{"2" * 40}' not in text
 
 
-def test_moved_changed_span_shows_labelled_base_and_head_excerpts() -> None:
-    # Reporting acceptance 10.
-    lines = render_text(build_report(), WIDE).splitlines()
-    base_label = next(index for index, line in enumerate(lines) if line.strip() == 'base:')
-    assert lines[base_label + 1].strip() == '10 | def mover():'
-    head_label = next(index for index, line in enumerate(lines) if line.strip() == 'head:')
-    assert lines[head_label + 1].strip() == '14 | def mover():  # moved'
-    # The head-side url line appears only under --source-urls (§5).
-    linked = render_text(build_report(), TextRenderOptions(width=160, source_urls=True)).splitlines()
-    head_label = next(index for index, line in enumerate(linked) if line.strip() == 'head:')
-    assert 'url: https://github.com/example/alpha/blob/' in linked[head_label + 1]
-    assert linked[head_label + 2].strip() == '14 | def mover():  # moved'
+def test_moved_span_renders_as_dropped_plus_new_with_own_excerpts() -> None:
+    # Reporting acceptance 10: a detector-reported line change surfaces as
+    # a dropped plus a new finding, each with its own single excerpt; the
+    # labelled base/head excerpt pair no longer exists.
+    text = render_text(build_report(), WIDE)
+    assert '10 | def mover():' in text
+    assert '14 | def mover():  # moved' in text
+    labels = {line.strip() for line in text.splitlines()}
+    assert 'base:' not in labels
+    assert 'head:' not in labels
 
 
 def test_unchanged_span_shows_reference_excerpt_once() -> None:
@@ -621,7 +850,7 @@ def test_github_locations_are_pinned_markdown_links() -> None:
     # render escaped plain text without an invented URL.
     markdown = render_github(build_report())
     assert f'[pkg/mod.py:L9](https://github.com/example/alpha/blob/{"3" * 40}/pkg/mod.py#L9)' in markdown
-    assert f'[head](https://github.com/example/alpha/blob/{"3" * 40}/pkg/mod.py#L14):' in markdown
+    assert f'[pkg/mod.py:L14](https://github.com/example/alpha/blob/{"3" * 40}/pkg/mod.py#L14)' in markdown
     beta_section = markdown[markdown.index('## `beta`') :]
     assert 'lib/util.py:L3' in beta_section
     assert '](https://' not in beta_section
@@ -788,16 +1017,27 @@ def construct_diff(
 def test_excerpt_sides_tolerate_invalidly_constructed_diffs() -> None:
     assert excerpt_sides(construct_diff(DiffClass.NEW, None, None)) == ()
     headless_changed = construct_diff(DiffClass.CHANGED, occurrence(1, 'm'), None)
-    assert excerpt_sides(headless_changed) == ((None, occurrence(1, 'm')),)
+    assert excerpt_sides(headless_changed) == (occurrence(1, 'm'),)
     assert pin_for_project(build_manifest(), 'unknown-project') is None
+
+
+def test_tool_has_severity_defaults_to_true_for_unknown_tools() -> None:
+    # A transformed report may carry an unregistered tool name: it is
+    # assumed capable, and report_has_severity suppresses the column when
+    # no finding actually carries a severity.
+    assert tool_has_severity('vulture') is False
+    assert tool_has_severity('skylos') is True
+    assert tool_has_severity('no-such-tool') is True
 
 
 def test_text_report_ends_with_the_repeated_summary_and_impact_table() -> None:
     # Reporting acceptance 29.
     text = render_text(build_report(), WIDE)
     footer = text[text.rindex('\nsummary\n') :]
-    assert 'totals: 3 new, 2 dropped, 9 changed (1 confidence, 5 message-only)' in footer
-    assert 'new 3: SKY-U001 2, kind:function 1' in footer
+    assert (
+        'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only, 1 multiple)' in footer
+    )
+    assert 'new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in footer
     assert 'cost: 1.67s' in footer
     assert 'errors: 1' in footer
     header = next(line for line in footer.splitlines() if line.strip().startswith('project '))
@@ -849,7 +1089,12 @@ def test_github_overall_header_carries_cost_and_warning_summaries() -> None:
     assert '- **errors**: 1' in overall
     assert '- **corpus-integrity warnings**: 1' in overall
     assert '- **source warnings**: 1' in overall
-    assert '- **rollup**: new 3: SKY-U001 2, kind:function 1' in overall
+    assert '- **rollup**: new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in overall
+    assert '| new | dropped | changed | confidence-only | message-only | severity-only | multiple |' in overall
+    # Anchored on the newline: the row without its multiple cell is a
+    # prefix of the row with one, so an unanchored match asserts nothing
+    # about the last column.
+    assert '\n| 4 | 4 | 8 | 1 | 6 | 0 | 1 |\n' in overall
 
 
 def test_github_rows_carry_only_the_first_retained_source_line() -> None:

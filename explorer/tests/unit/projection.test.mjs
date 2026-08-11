@@ -40,28 +40,51 @@ test('projection refuses a diff without a serialized locator', () => {
 test('paired changed values show base and head', () => {
   const projection = projectReport(goldenReport());
   const bySymbol = new Map(projection.rows.map((row) => [`${row.symbol}:${row.diffClass}`, row]));
-  const mover = bySymbol.get('mover:changed');
-  assert.equal(mover.location, 'pkg/a.py:10 → 20');
+  // The identity pins the line span and rule ID: a moved span or renamed
+  // rule code is a dropped row plus a new row, each at its own location.
+  assert.equal(bySymbol.get('mover:dropped').location, 'pkg/a.py:10');
+  assert.equal(bySymbol.get('mover:new').location, 'pkg/a.py:20');
+  assert.equal(bySymbol.get('ruled:dropped').rule, 'SKY-U001');
+  assert.equal(bySymbol.get('ruled:new').rule, 'SKY-U003');
+  assert.equal(bySymbol.get('gain:dropped').rule, '-');
+  assert.equal(bySymbol.get('gain:new').rule, 'SKY-U002');
   const zero = bySymbol.get('zero:changed');
   assert.equal(zero.confidence, '0% → NA');
-  const ruled = bySymbol.get('ruled:changed');
-  assert.equal(ruled.rule, 'SKY-U001 → SKY-U003');
-  const gained = bySymbol.get('gain:changed');
-  assert.equal(gained.rule, '- → SKY-U002');
-  // Reference-side facet values: base for changed, head for new.
-  assert.equal(ruled.ruleValue, 'SKY-U001');
+  // A severity change pairs as one changed row with a paired display.
+  const sev = bySymbol.get('sev:changed');
+  assert.equal(sev.severity, 'MEDIUM → HIGH');
+  assert.equal(sev.severityValue, 'MEDIUM');
+  assert.equal(projection.hasSeverity, true);
   const solo = projection.rows.find((row) => row.project === 'beta');
   assert.equal(solo.diffClass, 'new');
   assert.equal(solo.confidence, 'NA');
   assert.equal(solo.confidenceBucket, 'na');
+  assert.equal(solo.severity, '-');
+  assert.equal(solo.severityValue, null);
+});
+
+test('a report without severities projects hasSeverity false', () => {
+  const report = goldenReport();
+  for (const project of report.projects) {
+    for (const diff of project.diffs) {
+      for (const occurrence of [diff.base_occurrence, diff.head_occurrence]) {
+        if (occurrence !== null) {
+          occurrence.severity = null;
+        }
+      }
+    }
+  }
+  assert.equal(projectReport(report).hasSeverity, false);
 });
 
 test('search haystack covers path, symbol, messages, rules, and kind', () => {
   const projection = projectReport(goldenReport());
-  const ruled = projection.rows.find((row) => row.symbol === 'ruled');
-  for (const needle of ['pkg/a.py', 'ruled', 'sky-u001', 'sky-u003', 'function']) {
+  const ruled = projection.rows.find((row) => row.symbol === 'ruled' && row.diffClass === 'dropped');
+  for (const needle of ['pkg/a.py', 'ruled', 'sky-u001', 'function']) {
     assert.ok(ruled.haystack.includes(needle), needle);
   }
+  const renamed = projection.rows.find((row) => row.symbol === 'ruled' && row.diffClass === 'new');
+  assert.ok(renamed.haystack.includes('sky-u003'));
 });
 
 test('status reflects manifest safety and per-project health', () => {
@@ -108,7 +131,7 @@ test('project headers show pinned tree, counts, and rollups', () => {
   const alpha = projection.projectsByName.get('alpha');
   const header = projectHeaderModel(alpha);
   assert.equal(header.repoLine, 'example/alpha @ 33333333');
-  assert.match(header.countsLine, /^base 13 findings → head 13 · \+\d+ new · -\d+ dropped · ~\d+ changed$/u);
+  assert.match(header.countsLine, /^base 14 findings → head 14 · \+\d+ new · -\d+ dropped · ~\d+ changed$/u);
   assert.ok(header.rollupLines.length > 0);
   const beta = projection.projectsByName.get('beta');
   assert.equal(projectHeaderModel(beta).repoLine, 'ssh://git@internal.invalid/beta.git @ 44444444');

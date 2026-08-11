@@ -24,6 +24,8 @@ from liveness_primer.findings import (
     RunManifest,
 )
 from liveness_primer.report.sanitize import sanitize_inline
+from liveness_primer.tools.base import UnknownToolError
+from liveness_primer.tools.registry import get_adapter
 
 # Rendered reports cap message-only changes to a count plus bounded
 # examples; the JSON report retains full detail (contract §8).
@@ -40,10 +42,9 @@ ROLLUP_DISPLAY_GROUPS = 5
 
 # Compact changed-field tokens in canonical field order (reporting §4.4).
 _FIELD_TOKENS = {
-    ChangedField.LINE_SPAN: 'line',
     ChangedField.MESSAGE: 'message',
     ChangedField.CONFIDENCE: '%',
-    ChangedField.RULE: 'rule',
+    ChangedField.SEVERITY: 'severity',
 }
 
 _ROLLUP_LABEL_CAP = 40
@@ -87,6 +88,60 @@ def pin_for_project(manifest: RunManifest, project: str) -> CorpusPinRecord | No
     return None
 
 
+def tool_has_severity(tool: str) -> bool:
+    """Report whether a tool's adapter declares the has-severity capability.
+
+    Renderers omit the severity column for tools without the capability
+    (reporting contract §4.3); an unregistered tool name is assumed capable
+    and left to :func:`report_has_severity`, which suppresses the column
+    when no finding carries a severity anyway.
+
+    Parameters
+    ----------
+    tool : str
+        Adapter name from the run manifest.
+
+    Returns
+    -------
+    bool
+        True when a registered adapter declares has-severity, or the tool
+        is unregistered.
+    """
+    try:
+        adapter = get_adapter(tool)
+    except UnknownToolError:
+        return True
+    return adapter.capabilities.has_severity
+
+
+def report_has_severity(report: Report) -> bool:
+    """Report whether a rendered severity column would carry any value.
+
+    A severity-capable tool can still produce a report in which no finding
+    has a severity; the column is suppressed rather than rendered wholly
+    absent (reporting contract §4.3).
+
+    Parameters
+    ----------
+    report : Report
+        The report to render.
+
+    Returns
+    -------
+    bool
+        True when the tool is severity-capable and at least one occurrence
+        carries a severity label.
+    """
+    if not tool_has_severity(report.manifest.tool):
+        return False
+    return any(
+        occurrence is not None and occurrence.severity is not None
+        for project in report.projects
+        for diff in project.diffs
+        for occurrence in (diff.base_occurrence, diff.head_occurrence)
+    )
+
+
 def occurrence_span_text(occurrence: FindingOccurrence) -> str:
     """Describe one occurrence's line span compactly.
 
@@ -108,6 +163,9 @@ def occurrence_span_text(occurrence: FindingOccurrence) -> str:
 def span_text(diff: FindingDiff) -> str:
     """Describe the line position of a diff compactly.
 
+    The identity hash pins the line span, so both sides of a ``changed``
+    pair always share it.
+
     Parameters
     ----------
     diff : FindingDiff
@@ -116,13 +174,8 @@ def span_text(diff: FindingDiff) -> str:
     Returns
     -------
     str
-        ``L5``, ``L5-8``, or ``L5->L9`` for cross-line ``changed`` pairs.
+        ``L5`` for a point span, else ``L5-8``.
     """
-    if diff.diff_class is DiffClass.CHANGED:
-        base = diff.base_occurrence
-        head = diff.head_occurrence
-        if base is not None and head is not None and base.start_line != head.start_line:
-            return f'L{base.start_line}->L{head.start_line}'
     return occurrence_span_text(diff.reference_occurrence)
 
 
@@ -164,6 +217,47 @@ def confidence_text(diff: FindingDiff) -> str:
         head = confidence_value_text(diff.head_occurrence.confidence)
         return f'{base}->{head}'
     return confidence_value_text(diff.reference_occurrence.confidence)
+
+
+def severity_value_text(severity: str | None) -> str:
+    """Render one severity value (reporting contract §4.3).
+
+    Parameters
+    ----------
+    severity : str | None
+        Canonical severity label, when present.
+
+    Returns
+    -------
+    str
+        ``NA`` when absent, else the label; sanitize before display.
+    """
+    return 'NA' if severity is None else severity
+
+
+def severity_text(diff: FindingDiff) -> str:
+    """Describe a diff's severity in analogy to :func:`confidence_text`.
+
+    Parameters
+    ----------
+    diff : FindingDiff
+        The diff to describe.
+
+    Returns
+    -------
+    str
+        ``NA``, ``HIGH``, ``NA->HIGH``, ``HIGH->NA``, or ``HIGH->LOW``;
+        raw text to sanitize before display.
+    """
+    if (
+        ChangedField.SEVERITY in diff.changed_fields
+        and diff.base_occurrence is not None
+        and diff.head_occurrence is not None
+    ):
+        base = severity_value_text(diff.base_occurrence.severity)
+        head = severity_value_text(diff.head_occurrence.severity)
+        return f'{base}->{head}'
+    return severity_value_text(diff.reference_occurrence.severity)
 
 
 def rule_text(diff: FindingDiff) -> str:
@@ -243,13 +337,9 @@ def changed_value_details(diff: FindingDiff) -> tuple[ChangedValue, ...]:
     if base is None or head is None:
         return ()
     values: dict[ChangedField, tuple[str, str]] = {
-        ChangedField.LINE_SPAN: (occurrence_span_text(base), occurrence_span_text(head)),
         ChangedField.MESSAGE: (base.message, head.message),
         ChangedField.CONFIDENCE: (confidence_value_text(base.confidence), confidence_value_text(head.confidence)),
-        ChangedField.RULE: (
-            base.rule_id if base.rule_id is not None else '-',
-            head.rule_id if head.rule_id is not None else '-',
-        ),
+        ChangedField.SEVERITY: (severity_value_text(base.severity), severity_value_text(head.severity)),
     }
     return tuple(ChangedValue(_FIELD_TOKENS[field], *values[field]) for field in diff.changed_fields)
 
@@ -306,8 +396,8 @@ def rollup_lines(rollups: Sequence[DiffRollup]) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def excerpt_sides(diff: FindingDiff) -> tuple[tuple[str | None, FindingOccurrence], ...]:
-    """Choose the source-evidence blocks a diff renders (reporting contract §4.5).
+def excerpt_sides(diff: FindingDiff) -> tuple[FindingOccurrence, ...]:
+    """Choose the source-evidence occurrences a diff renders (reporting §4.5).
 
     Parameters
     ----------
@@ -316,20 +406,16 @@ def excerpt_sides(diff: FindingDiff) -> tuple[tuple[str | None, FindingOccurrenc
 
     Returns
     -------
-    tuple[tuple[str | None, FindingOccurrence], ...]
-        ``(label, occurrence)`` blocks: the head side for ``new``, the base
-        side for ``dropped``, labelled base and head sides for a moved
-        ``changed`` span, and the unlabelled reference side otherwise.
+    tuple[FindingOccurrence, ...]
+        The head side for ``new``, else the base side. Both sides of a
+        ``changed`` pair share their identity-pinned span, so one block
+        always suffices.
     """
     if diff.diff_class is DiffClass.NEW and diff.head_occurrence is not None:
-        return ((None, diff.head_occurrence),)
+        return (diff.head_occurrence,)
     if diff.base_occurrence is None:
         return ()
-    if diff.diff_class is DiffClass.CHANGED and diff.head_occurrence is not None:
-        base, head = diff.base_occurrence, diff.head_occurrence
-        if (base.start_line, base.end_line) != (head.start_line, head.end_line):
-            return (('base', base), ('head', head))
-    return ((None, diff.base_occurrence),)
+    return (diff.base_occurrence,)
 
 
 def is_message_only(diff: FindingDiff) -> bool:
@@ -374,6 +460,27 @@ def cap_message_only(diffs: Sequence[FindingDiff]) -> tuple[list[FindingDiff], i
     return shown, suppressed
 
 
+def changed_multiple(totals: DiffTotals) -> int:
+    """Count ``changed`` diffs that touched more than one field (contract §8).
+
+    Every ``changed`` diff has a non-empty ``changed_fields``, and the three
+    exclusive breakouts cover each single-field case, so the remainder is
+    exactly the multi-field diffs. Deriving it keeps the breakouts summing
+    to ``changed`` without a stored total that could go stale.
+
+    Parameters
+    ----------
+    totals : DiffTotals
+        The totals to inspect.
+
+    Returns
+    -------
+    int
+        Count of ``changed`` diffs with two or more changed fields.
+    """
+    return totals.changed - totals.changed_confidence_only - totals.changed_message_only - totals.changed_severity_only
+
+
 def totals_text(totals: DiffTotals) -> str:
     """Summarize diff totals on one line (contract §8).
 
@@ -385,11 +492,18 @@ def totals_text(totals: DiffTotals) -> str:
     Returns
     -------
     str
-        Counts per class with confidence and message-only breakouts.
+        Counts per class with confidence-only, message-only, severity-only,
+        and — when any exist — multiple-field breakouts, which together sum
+        to the ``changed`` count. The multiple-field token is omitted at
+        zero for the reason §4.3 gives for the confidence column: a line
+        does not reserve room for a form no finding uses.
     """
+    multiple = changed_multiple(totals)
+    multiple_text = f', {multiple} multiple' if multiple else ''
     return (
         f'{totals.new} new, {totals.dropped} dropped, {totals.changed} changed '
-        f'({totals.changed_confidence} confidence, {totals.changed_message_only} message-only)'
+        f'({totals.changed_confidence_only} confidence-only, {totals.changed_message_only} message-only, '
+        f'{totals.changed_severity_only} severity-only{multiple_text})'
     )
 
 

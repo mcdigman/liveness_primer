@@ -11,6 +11,7 @@
  * @param {() => void} props.onCopyMarkdown
  * @param {() => void} props.onDownloadReport
  * @param {() => void} props.onClearSelection
+ * @param {() => void} props.onClose dismisses the export summary at any width
  */
 export function ExportPanel({
   selectedRows,
@@ -19,6 +20,7 @@ export function ExportPanel({
   onCopyMarkdown,
   onDownloadReport,
   onClearSelection,
+  onClose,
 }) {
   /** @type {Map<string, number>} */
   const perProject = new Map();
@@ -28,7 +30,15 @@ export function ExportPanel({
   const none = selectedRows.length === 0;
   return (
     <div className="export-panel">
-      <h2 className="side-heading">Export</h2>
+      <div className="side-header">
+        <h2 className="side-heading">Export</h2>
+        {/* The only dismissal affordance the export summary has. Below the
+            drawer breakpoint the overlay covers the toolbar's Export button,
+            which used to leave the pane with no way out at all. */}
+        <button type="button" className="side-close" onClick={onClose} aria-label="Close export summary">
+          ✕
+        </button>
+      </div>
       <p className="export-count">
         <strong>{selectedRows.length}</strong> selected finding{selectedRows.length === 1 ? '' : 's'}
       </p>

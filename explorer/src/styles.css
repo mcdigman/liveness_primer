@@ -281,6 +281,23 @@ button.link-button {
   min-height: 0;
 }
 
+/* Dismissing the export summary gives its column back to the findings
+   table rather than leaving a gap. A finding context always reclaims the
+   region, so App only sets this with no finding open. The grid override is
+   scoped to the three-column range: an attribute selector outbids the plain
+   .workbench rules in the narrower breakpoints regardless of source order,
+   so leaving it unscoped would resurrect the filter rail as a column at
+   widths where it must be a drawer. */
+@media (min-width: 1200px) {
+  .workbench[data-side-hidden='true'] {
+    grid-template-columns: 14.5rem minmax(0, 1fr);
+  }
+}
+
+.workbench[data-side-hidden='true'] .side-region {
+  display: none;
+}
+
 .filter-rail {
   border-right: 1px solid var(--border);
   overflow-y: auto;
@@ -485,9 +502,32 @@ button.link-button {
   white-space: nowrap;
 }
 
-.filters-toggle,
-.export-toggle {
+.filters-toggle {
   display: none;
+}
+
+/* The way back after dismissing the export summary, so it is reachable at
+   every width rather than only below the drawer breakpoint. */
+.export-toggle {
+  display: inline-block;
+}
+
+.side-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.side-close {
+  border: none;
+  background: none;
+  padding: 0.25rem 0.5rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.side-close:hover {
+  color: var(--text);
 }
 
 .findings-table {
@@ -935,10 +975,6 @@ button.link-button {
     z-index: 20;
     border-left: 1px solid var(--border-strong);
     box-shadow: -12px 0 32px rgba(0, 0, 0, 0.35);
-  }
-
-  .export-toggle {
-    display: inline-block;
   }
 }
 

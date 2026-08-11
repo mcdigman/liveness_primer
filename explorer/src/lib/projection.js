@@ -13,6 +13,7 @@ import {
   messageDisplay,
   referenceOccurrence,
   ruleDisplay,
+  severityDisplay,
 } from './format.js';
 import { sourceUrl, treeReference } from './permalink.js';
 import { locatorKey } from './workspace.js';
@@ -25,6 +26,9 @@ import { locatorKey } from './workspace.js';
 
 /** Sentinel facet value for findings without a rule ID (§2.3). */
 export const NO_RULE = '(no rule)';
+
+/** Sentinel facet value for findings without a severity (§2.3). */
+export const NO_SEVERITY = '(no severity)';
 
 /** Confidence facet buckets, including unavailable confidence (§2.3). */
 export const CONFIDENCE_BUCKETS = /** @type {const} */ ([
@@ -60,6 +64,8 @@ export function confidenceBucket(confidence) {
  * @property {string} confidence display form, possibly paired
  * @property {number | null} confidenceValue reference-side confidence
  * @property {'high' | 'medium' | 'low' | 'na'} confidenceBucket
+ * @property {string} severity display form, possibly paired
+ * @property {string | null} severityValue reference-side severity
  * @property {string} kind
  * @property {string | null} symbol
  * @property {string} path
@@ -101,6 +107,7 @@ export function confidenceBucket(confidence) {
  * @property {FindingRow[]} rows serialized report order
  * @property {Map<string, FindingRow>} rowsByKey
  * @property {Map<string, ProjectView>} projectsByName
+ * @property {boolean} hasSeverity any occurrence carries a severity label
  * @property {StatusModel} status
  * @property {Report} report
  */
@@ -182,6 +189,7 @@ export function projectReport(report) {
   let sourceWarningCount = 0;
   /** @type {string[]} */
   const truncatedProjects = [];
+  let hasSeverity = false;
   let index = 0;
   for (const project of report.projects) {
     const pin = pins.get(project.project) ?? null;
@@ -205,6 +213,12 @@ export function projectReport(report) {
         throw new Error('projection requires serialized locators');
       }
       const reference = referenceOccurrence(diff);
+      if (
+        (diff.base_occurrence?.severity ?? null) !== null ||
+        (diff.head_occurrence?.severity ?? null) !== null
+      ) {
+        hasSeverity = true;
+      }
       rows.push({
         key: locatorKey(locator),
         locator,
@@ -216,6 +230,8 @@ export function projectReport(report) {
         confidence: confidenceDisplay(diff),
         confidenceValue: reference.confidence,
         confidenceBucket: confidenceBucket(reference.confidence),
+        severity: severityDisplay(diff),
+        severityValue: reference.severity,
         kind: diff.kind,
         symbol: diff.symbol,
         path: diff.path,
@@ -257,6 +273,7 @@ export function projectReport(report) {
     rows,
     rowsByKey: new Map(rows.map((row) => [row.key, row])),
     projectsByName: new Map(projects.map((project) => [project.name, project])),
+    hasSeverity,
     status,
     report,
   };

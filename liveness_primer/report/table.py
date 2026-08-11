@@ -96,9 +96,9 @@ class ColumnSpec:
 
 
 # Semantic column order (reporting contract §4.2). The class, rule,
-# confidence, kind, and fields columns do not wrap; location, message, and
-# symbol are the flexible columns, each with its own declared degradation
-# (reporting contract §4.6).
+# confidence, severity, kind, and fields columns do not wrap; location,
+# message, and symbol are the flexible columns, each with its own declared
+# degradation (reporting contract §4.6).
 COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec(header='', role='plain', minimum=1),
     ColumnSpec(header='rule', role='rule', minimum=4),
@@ -110,10 +110,46 @@ COLUMNS: tuple[ColumnSpec, ...] = (
     ColumnSpec(header='fields', role='fields', minimum=6),
 )
 
-# Flexible columns and their declared maximum widths, in column order.
-_FLEXIBLE_MAXIMA: dict[int, int] = {
-    index: column.maximum for index, column in enumerate(COLUMNS) if column.maximum is not None
-}
+# The severity column appears only when the report carries a severity,
+# between the confidence and kind columns; like confidence it measures to
+# the widest value actually present (reporting contract §4.3).
+_SEVERITY_COLUMN = ColumnSpec(header='severity', role='severity', minimum=1)
+_SEVERITY_INDEX = 3
+
+
+def layout_columns(*, has_severity: bool) -> tuple[ColumnSpec, ...]:
+    """Choose the column specs of one section (reporting contract §4.2).
+
+    Parameters
+    ----------
+    has_severity : bool
+        Whether the report carries any severity label to render.
+
+    Returns
+    -------
+    tuple[ColumnSpec, ...]
+        :data:`COLUMNS`, with the severity column inserted after the
+        confidence column when the report carries severities.
+    """
+    if not has_severity:
+        return COLUMNS
+    return (*COLUMNS[:_SEVERITY_INDEX], _SEVERITY_COLUMN, *COLUMNS[_SEVERITY_INDEX:])
+
+
+def _flexible_maxima(columns: Sequence[ColumnSpec]) -> dict[int, int]:
+    """Index the flexible columns' declared maximum widths.
+
+    Parameters
+    ----------
+    columns : Sequence[ColumnSpec]
+        Column specs of the section.
+
+    Returns
+    -------
+    dict[int, int]
+        Flexible column index mapped to its declared maximum width.
+    """
+    return {index: column.maximum for index, column in enumerate(columns) if column.maximum is not None}
 
 
 def wrap_cells(text: str, width: int) -> tuple[str, ...]:
@@ -325,7 +361,12 @@ def fit_cell(text: str, width: int, degrade: Degrade | None) -> tuple[str, ...]:
     return wrap_cells(text, width)
 
 
-def measure_widths(rows: Sequence[Sequence[Cell]], *, total_width: int) -> tuple[int, ...] | None:
+def measure_widths(
+    rows: Sequence[Sequence[Cell]],
+    *,
+    total_width: int,
+    columns: Sequence[ColumnSpec] = COLUMNS,
+) -> tuple[int, ...] | None:
     """Measure the shared column widths of one section (reporting §4.6).
 
     Fixed columns size to their largest cell; flexible columns receive
@@ -338,6 +379,8 @@ def measure_widths(rows: Sequence[Sequence[Cell]], *, total_width: int) -> tuple
         Every finding row of the section.
     total_width : int
         Available display width.
+    columns : Sequence[ColumnSpec]
+        Column specs of the section.
 
     Returns
     -------
@@ -345,20 +388,21 @@ def measure_widths(rows: Sequence[Sequence[Cell]], *, total_width: int) -> tuple
         Per-column widths, or ``None`` when the minimum widths cannot be
         satisfied and the stacked layout must be used.
     """
-    natural = [max(cell_len(column.header), column.minimum) for column in COLUMNS]
+    flexible_maxima = _flexible_maxima(columns)
+    natural = [max(cell_len(column.header), column.minimum) for column in columns]
     for row in rows:
         for index, cell in enumerate(row):
             natural[index] = max(natural[index], cell_len(cell.text))
     widths = list(natural)
-    for index, maximum in _FLEXIBLE_MAXIMA.items():
+    for index, maximum in flexible_maxima.items():
         widths[index] = min(widths[index], maximum)
-    separators = len(COLUMN_SEPARATOR) * (len(COLUMNS) - 1)
+    separators = len(COLUMN_SEPARATOR) * (len(columns) - 1)
     available = total_width - separators
     if sum(widths) <= available:
         return tuple(widths)
     floors = list(widths)
-    for index in _FLEXIBLE_MAXIMA:
-        floors[index] = min(widths[index], COLUMNS[index].minimum)
+    for index in flexible_maxima:
+        floors[index] = min(widths[index], columns[index].minimum)
     if sum(floors) > available:
         return None
     # Grow flexible columns from their floors toward their wanted widths,
@@ -366,10 +410,10 @@ def measure_widths(rows: Sequence[Sequence[Cell]], *, total_width: int) -> tuple
     # earlier columns), until the available width is spent. The remaining
     # budget is strictly smaller than the total deficit here, because the
     # wanted widths did not fit.
-    deficits = {index: widths[index] - floors[index] for index in _FLEXIBLE_MAXIMA}
+    deficits = {index: widths[index] - floors[index] for index in flexible_maxima}
     remaining = available - sum(floors)
     while remaining > 0:
-        best = max(_FLEXIBLE_MAXIMA, key=lambda index: (deficits[index], -index))
+        best = max(flexible_maxima, key=lambda index: (deficits[index], -index))
         floors[best] += 1
         deficits[best] -= 1
         remaining -= 1
@@ -397,13 +441,15 @@ def _trimmed(segments: list[Segment]) -> Line:
     return tuple(segments)
 
 
-def header_line(widths: Sequence[int]) -> Line:
+def header_line(widths: Sequence[int], *, columns: Sequence[ColumnSpec] = COLUMNS) -> Line:
     """Render the column header row (reporting contract §4.2).
 
     Parameters
     ----------
     widths : Sequence[int]
         Measured column widths.
+    columns : Sequence[ColumnSpec]
+        Column specs of the section.
 
     Returns
     -------
@@ -411,7 +457,7 @@ def header_line(widths: Sequence[int]) -> Line:
         The header line with a blank first header cell.
     """
     segments: list[Segment] = []
-    for index, column in enumerate(COLUMNS):
+    for index, column in enumerate(columns):
         if index:
             segments.append(Segment(text=COLUMN_SEPARATOR))
         pad = ' ' * (widths[index] - cell_len(column.header))
@@ -419,7 +465,12 @@ def header_line(widths: Sequence[int]) -> Line:
     return _trimmed(segments)
 
 
-def finding_lines(row: Sequence[Cell], widths: Sequence[int]) -> tuple[Line, ...]:
+def finding_lines(
+    row: Sequence[Cell],
+    widths: Sequence[int],
+    *,
+    columns: Sequence[ColumnSpec] = COLUMNS,
+) -> tuple[Line, ...]:
     """Lay one finding row out over as many physical lines as it needs.
 
     Continuation lines preserve the original column boundaries; columns
@@ -428,16 +479,18 @@ def finding_lines(row: Sequence[Cell], widths: Sequence[int]) -> tuple[Line, ...
     Parameters
     ----------
     row : Sequence[Cell]
-        The eight cells of the finding row.
+        The cells of the finding row, one per column.
     widths : Sequence[int]
         Measured column widths.
+    columns : Sequence[ColumnSpec]
+        Column specs of the section.
 
     Returns
     -------
     tuple[Line, ...]
         The physical lines of the row.
     """
-    wrapped = [fit_cell(cell.text, widths[index], COLUMNS[index].degrade) for index, cell in enumerate(row)]
+    wrapped = [fit_cell(cell.text, widths[index], columns[index].degrade) for index, cell in enumerate(row)]
     height = max([1, *(len(chunks) for chunks in wrapped)])
     lines: list[Line] = []
     for line_index in range(height):

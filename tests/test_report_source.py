@@ -85,37 +85,24 @@ def test_collect_attaches_reference_side_evidence(tmp_path: Path) -> None:
     assert enriched_dropped.base_occurrence.source_excerpt.lines[0] == 'line 6'
 
 
-def test_collect_moved_changed_span_gets_both_sides(tmp_path: Path) -> None:
+def test_collect_changed_pair_gets_the_reference_side_only(tmp_path: Path) -> None:
+    # Both sides of a `changed` pair share their identity-pinned span, so
+    # collection touches the reference-side base occurrence only.
     checkout = write_checkout(tmp_path)
-    moved = diff(
-        DiffClass.CHANGED,
-        'm',
-        base=occurrence(2, 'm'),
-        head=occurrence(9, 'm'),
-        fields=(ChangedField.LINE_SPAN,),
-    )
-    unmoved = diff(
+    changed = diff(
         DiffClass.CHANGED,
         'u',
         base=occurrence(3, 'old'),
         head=occurrence(3, 'new'),
         fields=(ChangedField.MESSAGE,),
     )
-    (enriched_moved, enriched_unmoved), warnings = collect_source_evidence(
-        (moved, unmoved), checkout=checkout, excerpt_lines=1
-    )
+    (enriched,), warnings = collect_source_evidence((changed,), checkout=checkout, excerpt_lines=1)
     assert warnings == ()
-    assert enriched_moved.base_occurrence is not None
-    assert enriched_moved.head_occurrence is not None
-    assert enriched_moved.base_occurrence.source_excerpt is not None
-    assert enriched_moved.base_occurrence.source_excerpt.lines == ('line 2',)
-    assert enriched_moved.head_occurrence.source_excerpt is not None
-    assert enriched_moved.head_occurrence.source_excerpt.lines == ('line 9',)
-    # An unmoved changed span collects the reference-side base excerpt only.
-    assert enriched_unmoved.base_occurrence is not None
-    assert enriched_unmoved.base_occurrence.source_excerpt is not None
-    assert enriched_unmoved.head_occurrence is not None
-    assert enriched_unmoved.head_occurrence.source_excerpt is None
+    assert enriched.base_occurrence is not None
+    assert enriched.base_occurrence.source_excerpt is not None
+    assert enriched.base_occurrence.source_excerpt.lines == ('line 3',)
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt is None
 
 
 def test_collect_zero_budget_disables_collection(tmp_path: Path) -> None:

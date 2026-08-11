@@ -25,7 +25,7 @@ export function goldenRowCount() {
   return report.projects.reduce((sum, project) => sum + project.diffs.length, 0);
 }
 
-const SCHEMA_VERSION = '1.2.0';
+const SCHEMA_VERSION = '2.0.0';
 
 /**
  * @param {number} index
@@ -97,7 +97,13 @@ export function largeReport(perProject = 1500, projectCount = 3) {
     projects.push({
       project: name,
       diffs,
-      totals: { new: perProject, dropped: 0, changed: 0, changed_confidence: 0, changed_message_only: 0 },
+      totals: {
+        new: perProject,
+        dropped: 0,
+        changed: 0,
+        changed_confidence_only: 0,
+        changed_message_only: 0,
+      },
       rollups,
       truncated: false,
       base_findings: 0,
@@ -149,7 +155,7 @@ export function largeReport(perProject = 1500, projectCount = 3) {
       new: perProject * projectCount,
       dropped: 0,
       changed: 0,
-      changed_confidence: 0,
+      changed_confidence_only: 0,
       changed_message_only: 0,
     },
     rollups: [1, 2, 3, 4].map((rule) => ({

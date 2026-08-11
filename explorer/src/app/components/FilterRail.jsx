@@ -39,11 +39,12 @@ function Facet({ title, options, labelFor, chosen, onToggle }) {
  * @param {ReturnType<import('../../lib/facets.js').facetCounts>} props.counts
  * @param {FacetSelections} props.selections
  * @param {number} props.visibleCount
+ * @param {boolean} props.hasSeverity the report carries severity labels (§2.3)
  * @param {(category: keyof FacetSelections, value: string) => void} props.onToggle
  * @param {() => void} props.onReset
  * @param {() => void} props.onClose closes the drawer at narrow widths
  */
-export function FilterRail({ counts, selections, visibleCount, onToggle, onReset, onClose }) {
+export function FilterRail({ counts, selections, visibleCount, hasSeverity, onToggle, onReset, onClose }) {
   return (
     <nav className="filter-rail" aria-label="Filters">
       <div className="rail-header">
@@ -91,6 +92,14 @@ export function FilterRail({ counts, selections, visibleCount, onToggle, onReset
         chosen={selections.confidence}
         onToggle={(value) => onToggle('confidence', value)}
       />
+      {hasSeverity && (
+        <Facet
+          title="Severity"
+          options={[...counts.severity.entries()]}
+          chosen={selections.severity}
+          onToggle={(value) => onToggle('severity', value)}
+        />
+      )}
       <p className="rail-actions">
         <button type="button" onClick={onReset}>
           Reset all

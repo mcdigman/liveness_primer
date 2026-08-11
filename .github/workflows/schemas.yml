@@ -39,8 +39,14 @@ jobs:
           uv venv
           uv pip install .
 
+      # `schema export` defaults to the schema directory of the *imported*
+      # package. This job installs non-editable, so that default is the
+      # copy under .venv/ and the checkout would never change: the diff
+      # below was clean by construction and the check could not fail.
+      # Naming the checkout directory explicitly keeps the comparison
+      # honest whatever the install mode.
       - name: Regenerate schemas
-        run: .venv/bin/liveness-primer schema export
+        run: .venv/bin/liveness-primer schema export --output-dir liveness_primer/schemas
 
       # `git diff` inspects tracked files only, so a schema exported for a
       # newly added model but never committed is invisible to it: the check

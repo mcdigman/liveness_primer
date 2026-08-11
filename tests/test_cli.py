@@ -73,7 +73,7 @@ def test_run_escape_hatch_text_output(
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert 'liveness primer report - tool: vulture' in captured.out
-    assert '1 new, 0 dropped, 1 changed' in captured.out
+    assert '2 new, 1 dropped, 0 changed' in captured.out
     assert 'comparable: no' in captured.out
 
 
@@ -400,13 +400,30 @@ def test_schema_export_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = tmp_path / 'schemas'
+    seen: list[Path | None] = []
 
-    def fake_export() -> tuple[Path, ...]:
+    def fake_export(directory: Path | None = None) -> tuple[Path, ...]:
+        seen.append(directory)
         return (target / 'report.schema.json',)
 
     monkeypatch.setattr(liveness_primer.cli, 'export_schemas', fake_export)
     assert main(['schema', 'export']) == EXIT_OK
     assert 'report.schema.json' in capsys.readouterr().out
+    # No flag means the in-package default, which the exporter resolves.
+    assert seen == [None]
+
+
+def test_schema_export_writes_to_an_explicit_output_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The Schemas workflow depends on this flag: `schema export` defaults to
+    # the imported package's directory, so a non-editable install would
+    # rewrite site-packages and leave the checkout it means to guard alone.
+    target = tmp_path / 'schemas'
+    assert main(['schema', 'export', '--output-dir', str(target)]) == EXIT_OK
+    assert (target / 'report.schema.json').is_file()
+    assert str(target) in capsys.readouterr().out
 
 
 @pytest.mark.usefixtures('_isolated_cache')
@@ -469,7 +486,7 @@ def test_managed_run_fires_gates_with_exit_three(
     captured = capsys.readouterr()
     assert code == EXIT_GATE
     assert 'comparable: yes' in captured.out
-    assert 'gate failure: new: 1' in captured.err
+    assert 'gate failure: new: 2; dropped: 1' in captured.err
 
 
 @pytest.mark.usefixtures('_isolated_cache')
@@ -495,7 +512,7 @@ def test_managed_run_without_firing_gates_exits_zero(
             '--new',
             'head-branch',
             '--fail-on',
-            'dropped',
+            'changed',
         ]
     )
     captured = capsys.readouterr()
