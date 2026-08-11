@@ -35,6 +35,11 @@ DIAGNOSTIC_KINDS = MappingProxyType(
     {'danger': 'danger', 'secrets': 'secret', 'quality': 'quality', 'ai_defects': 'ai_defect'}
 )
 
+# Analysis name (as selected in a corpus file) to the diagnostic array it
+# opts into; parse ingests only selected arrays, so a target repository's
+# own skylos configuration cannot widen the run beyond its provenance.
+_ANALYSIS_BUCKETS = {'danger': 'danger', 'secrets': 'secrets', 'quality': 'quality', 'ai-defects': 'ai_defects'}
+
 # Documented, versioned mapping from each ingested skylos structured output
 # bucket to its canonical rule ID (reporting contract §3.1). A rule ID
 # explicitly present on the detector finding takes precedence; a rule ID is
@@ -127,7 +132,7 @@ class SkylosAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
-    def parse(output: RawToolOutput, *, project: str, root: Path) -> list[Finding]:
+    def parse(output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()) -> list[Finding]:
         """Parse the skylos JSON document into findings.
 
         Parameters
@@ -138,18 +143,30 @@ class SkylosAdapter:
             Corpus project name to stamp onto findings.
         root : Path
             Checkout directory skylos analyzed.
+        analyses : tuple[str, ...]
+            Selected opt-in analyses; only their diagnostic arrays are
+            ingested, keeping the report on the categories the run's
+            provenance claims even when a target repository's own skylos
+            configuration enables more.
 
         Returns
         -------
         list[Finding]
-            One finding per dead-code entry and per diagnostic in any
-            present opt-in analysis array.
+            One finding per dead-code entry and per diagnostic in a
+            selected analysis array.
 
         Raises
         ------
         AdapterError
-            If stdout is not a JSON object or an entry is malformed.
+            If stdout is not a JSON object, an entry is malformed, or an
+            analysis is not declared.
         """
+        selected: set[str] = set()
+        for name in analyses:
+            if name not in _ANALYSIS_BUCKETS:
+                msg = f'skylos does not provide analysis {name!r}'
+                raise AdapterError(msg)
+            selected.add(_ANALYSIS_BUCKETS[name])
         try:
             document = json.loads(output.stdout)
         except json.JSONDecodeError as exc:
@@ -159,7 +176,7 @@ class SkylosAdapter:
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
         findings: list[Finding] = []
-        for key in (*_DEAD_CODE_KEYS, *DIAGNOSTIC_KINDS):
+        for key in (*_DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected)):
             bucket = document.get(key, [])
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
@@ -222,7 +239,9 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) 
     Diagnostics carry a severity label and rule ID instead of a confidence
     value, and may omit the symbol; the line number is therefore an
     inseparable part of the finding identity. Quality diagnostics name
-    their subject in ``name`` rather than ``symbol``.
+    their subject in ``name`` rather than ``symbol``, and repository-level
+    policy diagnostics (e.g. ``SKY-R104``) report the checkout root itself,
+    normalized to the ``.`` path.
 
     Parameters
     ----------
@@ -254,7 +273,7 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) 
     return Finding(
         tool=SkylosAdapter.name,
         project=project,
-        path=normalize_finding_path(entry.file, root),
+        path=normalize_finding_path(entry.file, root, allow_root=True),
         symbol=entry.symbol if entry.symbol is not None else entry.name,
         kind=DIAGNOSTIC_KINDS[key],
         message=entry.message,

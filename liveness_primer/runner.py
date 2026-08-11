@@ -386,7 +386,7 @@ class PrimerRunner:
             stderr=result.stderr,
         )
         try:
-            findings = self._adapter.parse(raw, project=item.project.name, root=root)
+            findings = self._adapter.parse(raw, project=item.project.name, root=root, analyses=item.settings.analyses)
         except AdapterError as exc:
             error = ToolError(side=side, exit_code=result.returncode, detail=str(exc))
             return _SideOutcome(

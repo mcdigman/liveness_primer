@@ -174,6 +174,13 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     run_parser.add_argument('--max-cost', type=_positive_float, help='greedy selection budget in CPU-seconds')
     run_parser.add_argument('--corpus', type=Path, default=Path('corpus.yaml'), help='corpus YAML file')
     run_parser.add_argument('--project', dest='project_url', help='ad-hoc mode: single target repository URL')
+    run_parser.add_argument(
+        '--analyses',
+        action='append',
+        default=[],
+        metavar='NAME',
+        help='ad-hoc mode: enable an adapter-declared opt-in analysis; repeatable',
+    )
     run_parser.add_argument('--max-results', type=_positive_int, default=200, help='per-project cap on rendered diffs')
     run_parser.add_argument(
         '--excerpt-lines',
@@ -332,13 +339,22 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
     Raises
     ------
     RunnerError
-        If ad-hoc mode is mixed with corpus selectors.
+        If ad-hoc mode is mixed with corpus selectors, ``--analyses`` is
+        used outside ad-hoc mode, or an analysis is not declared.
     """
     if args.project_url is not None:
         if args.keywords or args.select_all or args.max_cost is not None:
             msg = '--project (ad-hoc mode) does not take -k/--all/--max-cost'
             raise RunnerError(msg)
-        return (ad_hoc_project(args.project_url),)
+        declared = get_adapter(args.tool).analyses
+        unknown = [name for name in args.analyses if name not in declared]
+        if unknown:
+            msg = f'tool {args.tool!r} does not provide analysis {unknown[0]!r}'
+            raise RunnerError(msg)
+        return (ad_hoc_project(args.project_url, tool=args.tool, analyses=tuple(args.analyses)),)
+    if args.analyses:
+        msg = '--analyses applies to ad-hoc --project runs; corpus runs select analyses in the corpus file'
+        raise RunnerError(msg)
     corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
     return select_projects(
         corpus,

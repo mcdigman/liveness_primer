@@ -149,7 +149,9 @@ class DetectorAdapter(Protocol):
     capabilities: AdapterCapabilities
     build_recipe: BuildRecipe
 
-    def parse(self, output: RawToolOutput, *, project: str, root: Path) -> list[Finding]:
+    def parse(
+        self, output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()
+    ) -> list[Finding]:
         """Parse raw invocation output into normalized findings.
 
         Parameters
@@ -160,11 +162,15 @@ class DetectorAdapter(Protocol):
             Corpus project name to stamp onto findings.
         root : Path
             Checkout directory the detector analyzed, for path normalization.
+        analyses : tuple[str, ...]
+            Selected opt-in analyses; only their categories are ingested,
+            so the report never carries categories the run's provenance
+            does not claim (contract §4, §5).
 
         Returns
         -------
         list[Finding]
-            Normalized dead-code findings only (contract §4).
+            Normalized dead-code findings plus selected-analysis findings.
         """
         ...
 
@@ -243,7 +249,7 @@ def _relative_to_root(path: Path, root: Path) -> Path | None:
     return None
 
 
-def normalize_finding_path(raw: str, root: Path) -> str:
+def normalize_finding_path(raw: str, root: Path, *, allow_root: bool = False) -> str:
     """Normalize a detector-reported path to repo-relative POSIX form (contract §7).
 
     Detector output is untrusted: paths resolving outside the analyzed
@@ -256,6 +262,9 @@ def normalize_finding_path(raw: str, root: Path) -> str:
         Path exactly as the detector printed it (untrusted).
     root : Path
         Checkout directory the detector analyzed.
+    allow_root : bool
+        Whether a path naming the checkout root itself normalizes to
+        ``.`` (repository-level findings) instead of failing.
 
     Returns
     -------
@@ -266,7 +275,8 @@ def normalize_finding_path(raw: str, root: Path) -> str:
     Raises
     ------
     AdapterError
-        If the path escapes the checkout root or names no file.
+        If the path escapes the checkout root, or names no file while
+        ``allow_root`` is unset.
     """
     path = Path(raw)
     if path.is_absolute():
@@ -288,6 +298,8 @@ def normalize_finding_path(raw: str, root: Path) -> str:
         else:
             parts.append(part)
     if not parts:
+        if allow_root:
+            return '.'
         msg = f'detector reported a path naming no file: {raw!r}'
         raise AdapterError(msg)
     return PurePosixPath(*parts).as_posix()

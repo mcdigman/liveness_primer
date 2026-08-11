@@ -705,6 +705,12 @@ def test_fake_skylos_danger_severity_change_end_to_end(tmp_path: Path, corpus_pr
     # Reporting acceptance 32, end to end through the skylos adapter's
     # danger ingestion: a severity change pairs as one `changed` diff, and
     # a second security diagnostic on the same line keeps its own identity.
+    corpus_project = CorpusProject(
+        name=corpus_project.name,
+        repo=corpus_project.repo,
+        pin=corpus_project.pin,
+        tools={'skylos': ToolSettings(analyses=('danger',))},
+    )
     base_cmd = write_fake_detector_script(
         tmp_path / 'sky-base.json',
         [

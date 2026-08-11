@@ -240,7 +240,12 @@ def test_skylos_ingests_diagnostic_buckets_with_per_bucket_kinds() -> None:
         'ai_defects': [{'rule_id': 'SKY-AI001', 'message': 'hallucinated API', 'file': 'a.py', 'line': 4}],
         'circular_dependencies': [{'rule_id': 'SKY-CIRC'}],
     }
-    findings = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    findings = SkylosAdapter.parse(
+        raw(json.dumps(document)),
+        project='demo',
+        root=ROOT,
+        analyses=('danger', 'secrets', 'quality', 'ai-defects'),
+    )
     by_rule = {finding.rule_id: finding for finding in findings}
     assert set(by_rule) == {'SKY-D001', 'SKY-S101', 'SKY-L014', 'SKY-AI001'}
     assert by_rule['SKY-D001'].kind == 'danger'
@@ -268,12 +273,65 @@ def test_skylos_secret_entries_keep_undeclared_fields_out_of_the_excerpt() -> No
             }
         ]
     }
-    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('secrets',))
     assert finding.raw_excerpt is not None
     excerpt = json.loads(finding.raw_excerpt)
     assert 'preview' not in excerpt
     assert 'entropy' not in excerpt
     assert 'provider' not in excerpt
+
+
+def test_skylos_unselected_diagnostic_buckets_are_filtered() -> None:
+    # Provenance guard: a target repository's own skylos configuration may
+    # emit diagnostic arrays the run never selected; parse ingests only
+    # the selected analyses (contract §4, §5).
+    document = {
+        'unused_functions': [{'name': 'a', 'type': 'function', 'file': 'a.py', 'line': 1}],
+        'danger': [{'rule_id': 'SKY-D001', 'message': 'eval', 'file': 'a.py', 'line': 1}],
+        'secrets': [{'rule_id': 'SKY-S101', 'message': 'key', 'file': 'a.py', 'line': 2}],
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.kind == 'function'
+    partial = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
+    assert [entry.kind for entry in partial] == ['function', 'danger']
+
+
+def test_skylos_parse_rejects_undeclared_analyses() -> None:
+    with pytest.raises(AdapterError, match="skylos does not provide analysis 'sca'"):
+        SkylosAdapter.parse(raw('{}'), project='demo', root=ROOT, analyses=('sca',))
+
+
+def test_vulture_parse_rejects_any_analyses() -> None:
+    with pytest.raises(AdapterError, match="vulture does not provide analysis 'danger'"):
+        VultureAdapter.parse(raw(''), project='demo', root=ROOT, analyses=('danger',))
+
+
+def test_skylos_parses_recorded_analyses_fixture() -> None:
+    # Recorded skylos 4.33 output: quality carries source-anchored and
+    # repository-level policy diagnostics; the latter report the checkout
+    # root itself and normalize to the '.' path instead of aborting the
+    # project analysis.
+    output = raw((FIXTURES / 'skylos_analyses_output.json').read_text(encoding='utf-8'))
+    findings = SkylosAdapter.parse(output, project='demo', root=ROOT, analyses=('danger', 'secrets', 'quality'))
+    by_rule = {finding.rule_id: finding for finding in findings}
+    assert set(by_rule) == {'SKY-D209', 'SKY-S101', 'SKY-L014', 'SKY-R104', 'SKY-U001'}
+    policy = by_rule['SKY-R104']
+    assert policy.path == '.'
+    assert policy.symbol == 'pre-commit-policy'
+    assert policy.kind == 'quality'
+    assert policy.severity == 'LOW'
+    assert by_rule['SKY-L014'].symbol == 'API_TOKEN'
+    assert by_rule['SKY-L014'].path == 'pkg/mod.py'
+    assert by_rule['SKY-S101'].raw_excerpt is not None
+    assert 'preview' not in json.loads(by_rule['SKY-S101'].raw_excerpt)
+    assert by_rule['SKY-U001'].symbol == 'pkg.mod.bad'
+
+
+def test_normalize_finding_path_allow_root_maps_the_root_to_dot() -> None:
+    assert normalize_finding_path('/checkout', ROOT, allow_root=True) == '.'
+    assert normalize_finding_path('.', ROOT, allow_root=True) == '.'
+    with pytest.raises(AdapterError, match='outside the checkout'):
+        normalize_finding_path('/elsewhere', ROOT, allow_root=True)
 
 
 def test_skylos_quality_entries_map_name_to_symbol() -> None:
@@ -290,7 +348,7 @@ def test_skylos_quality_entries_map_name_to_symbol() -> None:
             }
         ]
     }
-    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('quality',))
     assert finding.symbol == 'API_TOKEN'
     assert finding.kind == 'quality'
 
@@ -310,7 +368,7 @@ def test_skylos_danger_entries_normalize_severity_and_keep_symbols() -> None:
             }
         ]
     }
-    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
     assert finding.severity == 'CRITICAL'
     assert finding.symbol == 'run'
     assert finding.start_line == 9
@@ -325,17 +383,17 @@ def test_skylos_declares_the_severity_capability() -> None:
 def test_skylos_rejects_malformed_danger_entries() -> None:
     document = {'danger': [{'rule_id': 'SKY-D001', 'file': 'a.py', 'line': 1}]}
     with pytest.raises(AdapterError, match="malformed skylos entry in 'danger'"):
-        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
 
 
 def test_skylos_rejects_non_array_danger_bucket() -> None:
     with pytest.raises(AdapterError, match="key 'danger' is not an array"):
-        SkylosAdapter.parse(raw('{"danger": {}}'), project='demo', root=ROOT)
+        SkylosAdapter.parse(raw('{"danger": {}}'), project='demo', root=ROOT, analyses=('danger',))
 
 
 def test_skylos_clamps_danger_line_zero_to_one() -> None:
     document = {'danger': [{'rule_id': 'SKY-D001', 'message': 'eval', 'file': 'a.py', 'line': 0}]}
-    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
     assert finding.start_line == 1
 
 

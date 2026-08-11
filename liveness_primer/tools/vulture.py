@@ -64,7 +64,7 @@ class VultureAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
-    def parse(output: RawToolOutput, *, project: str, root: Path) -> list[Finding]:
+    def parse(output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()) -> list[Finding]:
         """Parse vulture stdout lines into findings.
 
         Reachability messages (``unreachable code after 'return'``,
@@ -79,6 +79,8 @@ class VultureAdapter:
             Corpus project name to stamp onto findings.
         root : Path
             Checkout directory vulture analyzed.
+        analyses : tuple[str, ...]
+            Must be empty: vulture declares no opt-in analyses.
 
         Returns
         -------
@@ -88,8 +90,12 @@ class VultureAdapter:
         Raises
         ------
         AdapterError
-            If a non-empty stdout line does not match the report format.
+            If an analysis is selected, or a non-empty stdout line does
+            not match the report format.
         """
+        if analyses:
+            msg = f'vulture does not provide analysis {analyses[0]!r}'
+            raise AdapterError(msg)
         findings: list[Finding] = []
         unparsed: list[str] = []
         for line in output.stdout.splitlines():

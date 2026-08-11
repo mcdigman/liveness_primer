@@ -138,6 +138,26 @@ class ToolSettings(_ConfigModel):
     cost: float | None = Field(default=None, ge=0)
 
     @model_validator(mode='after')
+    def _check_unique_analyses(self) -> Self:
+        """Reject duplicate analysis selections.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If ``analyses`` selects the same analysis more than once.
+        """
+        duplicates = {name for name in self.analyses if self.analyses.count(name) > 1}
+        if duplicates:
+            msg = f'analyses selects {min(duplicates)!r} more than once'
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode='after')
     def _check_command_placeholder(self) -> Self:
         """Require the ``{exe}`` placeholder in command overrides.
 
@@ -425,16 +445,21 @@ def load_corpus(
     return corpus
 
 
-def ad_hoc_project(repo: str) -> CorpusProject:
+def ad_hoc_project(repo: str, *, tool: str | None = None, analyses: Sequence[str] = ()) -> CorpusProject:
     """Build the single-project corpus entry for ad-hoc mode (contract §5).
 
     The project uses default settings and latest-on-default-branch pinning,
-    represented as neither ``pin`` nor ``branch``.
+    represented as neither ``pin`` nor ``branch``; ``--analyses`` selections
+    become the tool's per-project table.
 
     Parameters
     ----------
     repo : str
         Target repository URL from the CLI.
+    tool : str | None
+        Adapter name the run targets; required when ``analyses`` is given.
+    analyses : Sequence[str]
+        Opt-in analyses selected on the CLI.
 
     Returns
     -------
@@ -444,13 +469,24 @@ def ad_hoc_project(repo: str) -> CorpusProject:
     Raises
     ------
     CorpusConfigError
-        If a project name cannot be derived from the URL.
+        If a project name cannot be derived from the URL, analyses are
+        given without a tool, or the selection is invalid.
     """
     tail = repo.rstrip('/').rsplit('/', maxsplit=1)[-1].removesuffix('.git')
     if not _NAME_PATTERN.match(tail):
         msg = f'cannot derive a project name from repository URL {repo!r}'
         raise CorpusConfigError(msg)
-    return CorpusProject(name=tail, repo=repo)
+    tools: dict[str, ToolSettings] = {}
+    if analyses:
+        if tool is None:
+            msg = 'ad-hoc analyses require a tool name'
+            raise CorpusConfigError(msg)
+        try:
+            tools[tool] = ToolSettings(analyses=tuple(analyses))
+        except ValidationError as exc:
+            msg = f'invalid ad-hoc analyses: {exc}'
+            raise CorpusConfigError(msg) from exc
+    return CorpusProject(name=tail, repo=repo, tools=tools)
 
 
 def _select_by_cost(

@@ -107,7 +107,8 @@ point*: pre-triage, triage, or post-triage (§10).
 - `expected_clean` semantics: findings or a nonzero tool exit on the base side of an
   expected-clean (project, tool) pair are reported as **corpus-integrity warnings** (the
   comparison still runs); `--fail-on corpus-integrity` opts into gating on them.
-- Ad-hoc mode: a single target repository given on the CLI with default settings.
+- Ad-hoc mode: a single target repository given on the CLI with default settings;
+  repeatable `--analyses NAME` opts the run into adapter-declared analyses.
 - Selection: by name (`-k`), `--all`, or `--max-cost SECONDS` (greedy under declared cost
   for the chosen tool).
 - The initial corpus list is deferred to a Phase 1 task (~5–10 permissively licensed,
@@ -237,7 +238,8 @@ printing the package version and `SCHEMA_VERSION`. Commands:
 
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
   [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
-  [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]`
+  [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]
+  [--analyses NAME]`
 - `corpus validate` — parse and validate the corpus YAML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF

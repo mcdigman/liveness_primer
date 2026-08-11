@@ -216,6 +216,55 @@ def test_run_rejects_ad_hoc_with_selectors(tmp_path: Path, capsys: pytest.Captur
     assert 'ad-hoc mode' in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_ad_hoc_analyses_reach_the_report(
+    tmp_path: Path,
+    project_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Contract §5 ad-hoc mode: --analyses opts an arbitrary --project run
+    # into adapter-declared analyses without a corpus file.
+    secret = FakeFinding(path='pkg/mod.py', line=4, symbol='API_KEY', bucket='secrets', rule_id='SKY-S101')
+    base_cmd = write_fake_detector_script(tmp_path / 'sky-base.json', [], output_format='skylos')
+    head_cmd = write_fake_detector_script(tmp_path / 'sky-head.json', [secret], output_format='skylos')
+    argv = [
+        'run',
+        '--tool',
+        'skylos',
+        '--project',
+        project_url,
+        '--old-cmd',
+        shlex.join(base_cmd),
+        '--new-cmd',
+        shlex.join(head_cmd),
+        '--analyses',
+        'secrets',
+        '--output',
+        'json',
+    ]
+    code = main(argv)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    report = Report.model_validate_json(captured.out)
+    (project_report,) = report.projects
+    assert project_report.analyses == ('secrets',)
+    (diff,) = project_report.diffs
+    assert diff.kind == 'secret'
+    assert diff.symbol == 'API_KEY'
+
+
+def test_run_ad_hoc_rejects_undeclared_analyses(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    argv = escape_argv(tmp_path, 'https://example.invalid/x', [], [], '--analyses', 'danger')
+    assert main(argv) == EXIT_FAILURE
+    assert "tool 'vulture' does not provide analysis 'danger'" in capsys.readouterr().err
+
+
+def test_run_rejects_analyses_outside_ad_hoc_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ['run', '--tool', 'skylos', '--old-cmd', 'x', '--new-cmd', 'y', '--all', '--analyses', 'danger']
+    assert main(argv) == EXIT_FAILURE
+    assert 'corpus runs select analyses in the corpus file' in capsys.readouterr().err
+
+
 def test_run_unknown_tool_fails_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
     code = main(['run', '--tool', 'pylint', '--repo', 'r', '--old', 'a', '--new', 'b'])
     assert code == EXIT_FAILURE

@@ -333,6 +333,27 @@ def test_load_corpus_without_known_analyses_skips_analysis_check(tmp_path: Path)
     assert corpus.projects[0].tool_settings('vulture').analyses == ('danger',)
 
 
+def test_tool_settings_reject_duplicate_analyses() -> None:
+    with pytest.raises(ValidationError, match="analyses selects 'danger' more than once"):
+        ToolSettings(analyses=('danger', 'secrets', 'danger'))
+
+
+def test_ad_hoc_project_carries_cli_analyses() -> None:
+    project = ad_hoc_project('https://github.com/example/thing', tool='skylos', analyses=('quality',))
+    assert project.tool_settings('skylos').analyses == ('quality',)
+    assert ad_hoc_project('https://github.com/example/thing', tool='skylos').tools == {}
+
+
+def test_ad_hoc_project_analyses_require_a_tool() -> None:
+    with pytest.raises(CorpusConfigError, match='require a tool name'):
+        ad_hoc_project('https://github.com/example/thing', analyses=('quality',))
+
+
+def test_ad_hoc_project_rejects_invalid_analyses() -> None:
+    with pytest.raises(CorpusConfigError, match='invalid ad-hoc analyses'):
+        ad_hoc_project('https://github.com/example/thing', tool='skylos', analyses=('quality', 'quality'))
+
+
 def test_ad_hoc_project_derives_name() -> None:
     entry = ad_hoc_project('https://example.com/group/target.git')
     assert entry.name == 'target'
