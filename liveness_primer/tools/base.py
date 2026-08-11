@@ -9,12 +9,12 @@ commands: invocations are argv lists composed from typed, validated models.
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Protocol, runtime_checkable
 
-from liveness_primer.config import ToolSettings
+from liveness_primer.config import CorpusConfigError, ToolSettings
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import Finding
 
@@ -129,6 +129,9 @@ class DetectorAdapter(Protocol):
         Console-script name inside the managed environment.
     default_args : tuple[str, ...]
         Arguments the adapter always passes before targets.
+    analyses : Mapping[str, tuple[str, ...]]
+        Opt-in analyses the adapter supports, mapped to the arguments each
+        one adds; corpus ``analyses`` selections validate against the keys.
     success_exit_codes : frozenset[int]
         Exit codes that mean the run completed (findings or clean).
     capabilities : AdapterCapabilities
@@ -141,6 +144,7 @@ class DetectorAdapter(Protocol):
     distribution: str
     executable: str
     default_args: tuple[str, ...]
+    analyses: Mapping[str, tuple[str, ...]]
     success_exit_codes: frozenset[int]
     capabilities: AdapterCapabilities
     build_recipe: BuildRecipe
@@ -170,7 +174,8 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
 
     The per-tool corpus ``command`` override replaces the default program and
     arguments, with its mandatory ``{exe}`` element spliced with the detector
-    command; ``args`` appends; targets default to the checkout root. Corpus
+    command; selected ``analyses`` resolve through the adapter's declared
+    flags; ``args`` appends; targets default to the checkout root. Corpus
     *content* is never interpolated — every element originates from typed,
     validated models.
 
@@ -188,6 +193,11 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
     -------
     list[str]
         The composed argv.
+
+    Raises
+    ------
+    CorpusConfigError
+        If ``settings`` selects an analysis the adapter does not declare.
     """
     base: list[str] = []
     if settings.command is not None:
@@ -200,6 +210,12 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
                 base.append(element)
     else:
         base.extend([*executable, *adapter.default_args])
+    for analysis in settings.analyses:
+        flags = adapter.analyses.get(analysis)
+        if flags is None:
+            msg = f'tool {adapter.name!r} does not provide analysis {analysis!r}'
+            raise CorpusConfigError(msg)
+        base.extend(flags)
     targets = list(settings.targets) if settings.targets else ['.']
     return [*base, *settings.args, *targets]
 

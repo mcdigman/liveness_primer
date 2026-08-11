@@ -367,8 +367,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "2.0.0",
-          "default": "2.0.0",
+          "const": "2.1.0",
+          "default": "2.1.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -484,8 +484,8 @@
           "title": "Rule Id"
         },
         "schema_version": {
-          "const": "2.0.0",
-          "default": "2.0.0",
+          "const": "2.1.0",
+          "default": "2.1.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -528,8 +528,16 @@
     },
     "ProjectReport": {
       "additionalProperties": false,
-      "description": "Per-project slice of the blast radius.\n\nAttributes\n----------\nproject : str\n    Corpus project name.\ndiffs : tuple[FindingDiff, ...]\n    Classified diffs, canonically ordered, possibly truncated.\ntotals : DiffTotals\n    Totals before truncation.\nrollups : tuple[DiffRollup, ...]\n    Complete pre-truncation rollups by diff class and rule ID with kind\n    fallback, deterministically ordered.\ntruncated : bool\n    Whether ``diffs`` was truncated by the results cap.\nbase_findings : int\n    Total base-side findings parsed.\nhead_findings : int\n    Total head-side findings parsed.\nmeasured_cost_seconds : float | None\n    Measured wall-clock analysis cost, when both sides completed.\nerrors : tuple[ToolError, ...]\n    Detector invocation failures for this project.\nintegrity_warnings : tuple[CorpusIntegrityWarning, ...]\n    Expected-clean violations observed on the base side.\nsource_warnings : tuple[str, ...]\n    Bounded warnings from pinned-source evidence collection.",
+      "description": "Per-project slice of the blast radius.\n\nAttributes\n----------\nproject : str\n    Corpus project name.\ndiffs : tuple[FindingDiff, ...]\n    Classified diffs, canonically ordered, possibly truncated.\ntotals : DiffTotals\n    Totals before truncation.\nrollups : tuple[DiffRollup, ...]\n    Complete pre-truncation rollups by diff class and rule ID with kind\n    fallback, deterministically ordered.\ntruncated : bool\n    Whether ``diffs`` was truncated by the results cap.\nbase_findings : int\n    Total base-side findings parsed.\nhead_findings : int\n    Total head-side findings parsed.\nmeasured_cost_seconds : float | None\n    Measured wall-clock analysis cost, when both sides completed.\nerrors : tuple[ToolError, ...]\n    Detector invocation failures for this project.\nintegrity_warnings : tuple[CorpusIntegrityWarning, ...]\n    Expected-clean violations observed on the base side.\nsource_warnings : tuple[str, ...]\n    Bounded warnings from pinned-source evidence collection.\nanalyses : tuple[str, ...]\n    Corpus-selected opt-in analyses for this (project, tool) pair.",
       "properties": {
+        "analyses": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Analyses",
+          "type": "array"
+        },
         "base_findings": {
           "title": "Base Findings",
           "type": "integer"
@@ -729,8 +737,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "2.0.0",
-          "default": "2.0.0",
+          "const": "2.1.0",
+          "default": "2.1.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -909,8 +917,8 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "2.0.0",
-      "default": "2.0.0",
+      "const": "2.1.0",
+      "default": "2.1.0",
       "title": "Schema Version",
       "type": "string"
     },

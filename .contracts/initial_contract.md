@@ -81,10 +81,11 @@ point*: pre-triage, triage, or post-triage (§10).
   requirements — `dependencies`/`optional-dependencies` must not be listed in `dynamic`
   (§3); other fields such as `version` may be dynamic and resolve during the sandboxed
   build (vulture's `dynamic = ["version"]` is fine). Detectors with dynamic dependency
-  metadata are unsupported. Adapters ingest only dead-code finding kinds: other report
-  categories (e.g. skylos's security, secrets, and quality findings) are filtered at the
-  adapter. The interface is not Python-specific (paths plus optional symbol), leaving room
-  for tools such as `knip`.
+  metadata are unsupported. Adapters ingest dead-code finding kinds by default; a
+  detector's other report categories (e.g. skylos's security, secrets, quality, and
+  AI-defect diagnostics) are ingested only where a corpus per-tool table opts in through
+  `analyses`, validated against the adapter's declared analysis set (§5). The interface is
+  not Python-specific (paths plus optional symbol), leaving room for tools such as `knip`.
 - Future candidates (non-normative): `pydeadcode`, `dangle`, `deadpy`, `uncalled`, and
   subset-capability tools (ruff, mypy, pyright, CodeQL).
 - Licensing rule: GPL/AGPL detectors (e.g. `deadcode` AGPL-3.0, pylint GPL-2.0) may only
@@ -98,7 +99,9 @@ point*: pre-triage, triage, or post-triage (§10).
 - Per-project fields: `name` (unique key; the same repository may appear under distinct
   names to allow multiple pins), `repo` URL, `license` (SPDX ID), exactly one of `pin`
   (commit SHA) or `branch` (latest-on-branch), and per-tool tables with command/argument
-  overrides, target paths, `expected_clean: bool`, `timeout` overrides (§3), declared
+  overrides, opt-in `analyses` (validated against the adapter's declared set and recorded
+  per project in the report), target paths, `expected_clean: bool`, `timeout` overrides
+  (§3), declared
   `cost` in CPU-seconds (approximate, reference runner; measured actuals are recorded in
   the report), and include/exclude tool lists.
 - `expected_clean` semantics: findings or a nonzero tool exit on the base side of an

@@ -519,6 +519,7 @@ class PrimerRunner:
             errors=errors,
             integrity_warnings=integrity,
             source_warnings=source_warnings,
+            analyses=item.settings.analyses,
         )
 
     async def _analyze_project(

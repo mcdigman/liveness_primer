@@ -305,6 +305,34 @@ def test_load_corpus_without_known_tools_skips_reference_check(tmp_path: Path) -
     assert len(corpus.projects) == 2
 
 
+ANALYSES_YAML = VALID_YAML.replace('        cost: 3.0', '        cost: 3.0\n        analyses:\n          - danger')
+
+
+def test_load_corpus_accepts_declared_analyses(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(ANALYSES_YAML, encoding='utf-8')
+    corpus = load_corpus(
+        corpus_file,
+        known_tools=('vulture', 'skylos'),
+        known_analyses={'vulture': ('danger',), 'skylos': ()},
+    )
+    assert corpus.projects[0].tool_settings('vulture').analyses == ('danger',)
+
+
+def test_load_corpus_rejects_undeclared_analyses(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(ANALYSES_YAML, encoding='utf-8')
+    with pytest.raises(CorpusConfigError, match="tool 'vulture' selects undeclared analysis 'danger'"):
+        load_corpus(corpus_file, known_tools=('vulture', 'skylos'), known_analyses={'skylos': ('danger',)})
+
+
+def test_load_corpus_without_known_analyses_skips_analysis_check(tmp_path: Path) -> None:
+    corpus_file = tmp_path / 'corpus.yaml'
+    corpus_file.write_text(ANALYSES_YAML, encoding='utf-8')
+    corpus = load_corpus(corpus_file, known_tools=('vulture', 'skylos'))
+    assert corpus.projects[0].tool_settings('vulture').analyses == ('danger',)
+
+
 def test_ad_hoc_project_derives_name() -> None:
     entry = ad_hoc_project('https://example.com/group/target.git')
     assert entry.name == 'target'

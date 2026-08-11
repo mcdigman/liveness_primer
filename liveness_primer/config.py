@@ -7,7 +7,7 @@ into the pydantic models here, which are the source of truth.
 """
 
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Self
@@ -115,6 +115,8 @@ class ToolSettings(_ConfigModel):
     command : tuple[str, ...] | None
         Full argv override; the element ``{exe}`` is replaced by the managed
         detector executable. Always an argv list, never a shell string.
+    analyses : tuple[str, ...]
+        Opt-in analyses to enable, drawn from the adapter's declared set.
     args : tuple[str, ...]
         Extra arguments appended to the invocation.
     targets : tuple[str, ...]
@@ -128,6 +130,7 @@ class ToolSettings(_ConfigModel):
     """
 
     command: tuple[str, ...] | None = None
+    analyses: tuple[str, ...] = ()
     args: tuple[str, ...] = ()
     targets: tuple[str, ...] = ()
     expected_clean: bool = False
@@ -294,8 +297,12 @@ class Corpus(_ConfigModel):
         return self
 
 
-def _check_tool_names(corpus: Corpus, known_tools: Collection[str]) -> None:
-    """Reject tool names that no adapter provides.
+def _check_tool_names(
+    corpus: Corpus,
+    known_tools: Collection[str],
+    known_analyses: Mapping[str, Collection[str]] | None,
+) -> None:
+    """Reject tool names no adapter provides and undeclared analyses.
 
     Parameters
     ----------
@@ -303,11 +310,15 @@ def _check_tool_names(corpus: Corpus, known_tools: Collection[str]) -> None:
         The validated corpus.
     known_tools : Collection[str]
         Adapter names available in this build.
+    known_analyses : Mapping[str, Collection[str]] | None
+        When given, per-tool ``analyses`` selections must be drawn from the
+        named adapter's declared set.
 
     Raises
     ------
     CorpusConfigError
-        If a per-tool table or include/exclude list names an unknown tool.
+        If a per-tool table or include/exclude list names an unknown tool,
+        or a per-tool table selects an undeclared analysis.
     """
     problems: list[str] = []
     for project in corpus.projects:
@@ -318,6 +329,13 @@ def _check_tool_names(corpus: Corpus, known_tools: Collection[str]) -> None:
             for tool in dict.fromkeys(referenced)
             if tool not in known_tools
         )
+        if known_analyses is not None:
+            problems.extend(
+                f'project {project.name!r} tool {tool!r} selects undeclared analysis {analysis!r}'
+                for tool, settings in project.tools.items()
+                for analysis in settings.analyses
+                if analysis not in known_analyses.get(tool, ())
+            )
     if problems:
         raise CorpusConfigError('; '.join(problems))
 
@@ -361,7 +379,12 @@ def _read_corpus_text(path: Path) -> str:
         raise CorpusConfigError(msg) from exc
 
 
-def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Corpus:
+def load_corpus(
+    path: Path,
+    *,
+    known_tools: Collection[str] | None = None,
+    known_analyses: Mapping[str, Collection[str]] | None = None,
+) -> Corpus:
     """Load and validate a corpus YAML file (contract §5).
 
     Parameters
@@ -371,6 +394,9 @@ def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Co
     known_tools : Collection[str] | None
         When given, per-tool table keys and include/exclude entries must be
         drawn from it.
+    known_analyses : Mapping[str, Collection[str]] | None
+        When given, per-tool ``analyses`` selections must be drawn from the
+        named adapter's declared set.
 
     Returns
     -------
@@ -395,7 +421,7 @@ def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Co
         msg = f'corpus file {path} is invalid: {exc}'
         raise CorpusConfigError(msg) from exc
     if known_tools is not None:
-        _check_tool_names(corpus, known_tools)
+        _check_tool_names(corpus, known_tools, known_analyses)
     return corpus
 
 

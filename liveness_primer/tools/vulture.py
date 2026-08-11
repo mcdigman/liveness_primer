@@ -8,7 +8,9 @@ findings exist, 1 on invalid input, and 2 on invalid arguments.
 """
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 from liveness_primer.findings import Finding
 from liveness_primer.tools.base import (
@@ -38,6 +40,8 @@ class VultureAdapter:
         Console script: ``vulture``.
     default_args : tuple[str, ...]
         No extra arguments; targets are positional.
+    analyses : Mapping[str, tuple[str, ...]]
+        Empty: vulture offers no opt-in analyses.
     success_exit_codes : frozenset[int]
         0 (clean) and 3 (findings).
     capabilities : AdapterCapabilities
@@ -50,6 +54,7 @@ class VultureAdapter:
     distribution: str = 'vulture'
     executable: str = 'vulture'
     default_args: tuple[str, ...] = ()
+    analyses: Mapping[str, tuple[str, ...]] = MappingProxyType({})
     success_exit_codes: frozenset[int] = frozenset({0, 3})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,

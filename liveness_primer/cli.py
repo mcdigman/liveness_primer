@@ -44,7 +44,7 @@ from liveness_primer.runner import (
     report_has_failures,
 )
 from liveness_primer.schema_export import export_schemas
-from liveness_primer.tools.registry import adapter_names, get_adapter
+from liveness_primer.tools.registry import adapter_analyses, adapter_names, get_adapter
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -339,7 +339,7 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
             msg = '--project (ad-hoc mode) does not take -k/--all/--max-cost'
             raise RunnerError(msg)
         return (ad_hoc_project(args.project_url),)
-    corpus = load_corpus(args.corpus, known_tools=adapter_names())
+    corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
     return select_projects(
         corpus,
         tool=args.tool,
@@ -517,7 +517,7 @@ def _command_validate(args: argparse.Namespace) -> int:
     int
         0 when the corpus file is valid.
     """
-    corpus = load_corpus(args.corpus, known_tools=adapter_names())
+    corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
     names = ', '.join(project.name for project in corpus.projects)
     sys.stdout.write(f'corpus OK: {len(corpus.projects)} project(s): {names}\n')
     return EXIT_OK
@@ -536,7 +536,7 @@ def _command_license_check(args: argparse.Namespace) -> int:
     int
         0 when every declared license is confirmed.
     """
-    corpus = load_corpus(args.corpus, known_tools=adapter_names())
+    corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
     results = check_licenses(corpus.projects, token=os.environ.get('GITHUB_TOKEN'))
     for result in results:
         marker = 'ok  ' if result.ok else 'FAIL'

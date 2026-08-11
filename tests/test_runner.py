@@ -13,7 +13,7 @@ from typing import cast
 
 import pytest
 
-from liveness_primer.config import CorpusProject
+from liveness_primer.config import CorpusProject, ToolSettings
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
 from liveness_primer.filesystem import atomic_write_text, read_small_text
@@ -759,3 +759,48 @@ def test_fake_skylos_danger_severity_change_end_to_end(tmp_path: Path, corpus_pr
     fresh = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.NEW)
     assert fresh.reference_occurrence.rule_id == 'SKY-D212'
     assert fresh.reference_occurrence.severity == 'CRITICAL'
+
+
+def test_fake_skylos_analyses_selection_reaches_argv_and_report(tmp_path: Path) -> None:
+    # Corpus-selected analyses resolve to the adapter's declared flags in
+    # the invocation and are recorded per project in the report (§5).
+    origin = create_fake_project(tmp_path / 'origin', init_git=True)
+    assert origin.head_sha is not None
+    project = CorpusProject(
+        name='fakeproj',
+        repo=origin.url,
+        pin=origin.head_sha,
+        tools={'skylos': ToolSettings(analyses=('danger', 'secrets'))},
+    )
+    base_cmd = write_fake_detector_script(tmp_path / 'base.json', [], output_format='skylos')
+    head_cmd = write_fake_detector_script(
+        tmp_path / 'head.json',
+        [FakeFinding(path='pkg/mod.py', line=4, symbol='API_KEY', bucket='secrets', rule_id='SKY-S101')],
+        output_format='skylos',
+    )
+    seen: list[tuple[str, ...]] = []
+
+    async def spying_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        seen.append(tuple(argv))
+        return await run_async(list(argv), cwd=cwd, env=env)
+
+    runner = PrimerRunner(
+        adapter=get_adapter('skylos'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+        async_launcher=spying_launcher,
+    )
+    report = runner.run_escape_hatch([project], base_cmd=base_cmd, head_cmd=head_cmd)
+    (project_report,) = report.projects
+    assert project_report.errors == ()
+    assert project_report.analyses == ('danger', 'secrets')
+    assert all(argv[-3:] == ('--danger', '--secrets', '.') for argv in seen)
+    fresh = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.NEW)
+    assert fresh.kind == 'secret'
+    assert fresh.symbol == 'API_KEY'

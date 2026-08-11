@@ -3,14 +3,15 @@
 Copyright (C) 2026 Matthew C. Digman
 
 Skylos emits a JSON document on stdout under ``--json``. The dead-code
-arrays are always ingested, and the ``danger`` security array is ingested
-when present (it only appears when a corpus config opts into ``--danger``);
-the secrets and quality categories live in separate top-level keys and are
-filtered at the adapter (contract §4).
+arrays are always ingested; the diagnostic arrays (``danger``, ``secrets``,
+``quality``, ``ai_defects``) are ingested when present — each appears only
+when a corpus config opts into the matching analysis (contract §4, §5).
 """
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -27,12 +28,12 @@ from liveness_primer.tools.base import (
 # categories (secrets, quality, ...) are deliberately not ingested.
 _DEAD_CODE_KEYS = ('unused_functions', 'unused_imports', 'unused_classes', 'unused_variables', 'unused_parameters')
 
-# Security-diagnostic array emitted only under ``--danger``; entries carry a
+# Diagnostic arrays, each emitted only under its opt-in analysis flag,
+# mapped to the normalized kind stamped onto its findings. Entries carry a
 # severity label and rule ID instead of a confidence value.
-_DANGER_KEY = 'danger'
-
-# Normalized kind stamped onto ingested security diagnostics.
-_DANGER_KIND = 'danger'
+DIAGNOSTIC_KINDS = MappingProxyType(
+    {'danger': 'danger', 'secrets': 'secret', 'quality': 'quality', 'ai_defects': 'ai_defect'}
+)
 
 # Documented, versioned mapping from each ingested skylos structured output
 # bucket to its canonical rule ID (reporting contract §3.1). A rule ID
@@ -64,7 +65,11 @@ class _SkylosEntry(BaseModel):
 
 
 class _SkylosDiagnosticEntry(BaseModel):
-    """One security diagnostic from the skylos ``danger`` array (untrusted input)."""
+    """One diagnostic from a skylos opt-in analysis array (untrusted input).
+
+    Undeclared entry fields (e.g. the secret ``preview``) stay out of the
+    model and therefore out of the report's raw excerpt.
+    """
 
     model_config = ConfigDict(frozen=True, extra='ignore')
 
@@ -74,6 +79,7 @@ class _SkylosDiagnosticEntry(BaseModel):
     file: str
     line: int
     symbol: str | None = None
+    name: str | None = None
 
 
 class SkylosAdapter:
@@ -89,6 +95,8 @@ class SkylosAdapter:
         Console script: ``skylos``.
     default_args : tuple[str, ...]
         ``--json`` for machine-readable output.
+    analyses : Mapping[str, tuple[str, ...]]
+        Opt-in analyses selectable in a corpus file, mapped to their flags.
     success_exit_codes : frozenset[int]
         0 only; skylos exits 2 when analysis errors occurred.
     capabilities : AdapterCapabilities
@@ -102,6 +110,14 @@ class SkylosAdapter:
     distribution: str = 'skylos'
     executable: str = 'skylos'
     default_args: tuple[str, ...] = ('--json',)
+    analyses: Mapping[str, tuple[str, ...]] = MappingProxyType(
+        {
+            'danger': ('--danger',),
+            'secrets': ('--secrets',),
+            'quality': ('--quality',),
+            'ai-defects': ('--ai-defects',),
+        }
+    )
     success_exit_codes: frozenset[int] = frozenset({0})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,
@@ -126,8 +142,8 @@ class SkylosAdapter:
         Returns
         -------
         list[Finding]
-            One finding per dead-code entry and, when the document carries
-            the ``danger`` array, per security diagnostic.
+            One finding per dead-code entry and per diagnostic in any
+            present opt-in analysis array.
 
         Raises
         ------
@@ -143,12 +159,12 @@ class SkylosAdapter:
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
         findings: list[Finding] = []
-        for key in (*_DEAD_CODE_KEYS, _DANGER_KEY):
+        for key in (*_DEAD_CODE_KEYS, *DIAGNOSTIC_KINDS):
             bucket = document.get(key, [])
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
                 raise AdapterError(msg)
-            parse_entry = _parse_diagnostic_entry if key == _DANGER_KEY else _parse_entry
+            parse_entry = _parse_diagnostic_entry if key in DIAGNOSTIC_KINDS else _parse_entry
             findings.extend(parse_entry(raw, key=key, project=project, root=root) for raw in bucket)
         return findings
 
@@ -201,11 +217,12 @@ def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
 
 
 def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
-    """Convert one skylos security diagnostic into a finding.
+    """Convert one skylos opt-in analysis diagnostic into a finding.
 
     Diagnostics carry a severity label and rule ID instead of a confidence
     value, and may omit the symbol; the line number is therefore an
-    inseparable part of the finding identity.
+    inseparable part of the finding identity. Quality diagnostics name
+    their subject in ``name`` rather than ``symbol``.
 
     Parameters
     ----------
@@ -238,8 +255,8 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) 
         tool=SkylosAdapter.name,
         project=project,
         path=normalize_finding_path(entry.file, root),
-        symbol=entry.symbol,
-        kind=_DANGER_KIND,
+        symbol=entry.symbol if entry.symbol is not None else entry.name,
+        kind=DIAGNOSTIC_KINDS[key],
         message=entry.message,
         start_line=line,
         end_line=line,

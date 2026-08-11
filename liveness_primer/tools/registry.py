@@ -21,6 +21,17 @@ def adapter_names() -> tuple[str, ...]:
     return tuple(_ADAPTERS)
 
 
+def adapter_analyses() -> dict[str, tuple[str, ...]]:
+    """Map each registered tool to its declared opt-in analysis names.
+
+    Returns
+    -------
+    dict[str, tuple[str, ...]]
+        Analysis names by tool, for corpus ``analyses`` validation.
+    """
+    return {name: tuple(adapter.analyses) for name, adapter in _ADAPTERS.items()}
+
+
 def get_adapter(name: str) -> DetectorAdapter:
     """Look up the adapter for a tool name.
 
