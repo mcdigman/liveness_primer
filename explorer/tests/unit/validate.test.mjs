@@ -41,6 +41,20 @@ test('the two document kinds are disjoint and each is held to its own schema', (
   assert.match(rejected.errors[1], /document_kind|additional properties/u);
 });
 
+test('an unexpected property is named, not just counted', () => {
+  // "must NOT have additional properties" alone cannot be acted on: the
+  // reader has to diff the file against the schema to find the key. This
+  // is the shape a report generated before a field rename presents.
+  const stale = goldenReport();
+  stale.projects[0].totals.changed_confidence = 1;
+  const result = checkReport(textOf(stale));
+  assert.equal(result.ok, false);
+  assert.ok(
+    result.errors.some((line) => line.includes('changed_confidence')),
+    JSON.stringify(result.errors),
+  );
+});
+
 test('export comments are validated by locator shape, not accepted blindly', () => {
   const withComments = goldenReport();
   withComments.document_kind = 'explorer-export';
