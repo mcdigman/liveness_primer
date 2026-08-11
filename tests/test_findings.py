@@ -235,6 +235,21 @@ def project_report(totals: DiffTotals, rollups: tuple[DiffRollup, ...]) -> Proje
     )
 
 
+def test_diff_totals_counts_are_non_negative_and_partition_the_changed_count() -> None:
+    # Renderers derive the multi-field breakout by subtracting the three
+    # exclusive ones from `changed`, so an untrusted payload that breaks the
+    # partition must not deserialize: it would render a negative count.
+    for field in ('new', 'dropped', 'changed', 'changed_confidence_only'):
+        with pytest.raises(ValidationError, match='greater than or equal to 0'):
+            DiffTotals(**{field: -1})
+    with pytest.raises(ValidationError, match='breakouts sum to 8, above the changed count 2'):
+        DiffTotals(changed=2, changed_confidence_only=3, changed_message_only=5)
+    # An exact partition and a partition with a remainder both stand.
+    exact = DiffTotals(changed=3, changed_confidence_only=1, changed_message_only=1, changed_severity_only=1)
+    assert exact.changed == 3
+    assert DiffTotals(changed=8, changed_confidence_only=1, changed_message_only=6).changed == 8
+
+
 def test_project_rollups_are_required_and_must_match_the_totals() -> None:
     # Reporting acceptance 25: stale aggregate data is an invalid report,
     # and validation is where a rewriting hook fails.

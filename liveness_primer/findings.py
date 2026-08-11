@@ -873,12 +873,36 @@ class DiffTotals(_FrozenModel):
         ``changed`` diffs whose only changed field is the severity.
     """
 
-    new: int = 0
-    dropped: int = 0
-    changed: int = 0
-    changed_confidence_only: int = 0
-    changed_message_only: int = 0
-    changed_severity_only: int = 0
+    new: int = Field(default=0, ge=0)
+    dropped: int = Field(default=0, ge=0)
+    changed: int = Field(default=0, ge=0)
+    changed_confidence_only: int = Field(default=0, ge=0)
+    changed_message_only: int = Field(default=0, ge=0)
+    changed_severity_only: int = Field(default=0, ge=0)
+
+    @model_validator(mode='after')
+    def _check_exclusive_breakouts(self) -> Self:
+        """Reject breakouts that cannot be a partition of ``changed``.
+
+        The three breakouts are mutually exclusive subsets of the
+        ``changed`` diffs, so the multi-field remainder renderers derive
+        from them is non-negative exactly when this holds (contract §8).
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If the exclusive breakouts exceed the ``changed`` count.
+        """
+        exclusive = self.changed_confidence_only + self.changed_message_only + self.changed_severity_only
+        if exclusive > self.changed:
+            msg = f'exclusive changed breakouts sum to {exclusive}, above the changed count {self.changed}'
+            raise ValueError(msg)
+        return self
 
 
 class DiffRollup(_FrozenModel):

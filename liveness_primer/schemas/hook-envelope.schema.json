@@ -174,31 +174,37 @@
       "properties": {
         "changed": {
           "default": 0,
+          "minimum": 0,
           "title": "Changed",
           "type": "integer"
         },
         "changed_confidence_only": {
           "default": 0,
+          "minimum": 0,
           "title": "Changed Confidence Only",
           "type": "integer"
         },
         "changed_message_only": {
           "default": 0,
+          "minimum": 0,
           "title": "Changed Message Only",
           "type": "integer"
         },
         "changed_severity_only": {
           "default": 0,
+          "minimum": 0,
           "title": "Changed Severity Only",
           "type": "integer"
         },
         "dropped": {
           "default": 0,
+          "minimum": 0,
           "title": "Dropped",
           "type": "integer"
         },
         "new": {
           "default": 0,
+          "minimum": 0,
           "title": "New",
           "type": "integer"
         }

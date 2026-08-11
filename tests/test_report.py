@@ -1091,7 +1091,10 @@ def test_github_overall_header_carries_cost_and_warning_summaries() -> None:
     assert '- **source warnings**: 1' in overall
     assert '- **rollup**: new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in overall
     assert '| new | dropped | changed | confidence-only | message-only | severity-only | multiple |' in overall
-    assert '| 4 | 4 | 8 | 1 | 6 | 0 |' in overall
+    # Anchored on the newline: the row without its multiple cell is a
+    # prefix of the row with one, so an unanchored match asserts nothing
+    # about the last column.
+    assert '\n| 4 | 4 | 8 | 1 | 6 | 0 | 1 |\n' in overall
 
 
 def test_github_rows_carry_only_the_first_retained_source_line() -> None:
