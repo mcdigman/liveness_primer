@@ -26,6 +26,7 @@ from liveness_primer.report.common import (
     CLASS_LEGEND,
     abbreviated_sha,
     cap_message_only,
+    changed_multiple,
     changed_value_details,
     confidence_text,
     displayed_text,
@@ -315,12 +316,12 @@ def render_github(report: Report) -> str:
             '',
             f'base findings {summary.base_findings}, head findings {summary.head_findings}',
             '',
-            '| new | dropped | changed | confidence-only | message-only | severity-only |',
-            '| --- | --- | --- | --- | --- | --- |',
+            '| new | dropped | changed | confidence-only | message-only | severity-only | multiple |',
+            '| --- | --- | --- | --- | --- | --- | --- |',
             (
                 f'| {report.totals.new} | {report.totals.dropped} | {report.totals.changed} '
-                f'| {report.totals.changed_confidence} | {report.totals.changed_message_only} '
-                f'| {report.totals.changed_severity_only} |'
+                f'| {report.totals.changed_confidence_only} | {report.totals.changed_message_only} '
+                f'| {report.totals.changed_severity_only} | {changed_multiple(report.totals)} |'
             ),
             '',
         ]

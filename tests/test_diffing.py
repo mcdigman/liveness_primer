@@ -112,7 +112,7 @@ def test_same_identity_confidence_change_when_capable() -> None:
     result = run_diff([mk(5, confidence=60)], [mk(5, confidence=90)], confidence_capable=True)
     (diff,) = result.diffs
     assert diff.changed_fields == (ChangedField.CONFIDENCE,)
-    assert result.totals == DiffTotals(changed=1, changed_confidence=1)
+    assert result.totals == DiffTotals(changed=1, changed_confidence_only=1)
 
 
 def test_multi_field_change_counts_in_no_exclusive_breakout() -> None:

@@ -930,7 +930,7 @@
         "source_warnings": [],
         "totals": {
           "changed": 7,
-          "changed_confidence": 1,
+          "changed_confidence_only": 1,
           "changed_message_only": 5,
           "changed_severity_only": 1,
           "dropped": 7,
@@ -987,7 +987,7 @@
         "source_warnings": [],
         "totals": {
           "changed": 0,
-          "changed_confidence": 0,
+          "changed_confidence_only": 0,
           "changed_message_only": 0,
           "changed_severity_only": 0,
           "dropped": 0,
@@ -1043,7 +1043,7 @@
     "schema_version": "2.0.0",
     "totals": {
       "changed": 7,
-      "changed_confidence": 1,
+      "changed_confidence_only": 1,
       "changed_message_only": 5,
       "changed_severity_only": 1,
       "dropped": 7,

@@ -460,6 +460,27 @@ def cap_message_only(diffs: Sequence[FindingDiff]) -> tuple[list[FindingDiff], i
     return shown, suppressed
 
 
+def changed_multiple(totals: DiffTotals) -> int:
+    """Count ``changed`` diffs that touched more than one field (contract §8).
+
+    Every ``changed`` diff has a non-empty ``changed_fields``, and the three
+    exclusive breakouts cover each single-field case, so the remainder is
+    exactly the multi-field diffs. Deriving it keeps the breakouts summing
+    to ``changed`` without a stored total that could go stale.
+
+    Parameters
+    ----------
+    totals : DiffTotals
+        The totals to inspect.
+
+    Returns
+    -------
+    int
+        Count of ``changed`` diffs with two or more changed fields.
+    """
+    return totals.changed - totals.changed_confidence_only - totals.changed_message_only - totals.changed_severity_only
+
+
 def totals_text(totals: DiffTotals) -> str:
     """Summarize diff totals on one line (contract §8).
 
@@ -471,13 +492,18 @@ def totals_text(totals: DiffTotals) -> str:
     Returns
     -------
     str
-        Counts per class with confidence-only, message-only, and
-        severity-only breakouts.
+        Counts per class with confidence-only, message-only, severity-only,
+        and — when any exist — multiple-field breakouts, which together sum
+        to the ``changed`` count. The multiple-field token is omitted at
+        zero for the reason §4.3 gives for the confidence column: a line
+        does not reserve room for a form no finding uses.
     """
+    multiple = changed_multiple(totals)
+    multiple_text = f', {multiple} multiple' if multiple else ''
     return (
         f'{totals.new} new, {totals.dropped} dropped, {totals.changed} changed '
-        f'({totals.changed_confidence} confidence-only, {totals.changed_message_only} message-only, '
-        f'{totals.changed_severity_only} severity-only)'
+        f'({totals.changed_confidence_only} confidence-only, {totals.changed_message_only} message-only, '
+        f'{totals.changed_severity_only} severity-only{multiple_text})'
     )
 
 

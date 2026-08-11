@@ -273,7 +273,7 @@ def build_report() -> Report:
     alpha = ProjectReport(
         project='alpha',
         diffs=alpha_diffs,
-        totals=DiffTotals(new=3, dropped=4, changed=7, changed_confidence=1, changed_message_only=5),
+        totals=DiffTotals(new=3, dropped=4, changed=7, changed_confidence_only=1, changed_message_only=5),
         rollups=(
             DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U001', kind=None, count=1),
             DiffRollup(diff_class=DiffClass.NEW, rule_id='SKY-U003', kind=None, count=1),
@@ -338,7 +338,7 @@ def build_report() -> Report:
         head_findings=0,
         measured_cost_seconds=None,
     )
-    overall = DiffTotals(new=4, dropped=4, changed=8, changed_confidence=1, changed_message_only=6)
+    overall = DiffTotals(new=4, dropped=4, changed=8, changed_confidence_only=1, changed_message_only=6)
     return Report(
         manifest=build_manifest(),
         projects=(alpha, beta, gamma),
@@ -731,7 +731,10 @@ def test_headers_carry_rollups_and_counts() -> None:
     text = render_text(build_report(), WIDE)
     overall = text[: text.index('project alpha')]
     assert 'base findings 13, head findings 15' in overall
-    assert 'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only)' in overall
+    assert (
+        'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only, 1 multiple)'
+        in overall
+    )
     assert 'new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in overall
     assert 'cost: 1.67s' in overall
     assert 'errors: 1' in overall
@@ -1031,7 +1034,9 @@ def test_text_report_ends_with_the_repeated_summary_and_impact_table() -> None:
     # Reporting acceptance 29.
     text = render_text(build_report(), WIDE)
     footer = text[text.rindex('\nsummary\n') :]
-    assert 'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only)' in footer
+    assert (
+        'totals: 4 new, 4 dropped, 8 changed (1 confidence-only, 6 message-only, 0 severity-only, 1 multiple)' in footer
+    )
     assert 'new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in footer
     assert 'cost: 1.67s' in footer
     assert 'errors: 1' in footer
@@ -1085,7 +1090,7 @@ def test_github_overall_header_carries_cost_and_warning_summaries() -> None:
     assert '- **corpus-integrity warnings**: 1' in overall
     assert '- **source warnings**: 1' in overall
     assert '- **rollup**: new 4: kind:function 2, SKY-U001 1, SKY-U003 1' in overall
-    assert '| new | dropped | changed | confidence-only | message-only | severity-only |' in overall
+    assert '| new | dropped | changed | confidence-only | message-only | severity-only | multiple |' in overall
     assert '| 4 | 4 | 8 | 1 | 6 | 0 |' in overall
 
 

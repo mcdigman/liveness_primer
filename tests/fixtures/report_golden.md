@@ -20,9 +20,9 @@ Non-detector dependencies differ between the sides:
 
 base findings 13, head findings 15
 
-| new | dropped | changed | confidence-only | message-only | severity-only |
-| --- | --- | --- | --- | --- | --- |
-| 4 | 4 | 8 | 1 | 6 | 0 |
+| new | dropped | changed | confidence-only | message-only | severity-only | multiple |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4 | 4 | 8 | 1 | 6 | 0 | 1 |
 
 - **rollup**: new 4: kind:function 2, SKY-U001 1, SKY-U003 1
 - **rollup**: dropped 4: kind:function 3, SKY-U001 1
@@ -38,7 +38,7 @@ legend: + new; - dropped; ~ changed
 
 ## `alpha`
 
-base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confidence-only, 5 message-only, 0 severity-only); cost 1.25s
+base 12 findings, head 13; 3 new, 4 dropped, 7 changed (1 confidence-only, 5 message-only, 0 severity-only, 1 multiple); cost 1.25s
 - **corpus**: [https://github.com/example/alpha @ 333333333333](https://github.com/example/alpha/tree/3333333333333333333333333333333333333333)
 - **rollup**: new 3: SKY-U001 1, SKY-U003 1, kind:function 1
 - **rollup**: dropped 4: kind:function 3, SKY-U001 1

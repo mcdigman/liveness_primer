@@ -57,7 +57,7 @@
  * @property {number} new
  * @property {number} dropped
  * @property {number} changed
- * @property {number} changed_confidence
+ * @property {number} changed_confidence_only
  * @property {number} changed_message_only
  * @property {number} changed_severity_only
  */

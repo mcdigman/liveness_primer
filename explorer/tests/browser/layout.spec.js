@@ -99,6 +99,21 @@ test.describe('intermediate width', () => {
     await page.getByRole('button', { name: /Export \(/ }).click();
     await expect(page.locator('.export-panel')).toBeVisible();
   });
+
+  // The context overlay is the one a reviewer opens most, and it is reached
+  // without ever touching the export control.
+  test('Escape closes the finding context overlay', async ({ page }) => {
+    await page.goto('./');
+    await openReportAndWait(page, goldenReport());
+    const opener = page
+      .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+      .first();
+    await opener.click();
+    await expect(page.locator('.context-panel')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.context-panel')).toBeHidden();
+    await expect(opener).toBeFocused();
+  });
 });
 
 test.describe('narrow width', () => {
@@ -184,6 +199,24 @@ test.describe('dismissing the export summary at desktop width', () => {
     await expect(page.locator('.context-panel')).toBeVisible();
     await page.getByRole('button', { name: /Export \(/ }).click();
     await expect(page.locator('.context-panel')).toBeHidden();
+    await expect(page.locator('.export-panel')).toBeVisible();
+  });
+
+  test('Escape closes the finding that owns the region, not the export summary', async ({ page }) => {
+    await page.goto('./');
+    await openReportAndWait(page, goldenReport());
+    await page.getByRole('button', { name: /Export \(/ }).click();
+    await expect(page.locator('.export-panel')).toBeVisible();
+    const opener = page
+      .locator('.tabulator-row:not(.tabulator-group) button[aria-label^="Open finding context"]')
+      .first();
+    await opener.click();
+    await expect(page.locator('.context-panel')).toBeVisible();
+    await page.keyboard.press('Escape');
+    // The context closes and focus returns to its opener; the export
+    // summary is not silently dismissed behind it.
+    await expect(page.locator('.context-panel')).toBeHidden();
+    await expect(opener).toBeFocused();
     await expect(page.locator('.export-panel')).toBeVisible();
   });
 });

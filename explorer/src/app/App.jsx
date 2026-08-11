@@ -191,6 +191,15 @@ export function App() {
     }
   }, [state.openKey]);
 
+  // Opening a finding gives the right region to the context panel, so the
+  // export panel is no longer up: leaving narrowPanel at 'export' would
+  // keep state that no longer describes what is rendered, and the summary
+  // would reappear unprompted when the context closed.
+  const openContext = useCallback((/** @type {string} */ key) => {
+    setNarrowPanel('none');
+    dispatch({ type: 'context-opened', key });
+  }, []);
+
   const closeFilters = useCallback(() => {
     setNarrowPanel('none');
     restoreFocus('.filters-toggle');
@@ -202,24 +211,29 @@ export function App() {
     restoreFocus('.export-toggle');
   }, []);
 
-  // Both narrow-width panels are overlays: Escape closes whichever is up,
-  // through the same path as its ✕ so focus lands on the invoking control.
+  // Escape closes whatever overlay is up, through the same path as that
+  // overlay's own control so focus lands on its invoker. The right region
+  // is owned by a finding context whenever one is open, which is why the
+  // openRow branch mirrors the JSX below rather than reading narrowPanel.
   useEffect(() => {
-    if (narrowPanel === 'none') {
+    if (narrowPanel === 'none' && openRow === null) {
       return undefined;
     }
     const onKeyDown = (/** @type {KeyboardEvent} */ event) => {
-      if (event.key === 'Escape') {
-        if (narrowPanel === 'filters') {
-          closeFilters();
-        } else {
-          closeExport();
-        }
+      if (event.key !== 'Escape') {
+        return;
+      }
+      if (narrowPanel === 'filters') {
+        closeFilters();
+      } else if (openRow !== null) {
+        closeContext();
+      } else {
+        closeExport();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [narrowPanel, closeFilters, closeExport]);
+  }, [narrowPanel, openRow, closeContext, closeFilters, closeExport]);
 
   const exportMarkdown = useCallback(() => {
     if (projection === null || digest === null || state.filename === null) {
@@ -375,7 +389,7 @@ export function App() {
               onToggleAllVisible={(enable, keys) =>
                 dispatch({ type: 'set-flag-all', flag: 'selected', keys, enable })
               }
-              onOpenContext={(key) => dispatch({ type: 'context-opened', key })}
+              onOpenContext={openContext}
             />
           </section>
           <aside

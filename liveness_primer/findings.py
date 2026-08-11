@@ -865,7 +865,7 @@ class DiffTotals(_FrozenModel):
         Count of ``dropped`` diffs.
     changed : int
         Count of ``changed`` diffs.
-    changed_confidence : int
+    changed_confidence_only : int
         ``changed`` diffs whose only changed field is the confidence.
     changed_message_only : int
         ``changed`` diffs whose only changed field is the message.
@@ -876,7 +876,7 @@ class DiffTotals(_FrozenModel):
     new: int = 0
     dropped: int = 0
     changed: int = 0
-    changed_confidence: int = 0
+    changed_confidence_only: int = 0
     changed_message_only: int = 0
     changed_severity_only: int = 0
 
@@ -1057,7 +1057,7 @@ class Report(_FrozenModel):
             new=sum(project.totals.new for project in self.projects),
             dropped=sum(project.totals.dropped for project in self.projects),
             changed=sum(project.totals.changed for project in self.projects),
-            changed_confidence=sum(project.totals.changed_confidence for project in self.projects),
+            changed_confidence_only=sum(project.totals.changed_confidence_only for project in self.projects),
             changed_message_only=sum(project.totals.changed_message_only for project in self.projects),
             changed_severity_only=sum(project.totals.changed_severity_only for project in self.projects),
         )

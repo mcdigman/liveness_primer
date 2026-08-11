@@ -181,7 +181,7 @@ def build_locator_report() -> Report:
         new=sum(entry.totals.new for entry in projects),
         dropped=sum(entry.totals.dropped for entry in projects),
         changed=sum(entry.totals.changed for entry in projects),
-        changed_confidence=sum(entry.totals.changed_confidence for entry in projects),
+        changed_confidence_only=sum(entry.totals.changed_confidence_only for entry in projects),
         changed_message_only=sum(entry.totals.changed_message_only for entry in projects),
         changed_severity_only=sum(entry.totals.changed_severity_only for entry in projects),
     )

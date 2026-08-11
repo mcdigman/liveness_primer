@@ -164,7 +164,7 @@ test('span and totals fragments', () => {
       new: 168,
       dropped: 0,
       changed: 3,
-      changed_confidence: 1,
+      changed_confidence_only: 1,
       changed_message_only: 1,
       changed_severity_only: 0,
     }),

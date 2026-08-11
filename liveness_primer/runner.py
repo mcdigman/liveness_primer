@@ -207,7 +207,7 @@ def _assemble_report(manifest: RunManifest, project_reports: Sequence[ProjectRep
         new=sum(entry.totals.new for entry in project_reports),
         dropped=sum(entry.totals.dropped for entry in project_reports),
         changed=sum(entry.totals.changed for entry in project_reports),
-        changed_confidence=sum(entry.totals.changed_confidence for entry in project_reports),
+        changed_confidence_only=sum(entry.totals.changed_confidence_only for entry in project_reports),
         changed_message_only=sum(entry.totals.changed_message_only for entry in project_reports),
         changed_severity_only=sum(entry.totals.changed_severity_only for entry in project_reports),
     )

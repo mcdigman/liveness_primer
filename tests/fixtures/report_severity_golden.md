@@ -12,9 +12,9 @@
 
 base findings 2, head findings 3
 
-| new | dropped | changed | confidence-only | message-only | severity-only |
-| --- | --- | --- | --- | --- | --- |
-| 2 | 1 | 1 | 0 | 0 | 1 |
+| new | dropped | changed | confidence-only | message-only | severity-only | multiple |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2 | 1 | 1 | 0 | 0 | 1 | 0 |
 
 - **rollup**: new 2: SKY-D205 1, SKY-U001 1
 - **rollup**: dropped 1: SKY-D401 1
