@@ -318,11 +318,14 @@ def test_skylos_danger_name_is_a_rule_marker_not_a_symbol() -> None:
 
 def test_adapters_declare_invocation_environments() -> None:
     env = dict(SkylosAdapter.invocation_env)
-    assert set(env) == {'SKYLOS_CONFIG_FILE'}
+    assert set(env) == {'SKYLOS_CONFIG_FILE', 'SKYLOS_GREP_BUDGET'}
     neutral_config = Path(env['SKYLOS_CONFIG_FILE'])
     assert neutral_config.is_absolute()
     assert neutral_config.is_file()
     assert '[skylos]' in neutral_config.read_text(encoding='utf-8')
+    # Skylos parses the budget as a float of seconds; it has to stay under
+    # the default per-(project, tool) timeout to leave room for the run.
+    assert 0 < float(env['SKYLOS_GREP_BUDGET']) < 300
     assert dict(VultureAdapter.invocation_env) == {}
 
 

@@ -9,6 +9,10 @@ dist/
 tach.toml
 .claude/
 
+.profiles/
+design/
+report_layout_prototypes/
+
 # Explorer build output and dev toolchain (explorer contract §5, §8).
 explorer/dist/
 explorer/node_modules/

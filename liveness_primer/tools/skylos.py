@@ -52,6 +52,14 @@ _NAME_SUBJECT_BUCKETS = frozenset({'quality'})
 # ignore the variable, where the parse-side gate still protects the report.
 _NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
 
+# Wall-clock budget, in seconds, for skylos's grep-verify post-pass. The
+# pass truncates when the budget runs out, so pinning one value keeps both
+# sides working from the same allowance rather than the ambient default;
+# it does not make a loaded machine's truncation point identical across
+# sides. Chosen well under the 300s default per-(project, tool) timeout so
+# the pass cannot on its own starve the rest of the run.
+_GREP_BUDGET_SECONDS = '150'
+
 # Documented, versioned mapping from each ingested skylos structured output
 # bucket to its canonical rule ID (reporting contract §3.1). A rule ID
 # explicitly present on the detector finding takes precedence; a rule ID is
@@ -116,7 +124,9 @@ class SkylosAdapter:
         Opt-in analyses selectable in a corpus file, mapped to their flags.
     invocation_env : Mapping[str, str]
         ``SKYLOS_CONFIG_FILE`` pinned to the packaged neutral config, so
-        the analyzed repository's own skylos policy never alters the run.
+        the analyzed repository's own skylos policy never alters the run,
+        and ``SKYLOS_GREP_BUDGET`` pinned so both sides run the
+        grep-verify post-pass under the same wall-clock allowance.
     success_exit_codes : frozenset[int]
         0 only; skylos exits 2 when analysis errors occurred.
     capabilities : AdapterCapabilities
@@ -138,7 +148,9 @@ class SkylosAdapter:
             'ai-defects': ('--ai-defects',),
         }
     )
-    invocation_env: Mapping[str, str] = MappingProxyType({'SKYLOS_CONFIG_FILE': str(_NEUTRAL_CONFIG)})
+    invocation_env: Mapping[str, str] = MappingProxyType(
+        {'SKYLOS_CONFIG_FILE': str(_NEUTRAL_CONFIG), 'SKYLOS_GREP_BUDGET': _GREP_BUDGET_SECONDS}
+    )
     success_exit_codes: frozenset[int] = frozenset({0})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,

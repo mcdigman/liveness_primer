@@ -985,7 +985,9 @@ class DetectorEnvironments:
         """Prefetch the union of every ref's requirements before any build (§3).
 
         Both sides build against identical resolution inputs, keeping delta
-        attribution temporal, never textual.
+        attribution temporal, never textual. The union covers declared
+        dependencies and build requirements; extras are excluded because
+        the build installs no extras.
 
         Parameters
         ----------
@@ -1004,7 +1006,11 @@ class DetectorEnvironments:
             checkout = self._store.materialize(repo, sha)
             metadata = parse_static_metadata(checkout)
             requirements.extend(metadata.dependencies)
-            requirements.extend(metadata.optional_dependencies)
+            # Extras are deliberately left out: the offline install targets
+            # the checkout without any extras selected, so an extra's wheels
+            # are never installed, and prefetching them only spends fetch
+            # time and fails the run when an extra is unresolvable. Their
+            # requirement strings are still parsed and validated.
             requirements.extend(metadata.build_requires)
         return self._prefetch(requirements)
 

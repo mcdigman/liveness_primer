@@ -35,7 +35,10 @@ point*: pre-triage, triage, or post-triage (§10).
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
   statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and
   `[build-system].requires` — no build backend is invoked, so no code from the detector
-  refs executes; every fetch is recorded in the run manifest — URLs,
+  refs executes. The build installs the checkout with no extras selected, so v1 prefetches
+  only `[project.dependencies]` and `[build-system].requires`;
+  `[project.optional-dependencies]` is still parsed and validated (§4) but not fetched.
+  Every fetch is recorded in the run manifest — URLs,
   resolved SHAs, installed versions), then a **build** step (networking disabled per §11;
   the detector installs from the local cache, e.g. `--no-index --find-links`, so
   build-backend hooks run sandboxed; Rust detectors prefetch crates during fetch and build
@@ -87,7 +90,9 @@ point*: pre-triage, triage, or post-triage (§10).
   `analyses`, validated against the adapter's declared analysis set (§5). Adapters may
   declare a static, side-identical invocation environment; the skylos adapter pins config
   discovery to a packaged neutral file via `SKYLOS_CONFIG_FILE`, so an analyzed
-  repository's `[tool.skylos]` policy cannot alter which analyses execute. Skylos still
+  repository's `[tool.skylos]` policy cannot alter which analyses execute, and pins
+  `SKYLOS_GREP_BUDGET` so both sides run the grep-verify post-pass under the same
+  wall-clock allowance rather than the ambient default. Skylos still
   merges a target `.skylos/config.yaml`, which can enable unselected analyses and affect
   execution cost, exit status, timeouts, and run completeness; revisions predating the
   variable can likewise discover target configuration. Parse-side gating protects report

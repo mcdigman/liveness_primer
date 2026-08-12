@@ -482,15 +482,16 @@ def test_cold_cache_builds_both_and_records_fetches(tmp_path: Path, detector_rep
 
 
 def test_pair_prefetch_is_a_single_union_before_any_build(tmp_path: Path, detector_repo: DetectorRepo) -> None:
-    # Both refs' dependencies, optional dependencies, and build requirements
-    # are prefetched together before either side builds, so paired
-    # resolution sees identical inputs (contract §3).
+    # Both refs' dependencies and build requirements are prefetched together
+    # before either side builds, so paired resolution sees identical inputs
+    # (contract §3). The fixture's ``extra`` requirement stays out of the
+    # union: the build installs no extras, so their wheels are never needed.
     installer = FakeInstaller(freezes=deque([FREEZE_A, FREEZE_B]))
     with environments(tmp_path, installer).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
     ):
         pass
-    assert installer.prefetches == [('tomli>=2', 'rich>=13', 'setuptools>=61', 'tomli>=2.1')]
+    assert installer.prefetches == [('tomli>=2', 'setuptools>=61', 'tomli>=2.1')]
     assert installer.events[0] == 'prefetch'
     assert installer.events.count('prefetch') == 1
     assert installer.events.count('create') == 2
