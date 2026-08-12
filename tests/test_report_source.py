@@ -128,6 +128,18 @@ def test_collect_missing_file_warns_once_per_file(tmp_path: Path) -> None:
     assert warning.startswith('pkg/gone.py: not a regular non-symlink file')
 
 
+def test_collect_skips_repository_level_findings_without_warning(tmp_path: Path) -> None:
+    # Repository-level diagnostics (e.g. skylos SKY-R104) carry the '.'
+    # path: they name no file, so no evidence is collected and no warning
+    # is emitted.
+    checkout = write_checkout(tmp_path)
+    repo_level = diff(DiffClass.NEW, 'pre-commit-policy', path='.', kind='quality', head=occurrence(1, 'm'))
+    (enriched,), warnings = collect_source_evidence((repo_level,), checkout=checkout, excerpt_lines=2)
+    assert warnings == ()
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt is None
+
+
 def test_collect_out_of_range_line_warns_per_location(tmp_path: Path) -> None:
     checkout = write_checkout(tmp_path)
     entry = diff(DiffClass.NEW, 'a', head=occurrence(99, 'm'))

@@ -26,7 +26,9 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 # `line-span` and `rule` changed-field values, and adds the normalized
 # severity occurrence field with its changed-field value and severity-only
 # total (reporting contract §3.1, §3.6).
-SCHEMA_VERSION = '2.0.0'
+# 2.1.0 adds the additive per-project record of the corpus-selected opt-in
+# analyses (contract §5).
+SCHEMA_VERSION = '2.1.0'
 
 
 def _validated_schema_version(value: str) -> str:
@@ -1009,6 +1011,8 @@ class ProjectReport(_FrozenModel):
         Expected-clean violations observed on the base side.
     source_warnings : tuple[str, ...]
         Bounded warnings from pinned-source evidence collection.
+    analyses : tuple[str, ...]
+        Corpus-selected opt-in analyses for this (project, tool) pair.
     """
 
     project: str
@@ -1022,6 +1026,7 @@ class ProjectReport(_FrozenModel):
     errors: tuple[ToolError, ...] = ()
     integrity_warnings: tuple[CorpusIntegrityWarning, ...] = ()
     source_warnings: tuple[str, ...] = ()
+    analyses: tuple[str, ...] = ()
 
     @model_validator(mode='after')
     def _check_rollups(self) -> Self:

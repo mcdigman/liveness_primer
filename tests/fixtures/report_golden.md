@@ -1,6 +1,6 @@
 # liveness primer report - `vulture`
 
-- **schema**: 2.0.0; **created**: 2026-07-28T12:00:00+00:00
+- **schema**: 2.1.0; **created**: 2026-07-28T12:00:00+00:00
 - **detector**: https://github.com/jendrikseipp/vulture
 - **base**: `main` @ `111111111111` (cached)
 - **head**: `pr-branch` @ `222222222222` (rebuilt)

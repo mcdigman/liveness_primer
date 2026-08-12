@@ -7,7 +7,7 @@ into the pydantic models here, which are the source of truth.
 """
 
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Self
@@ -115,6 +115,8 @@ class ToolSettings(_ConfigModel):
     command : tuple[str, ...] | None
         Full argv override; the element ``{exe}`` is replaced by the managed
         detector executable. Always an argv list, never a shell string.
+    analyses : tuple[str, ...]
+        Opt-in analyses to enable, drawn from the adapter's declared set.
     args : tuple[str, ...]
         Extra arguments appended to the invocation.
     targets : tuple[str, ...]
@@ -128,11 +130,32 @@ class ToolSettings(_ConfigModel):
     """
 
     command: tuple[str, ...] | None = None
+    analyses: tuple[str, ...] = ()
     args: tuple[str, ...] = ()
     targets: tuple[str, ...] = ()
     expected_clean: bool = False
     timeout: float | None = Field(default=None, gt=0)
     cost: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode='after')
+    def _check_unique_analyses(self) -> Self:
+        """Reject duplicate analysis selections.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If ``analyses`` selects the same analysis more than once.
+        """
+        duplicates = {name for name in self.analyses if self.analyses.count(name) > 1}
+        if duplicates:
+            msg = f'analyses selects {min(duplicates)!r} more than once'
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode='after')
     def _check_command_placeholder(self) -> Self:
@@ -294,8 +317,12 @@ class Corpus(_ConfigModel):
         return self
 
 
-def _check_tool_names(corpus: Corpus, known_tools: Collection[str]) -> None:
-    """Reject tool names that no adapter provides.
+def _check_tool_names(
+    corpus: Corpus,
+    known_tools: Collection[str],
+    known_analyses: Mapping[str, Collection[str]] | None,
+) -> None:
+    """Reject tool names no adapter provides and undeclared analyses.
 
     Parameters
     ----------
@@ -303,11 +330,15 @@ def _check_tool_names(corpus: Corpus, known_tools: Collection[str]) -> None:
         The validated corpus.
     known_tools : Collection[str]
         Adapter names available in this build.
+    known_analyses : Mapping[str, Collection[str]] | None
+        When given, per-tool ``analyses`` selections must be drawn from the
+        named adapter's declared set.
 
     Raises
     ------
     CorpusConfigError
-        If a per-tool table or include/exclude list names an unknown tool.
+        If a per-tool table or include/exclude list names an unknown tool,
+        or a per-tool table selects an undeclared analysis.
     """
     problems: list[str] = []
     for project in corpus.projects:
@@ -318,6 +349,13 @@ def _check_tool_names(corpus: Corpus, known_tools: Collection[str]) -> None:
             for tool in dict.fromkeys(referenced)
             if tool not in known_tools
         )
+        if known_analyses is not None:
+            problems.extend(
+                f'project {project.name!r} tool {tool!r} selects undeclared analysis {analysis!r}'
+                for tool, settings in project.tools.items()
+                for analysis in settings.analyses
+                if analysis not in known_analyses.get(tool, ())
+            )
     if problems:
         raise CorpusConfigError('; '.join(problems))
 
@@ -361,7 +399,12 @@ def _read_corpus_text(path: Path) -> str:
         raise CorpusConfigError(msg) from exc
 
 
-def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Corpus:
+def load_corpus(
+    path: Path,
+    *,
+    known_tools: Collection[str] | None = None,
+    known_analyses: Mapping[str, Collection[str]] | None = None,
+) -> Corpus:
     """Load and validate a corpus YAML file (contract §5).
 
     Parameters
@@ -371,6 +414,9 @@ def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Co
     known_tools : Collection[str] | None
         When given, per-tool table keys and include/exclude entries must be
         drawn from it.
+    known_analyses : Mapping[str, Collection[str]] | None
+        When given, per-tool ``analyses`` selections must be drawn from the
+        named adapter's declared set.
 
     Returns
     -------
@@ -395,20 +441,25 @@ def load_corpus(path: Path, *, known_tools: Collection[str] | None = None) -> Co
         msg = f'corpus file {path} is invalid: {exc}'
         raise CorpusConfigError(msg) from exc
     if known_tools is not None:
-        _check_tool_names(corpus, known_tools)
+        _check_tool_names(corpus, known_tools, known_analyses)
     return corpus
 
 
-def ad_hoc_project(repo: str) -> CorpusProject:
+def ad_hoc_project(repo: str, *, tool: str | None = None, analyses: Sequence[str] = ()) -> CorpusProject:
     """Build the single-project corpus entry for ad-hoc mode (contract §5).
 
     The project uses default settings and latest-on-default-branch pinning,
-    represented as neither ``pin`` nor ``branch``.
+    represented as neither ``pin`` nor ``branch``; ``--analyses`` selections
+    become the tool's per-project table.
 
     Parameters
     ----------
     repo : str
         Target repository URL from the CLI.
+    tool : str | None
+        Adapter name the run targets; required when ``analyses`` is given.
+    analyses : Sequence[str]
+        Opt-in analyses selected on the CLI.
 
     Returns
     -------
@@ -418,13 +469,24 @@ def ad_hoc_project(repo: str) -> CorpusProject:
     Raises
     ------
     CorpusConfigError
-        If a project name cannot be derived from the URL.
+        If a project name cannot be derived from the URL, analyses are
+        given without a tool, or the selection is invalid.
     """
     tail = repo.rstrip('/').rsplit('/', maxsplit=1)[-1].removesuffix('.git')
     if not _NAME_PATTERN.match(tail):
         msg = f'cannot derive a project name from repository URL {repo!r}'
         raise CorpusConfigError(msg)
-    return CorpusProject(name=tail, repo=repo)
+    tools: dict[str, ToolSettings] = {}
+    if analyses:
+        if tool is None:
+            msg = 'ad-hoc analyses require a tool name'
+            raise CorpusConfigError(msg)
+        try:
+            tools[tool] = ToolSettings(analyses=tuple(analyses))
+        except ValidationError as exc:
+            msg = f'invalid ad-hoc analyses: {exc}'
+            raise CorpusConfigError(msg) from exc
+    return CorpusProject(name=tail, repo=repo, tools=tools)
 
 
 def _select_by_cost(

@@ -8,7 +8,9 @@ findings exist, 1 on invalid input, and 2 on invalid arguments.
 """
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 from liveness_primer.findings import Finding
 from liveness_primer.tools.base import (
@@ -38,6 +40,10 @@ class VultureAdapter:
         Console script: ``vulture``.
     default_args : tuple[str, ...]
         No extra arguments; targets are positional.
+    analyses : Mapping[str, tuple[str, ...]]
+        Empty: vulture offers no opt-in analyses.
+    invocation_env : Mapping[str, str]
+        Empty: vulture needs no invocation environment.
     success_exit_codes : frozenset[int]
         0 (clean) and 3 (findings).
     capabilities : AdapterCapabilities
@@ -50,6 +56,8 @@ class VultureAdapter:
     distribution: str = 'vulture'
     executable: str = 'vulture'
     default_args: tuple[str, ...] = ()
+    analyses: Mapping[str, tuple[str, ...]] = MappingProxyType({})
+    invocation_env: Mapping[str, str] = MappingProxyType({})
     success_exit_codes: frozenset[int] = frozenset({0, 3})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,
@@ -59,7 +67,7 @@ class VultureAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
-    def parse(output: RawToolOutput, *, project: str, root: Path) -> list[Finding]:
+    def parse(output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()) -> list[Finding]:
         """Parse vulture stdout lines into findings.
 
         Reachability messages (``unreachable code after 'return'``,
@@ -74,6 +82,8 @@ class VultureAdapter:
             Corpus project name to stamp onto findings.
         root : Path
             Checkout directory vulture analyzed.
+        analyses : tuple[str, ...]
+            Must be empty: vulture declares no opt-in analyses.
 
         Returns
         -------
@@ -83,8 +93,12 @@ class VultureAdapter:
         Raises
         ------
         AdapterError
-            If a non-empty stdout line does not match the report format.
+            If an analysis is selected, or a non-empty stdout line does
+            not match the report format.
         """
+        if analyses:
+            msg = f'vulture does not provide analysis {analyses[0]!r}'
+            raise AdapterError(msg)
         findings: list[Finding] = []
         unparsed: list[str] = []
         for line in output.stdout.splitlines():

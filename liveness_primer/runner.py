@@ -386,7 +386,7 @@ class PrimerRunner:
             stderr=result.stderr,
         )
         try:
-            findings = self._adapter.parse(raw, project=item.project.name, root=root)
+            findings = self._adapter.parse(raw, project=item.project.name, root=root, analyses=item.settings.analyses)
         except AdapterError as exc:
             error = ToolError(side=side, exit_code=result.returncode, detail=str(exc))
             return _SideOutcome(
@@ -439,6 +439,7 @@ class PrimerRunner:
             workspace = await asyncio.to_thread(self._materialize_side, item.checkout)
             try:
                 environment = scrubbed_environment(home=workspace.home)
+                environment.update(self._adapter.invocation_env)
                 try:
                     async with asyncio.timeout(timeout):
                         result = await self._async_launcher(
@@ -519,6 +520,7 @@ class PrimerRunner:
             errors=errors,
             integrity_warnings=integrity,
             source_warnings=source_warnings,
+            analyses=item.settings.analyses,
         )
 
     async def _analyze_project(

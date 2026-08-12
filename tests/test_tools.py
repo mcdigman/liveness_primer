@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from liveness_primer.config import ToolSettings
+from liveness_primer.config import CorpusConfigError, ToolSettings
 from liveness_primer.tools import adapter_names, get_adapter
 from liveness_primer.tools.base import (
     AdapterError,
@@ -69,6 +69,27 @@ def test_build_invocation_command_override_substitutes_exe() -> None:
     settings = ToolSettings(command=('{exe}', '--json'), targets=('pkg',))
     argv = build_invocation(SkylosAdapter(), ['python', '-m', 'skylos'], settings)
     assert argv == ['python', '-m', 'skylos', '--json', 'pkg']
+
+
+def test_build_invocation_appends_declared_analysis_flags() -> None:
+    settings = ToolSettings(analyses=('danger', 'secrets'), args=('--confidence', '80'), targets=('src',))
+    argv = build_invocation(SkylosAdapter(), ['/envs/base/bin/skylos'], settings)
+    assert argv == ['/envs/base/bin/skylos', '--json', '--danger', '--secrets', '--confidence', '80', 'src']
+
+
+def test_build_invocation_rejects_undeclared_analyses() -> None:
+    with pytest.raises(CorpusConfigError, match="tool 'vulture' does not provide analysis 'danger'"):
+        build_invocation(VultureAdapter(), ['/envs/base/bin/vulture'], ToolSettings(analyses=('danger',)))
+
+
+def test_skylos_declares_the_documented_analyses() -> None:
+    assert dict(SkylosAdapter.analyses) == {
+        'danger': ('--danger',),
+        'secrets': ('--secrets',),
+        'quality': ('--quality',),
+        'ai-defects': ('--ai-defects',),
+    }
+    assert dict(VultureAdapter.analyses) == {}
 
 
 def test_normalize_finding_path_relative_and_absolute() -> None:
@@ -209,26 +230,157 @@ def test_vulture_findings_carry_no_invented_rule_id() -> None:
     assert finding.rule_id is None
 
 
-def test_skylos_ingests_danger_but_ignores_other_categories() -> None:
-    # The danger security array is ingested when present; the secrets and
-    # quality categories stay filtered at the adapter (contract §4).
+def test_skylos_ingests_diagnostic_buckets_with_per_bucket_kinds() -> None:
+    # Every opt-in analysis array is ingested when present; arrays outside
+    # the documented set stay filtered at the adapter (contract §4).
     document: dict[str, list[dict[str, object]]] = {
-        'unused_functions': [],
-        'unused_imports': [],
-        'unused_classes': [],
-        'unused_variables': [],
-        'unused_parameters': [],
         'danger': [{'rule_id': 'SKY-D001', 'message': 'eval', 'file': 'a.py', 'line': 1}],
-        'secrets': [{'rule_id': 'SKY-S001'}],
-        'quality': [{'rule_id': 'SKY-L001'}],
+        'secrets': [{'rule_id': 'SKY-S101', 'severity': 'CRITICAL', 'message': 'AWS key', 'file': 'a.py', 'line': 2}],
+        'quality': [{'rule_id': 'SKY-L014', 'severity': 'HIGH', 'message': 'bare except', 'file': 'a.py', 'line': 3}],
+        'ai_defects': [{'rule_id': 'SKY-AI001', 'message': 'hallucinated API', 'file': 'a.py', 'line': 4}],
+        'circular_dependencies': [{'rule_id': 'SKY-CIRC'}],
+    }
+    findings = SkylosAdapter.parse(
+        raw(json.dumps(document)),
+        project='demo',
+        root=ROOT,
+        analyses=('danger', 'secrets', 'quality', 'ai-defects'),
+    )
+    by_rule = {finding.rule_id: finding for finding in findings}
+    assert set(by_rule) == {'SKY-D001', 'SKY-S101', 'SKY-L014', 'SKY-AI001'}
+    assert by_rule['SKY-D001'].kind == 'danger'
+    assert by_rule['SKY-S101'].kind == 'secret'
+    assert by_rule['SKY-L014'].kind == 'quality'
+    assert by_rule['SKY-AI001'].kind == 'ai_defect'
+    assert by_rule['SKY-D001'].symbol is None
+    assert by_rule['SKY-D001'].severity is None
+    assert by_rule['SKY-S101'].severity == 'CRITICAL'
+    assert all(finding.confidence is None for finding in findings)
+
+
+def test_skylos_secret_entries_keep_undeclared_fields_out_of_the_excerpt() -> None:
+    document = {
+        'secrets': [
+            {
+                'rule_id': 'SKY-S101',
+                'severity': 'CRITICAL',
+                'message': 'Potential AWS secret access key detected',
+                'file': 'a.py',
+                'line': 4,
+                'preview': 'wJal****EKEY',
+                'entropy': 4.66,
+                'provider': 'aws_secret_access_key',
+            }
+        ]
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('secrets',))
+    assert finding.raw_excerpt is not None
+    excerpt = json.loads(finding.raw_excerpt)
+    assert 'preview' not in excerpt
+    assert 'entropy' not in excerpt
+    assert 'provider' not in excerpt
+
+
+def test_skylos_unselected_diagnostic_buckets_are_filtered() -> None:
+    # Provenance guard: a target repository's own skylos configuration may
+    # emit diagnostic arrays the run never selected; parse ingests only
+    # the selected analyses (contract §4, §5).
+    document = {
+        'unused_functions': [{'name': 'a', 'type': 'function', 'file': 'a.py', 'line': 1}],
+        'danger': [{'rule_id': 'SKY-D001', 'message': 'eval', 'file': 'a.py', 'line': 1}],
+        'secrets': [{'rule_id': 'SKY-S101', 'message': 'key', 'file': 'a.py', 'line': 2}],
     }
     (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
-    assert finding.kind == 'danger'
-    assert finding.rule_id == 'SKY-D001'
-    assert finding.message == 'eval'
+    assert finding.kind == 'function'
+    partial = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
+    assert [entry.kind for entry in partial] == ['function', 'danger']
+
+
+def test_skylos_danger_name_is_a_rule_marker_not_a_symbol() -> None:
+    # Real SKY-D260 output carries name=prompt_injection as a rule marker;
+    # promoting it to the symbol would change the finding identity. Only
+    # quality diagnostics name their subject in `name`.
+    document = {
+        'danger': [
+            {
+                'rule_id': 'SKY-D260',
+                'severity': 'HIGH',
+                'message': 'Potential prompt injection sink',
+                'file': 'a.py',
+                'line': 3,
+                'name': 'prompt_injection',
+            }
+        ]
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
     assert finding.symbol is None
-    assert finding.severity is None
-    assert finding.confidence is None
+
+
+def test_adapters_declare_invocation_environments() -> None:
+    env = dict(SkylosAdapter.invocation_env)
+    assert set(env) == {'SKYLOS_CONFIG_FILE'}
+    neutral_config = Path(env['SKYLOS_CONFIG_FILE'])
+    assert neutral_config.is_absolute()
+    assert neutral_config.is_file()
+    assert '[skylos]' in neutral_config.read_text(encoding='utf-8')
+    assert dict(VultureAdapter.invocation_env) == {}
+
+
+def test_skylos_parse_rejects_undeclared_analyses() -> None:
+    with pytest.raises(AdapterError, match="skylos does not provide analysis 'sca'"):
+        SkylosAdapter.parse(raw('{}'), project='demo', root=ROOT, analyses=('sca',))
+
+
+def test_vulture_parse_rejects_any_analyses() -> None:
+    with pytest.raises(AdapterError, match="vulture does not provide analysis 'danger'"):
+        VultureAdapter.parse(raw(''), project='demo', root=ROOT, analyses=('danger',))
+
+
+def test_skylos_parses_recorded_analyses_fixture() -> None:
+    # Recorded skylos 4.33 output: quality carries source-anchored and
+    # repository-level policy diagnostics; the latter report the checkout
+    # root itself and normalize to the '.' path instead of aborting the
+    # project analysis.
+    output = raw((FIXTURES / 'skylos_analyses_output.json').read_text(encoding='utf-8'))
+    findings = SkylosAdapter.parse(output, project='demo', root=ROOT, analyses=('danger', 'secrets', 'quality'))
+    by_rule = {finding.rule_id: finding for finding in findings}
+    assert set(by_rule) == {'SKY-D209', 'SKY-S101', 'SKY-L014', 'SKY-R104', 'SKY-U001'}
+    policy = by_rule['SKY-R104']
+    assert policy.path == '.'
+    assert policy.symbol == 'pre-commit-policy'
+    assert policy.kind == 'quality'
+    assert policy.severity == 'LOW'
+    assert by_rule['SKY-L014'].symbol == 'API_TOKEN'
+    assert by_rule['SKY-L014'].path == 'pkg/mod.py'
+    assert by_rule['SKY-S101'].raw_excerpt is not None
+    assert 'preview' not in json.loads(by_rule['SKY-S101'].raw_excerpt)
+    assert by_rule['SKY-U001'].symbol == 'pkg.mod.bad'
+
+
+def test_normalize_finding_path_allow_root_maps_the_root_to_dot() -> None:
+    assert normalize_finding_path('/checkout', ROOT, allow_root=True) == '.'
+    assert normalize_finding_path('.', ROOT, allow_root=True) == '.'
+    with pytest.raises(AdapterError, match='outside the checkout'):
+        normalize_finding_path('/elsewhere', ROOT, allow_root=True)
+
+
+def test_skylos_quality_entries_map_name_to_symbol() -> None:
+    document = {
+        'quality': [
+            {
+                'rule_id': 'SKY-L014',
+                'severity': 'HIGH',
+                'message': 'Hardcoded credential',
+                'file': 'a.py',
+                'line': 4,
+                'name': 'API_TOKEN',
+                'kind': 'logic',
+            }
+        ]
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('quality',))
+    assert finding.symbol == 'API_TOKEN'
+    assert finding.kind == 'quality'
 
 
 def test_skylos_danger_entries_normalize_severity_and_keep_symbols() -> None:
@@ -246,7 +398,7 @@ def test_skylos_danger_entries_normalize_severity_and_keep_symbols() -> None:
             }
         ]
     }
-    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
     assert finding.severity == 'CRITICAL'
     assert finding.symbol == 'run'
     assert finding.start_line == 9
@@ -261,17 +413,17 @@ def test_skylos_declares_the_severity_capability() -> None:
 def test_skylos_rejects_malformed_danger_entries() -> None:
     document = {'danger': [{'rule_id': 'SKY-D001', 'file': 'a.py', 'line': 1}]}
     with pytest.raises(AdapterError, match="malformed skylos entry in 'danger'"):
-        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
 
 
 def test_skylos_rejects_non_array_danger_bucket() -> None:
     with pytest.raises(AdapterError, match="key 'danger' is not an array"):
-        SkylosAdapter.parse(raw('{"danger": {}}'), project='demo', root=ROOT)
+        SkylosAdapter.parse(raw('{"danger": {}}'), project='demo', root=ROOT, analyses=('danger',))
 
 
 def test_skylos_clamps_danger_line_zero_to_one() -> None:
     document = {'danger': [{'rule_id': 'SKY-D001', 'message': 'eval', 'file': 'a.py', 'line': 0}]}
-    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
     assert finding.start_line == 1
 
 

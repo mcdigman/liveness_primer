@@ -6,8 +6,9 @@ The fake detector reads a JSON script and emits vulture-format report lines
 or a skylos-format JSON document, so runs parse through the real adapters.
 Pointing the escape hatch (``--old-cmd``/``--new-cmd``) at two different
 scripts simulates two fake pinned detector commits; the skylos format can
-carry explicit rule IDs (reporting contract §3.1), and its ``danger``
-bucket emits security diagnostics with severity labels.
+carry explicit rule IDs (reporting contract §3.1), and its diagnostic
+buckets (``danger``, ``secrets``, ...) emit diagnostics with severity
+labels.
 """
 
 import json
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 from liveness_primer.filesystem import atomic_write_text
+from liveness_primer.tools.skylos import DIAGNOSTIC_KINDS
 
 FakeFormat = Literal['vulture', 'skylos']
 
@@ -41,13 +43,13 @@ class FakeFinding:
         Confidence percentage.
     bucket : str
         Skylos array the finding lands in (skylos format only); the
-        ``danger`` bucket emits the security-diagnostic entry shape.
+        diagnostic buckets emit the diagnostic entry shape.
     rule_id : str | None
         Explicit detector rule ID (skylos format only).
     severity : str | None
-        Severity label (skylos ``danger`` bucket only).
+        Severity label (skylos diagnostic buckets only).
     message : str | None
-        Message override (skylos ``danger`` bucket only).
+        Message override (skylos diagnostic buckets only).
     """
 
     path: str
@@ -76,11 +78,11 @@ class FakeFinding:
         Returns
         -------
         dict[str, object]
-            The dead-code entry shape, or the security-diagnostic shape for
-            the ``danger`` bucket; optional fields are present only when
+            The dead-code entry shape, or the diagnostic shape for the
+            diagnostic buckets; optional fields are present only when
             scripted.
         """
-        if self.bucket == 'danger':
+        if self.bucket in DIAGNOSTIC_KINDS:
             diagnostic: dict[str, object] = {
                 'message': self.message if self.message is not None else f"dangerous use of '{self.symbol}'",
                 'file': self.path,

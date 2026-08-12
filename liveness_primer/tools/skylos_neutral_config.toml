@@ -1,0 +1,5 @@
+# Neutral skylos configuration presented through SKYLOS_CONFIG_FILE so the
+# analyzed repository's own [tool.skylos] policy is never discovered: the
+# analyses a run executes stay exactly the corpus/CLI selection (contract
+# §4, §5).
+[skylos]

@@ -1,0 +1,98 @@
+{
+  "analysis_errors": [],
+  "analysis_summary": {
+    "analysis_error_count": 0,
+    "excluded_folders": [],
+    "languages": [
+      "python"
+    ],
+    "total_files": 2
+  },
+  "danger": [
+    {
+      "col": 11,
+      "file": "/checkout/pkg/mod.py",
+      "line": 9,
+      "message": "subprocess call with shell=True",
+      "rule_id": "SKY-D209",
+      "severity": "HIGH"
+    }
+  ],
+  "quality": [
+    {
+      "basename": "mod.py",
+      "col": 0,
+      "cwe": [
+        {
+          "id": "CWE-798",
+          "name": "Use of Hard-coded Credentials"
+        }
+      ],
+      "file": "/checkout/pkg/mod.py",
+      "kind": "logic",
+      "line": 4,
+      "message": "Hardcoded credential in 'API_TOKEN'. Use environment variables or a secrets manager instead.",
+      "name": "API_TOKEN",
+      "rule_id": "SKY-L014",
+      "severity": "HIGH",
+      "simple_name": "API_TOKEN",
+      "standard_refs": [],
+      "threshold": 0,
+      "type": "assignment",
+      "value": "hardcoded"
+    },
+    {
+      "basename": "checkout",
+      "col": 0,
+      "cwe": [
+        {
+          "id": "CWE-710",
+          "name": "Improper Adherence to Coding Standards"
+        }
+      ],
+      "file": "/checkout",
+      "kind": "repo_policy",
+      "line": 1,
+      "message": "Repository has no pre-commit configuration. Add automated hooks so policy checks run before commits.",
+      "name": "pre-commit-policy",
+      "rule_id": "SKY-R104",
+      "severity": "LOW",
+      "simple_name": "pre-commit-policy",
+      "standard_refs": [
+        "Repository policy: pre-commit hooks"
+      ],
+      "threshold": 0,
+      "type": "policy",
+      "value": "missing_pre_commit"
+    }
+  ],
+  "secrets": [
+    {
+      "col": 25,
+      "end_col": 65,
+      "entropy": 4.66,
+      "file": "pkg/mod.py",
+      "line": 4,
+      "message": "Potential AWS secret access key detected",
+      "preview": "wJal****EKEY",
+      "provider": "aws_secret_access_key",
+      "rule_id": "SKY-S101",
+      "severity": "CRITICAL"
+    }
+  ],
+  "unused_functions": [
+    {
+      "basename": "mod.py",
+      "confidence": 90,
+      "dead_code_classification": "likely_dead",
+      "dead_code_disposition": "reported",
+      "file": "/checkout/pkg/mod.py",
+      "full_name": "pkg.mod.bad",
+      "line": 12,
+      "name": "bad",
+      "references": 0,
+      "simple_name": "bad",
+      "type": "function"
+    }
+  ]
+}

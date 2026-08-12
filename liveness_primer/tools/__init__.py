@@ -3,6 +3,6 @@
 Copyright (C) 2026 Matthew C. Digman
 """
 
-from liveness_primer.tools.registry import adapter_names, get_adapter
+from liveness_primer.tools.registry import adapter_analyses, adapter_names, get_adapter
 
-__all__ = ['adapter_names', 'get_adapter']
+__all__ = ['adapter_analyses', 'adapter_names', 'get_adapter']

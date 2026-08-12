@@ -9,12 +9,12 @@ commands: invocations are argv lists composed from typed, validated models.
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Protocol, runtime_checkable
 
-from liveness_primer.config import ToolSettings
+from liveness_primer.config import CorpusConfigError, ToolSettings
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import Finding
 
@@ -129,6 +129,13 @@ class DetectorAdapter(Protocol):
         Console-script name inside the managed environment.
     default_args : tuple[str, ...]
         Arguments the adapter always passes before targets.
+    analyses : Mapping[str, tuple[str, ...]]
+        Opt-in analyses the adapter supports, mapped to the arguments each
+        one adds; corpus ``analyses`` selections validate against the keys.
+    invocation_env : Mapping[str, str]
+        Static, side-identical environment variables layered over the
+        scrubbed environment of every detector invocation (e.g. pinning a
+        detector's config discovery, contract §3, §11).
     success_exit_codes : frozenset[int]
         Exit codes that mean the run completed (findings or clean).
     capabilities : AdapterCapabilities
@@ -141,11 +148,15 @@ class DetectorAdapter(Protocol):
     distribution: str
     executable: str
     default_args: tuple[str, ...]
+    analyses: Mapping[str, tuple[str, ...]]
+    invocation_env: Mapping[str, str]
     success_exit_codes: frozenset[int]
     capabilities: AdapterCapabilities
     build_recipe: BuildRecipe
 
-    def parse(self, output: RawToolOutput, *, project: str, root: Path) -> list[Finding]:
+    def parse(
+        self, output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()
+    ) -> list[Finding]:
         """Parse raw invocation output into normalized findings.
 
         Parameters
@@ -156,11 +167,15 @@ class DetectorAdapter(Protocol):
             Corpus project name to stamp onto findings.
         root : Path
             Checkout directory the detector analyzed, for path normalization.
+        analyses : tuple[str, ...]
+            Selected opt-in analyses; only their categories are ingested,
+            so the report never carries categories the run's provenance
+            does not claim (contract §4, §5).
 
         Returns
         -------
         list[Finding]
-            Normalized dead-code findings only (contract §4).
+            Normalized dead-code findings plus selected-analysis findings.
         """
         ...
 
@@ -170,7 +185,8 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
 
     The per-tool corpus ``command`` override replaces the default program and
     arguments, with its mandatory ``{exe}`` element spliced with the detector
-    command; ``args`` appends; targets default to the checkout root. Corpus
+    command; selected ``analyses`` resolve through the adapter's declared
+    flags; ``args`` appends; targets default to the checkout root. Corpus
     *content* is never interpolated — every element originates from typed,
     validated models.
 
@@ -188,6 +204,11 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
     -------
     list[str]
         The composed argv.
+
+    Raises
+    ------
+    CorpusConfigError
+        If ``settings`` selects an analysis the adapter does not declare.
     """
     base: list[str] = []
     if settings.command is not None:
@@ -200,6 +221,12 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
                 base.append(element)
     else:
         base.extend([*executable, *adapter.default_args])
+    for analysis in settings.analyses:
+        flags = adapter.analyses.get(analysis)
+        if flags is None:
+            msg = f'tool {adapter.name!r} does not provide analysis {analysis!r}'
+            raise CorpusConfigError(msg)
+        base.extend(flags)
     targets = list(settings.targets) if settings.targets else ['.']
     return [*base, *settings.args, *targets]
 
@@ -227,7 +254,7 @@ def _relative_to_root(path: Path, root: Path) -> Path | None:
     return None
 
 
-def normalize_finding_path(raw: str, root: Path) -> str:
+def normalize_finding_path(raw: str, root: Path, *, allow_root: bool = False) -> str:
     """Normalize a detector-reported path to repo-relative POSIX form (contract §7).
 
     Detector output is untrusted: paths resolving outside the analyzed
@@ -240,6 +267,9 @@ def normalize_finding_path(raw: str, root: Path) -> str:
         Path exactly as the detector printed it (untrusted).
     root : Path
         Checkout directory the detector analyzed.
+    allow_root : bool
+        Whether a path naming the checkout root itself normalizes to
+        ``.`` (repository-level findings) instead of failing.
 
     Returns
     -------
@@ -250,7 +280,8 @@ def normalize_finding_path(raw: str, root: Path) -> str:
     Raises
     ------
     AdapterError
-        If the path escapes the checkout root or names no file.
+        If the path escapes the checkout root, or names no file while
+        ``allow_root`` is unset.
     """
     path = Path(raw)
     if path.is_absolute():
@@ -272,6 +303,8 @@ def normalize_finding_path(raw: str, root: Path) -> str:
         else:
             parts.append(part)
     if not parts:
+        if allow_root:
+            return '.'
         msg = f'detector reported a path naming no file: {raw!r}'
         raise AdapterError(msg)
     return PurePosixPath(*parts).as_posix()
