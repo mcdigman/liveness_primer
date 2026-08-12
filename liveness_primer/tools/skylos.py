@@ -24,8 +24,7 @@ from liveness_primer.tools.base import (
     normalize_finding_path,
 )
 
-# Dead-code finding arrays in the skylos JSON document; other report
-# categories (secrets, quality, ...) are deliberately not ingested.
+# Dead-code finding arrays in the skylos JSON document
 _DEAD_CODE_KEYS = ('unused_functions', 'unused_imports', 'unused_classes', 'unused_variables', 'unused_parameters')
 
 # Diagnostic arrays, each emitted only under its opt-in analysis flag,

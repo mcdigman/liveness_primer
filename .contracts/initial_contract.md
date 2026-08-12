@@ -115,7 +115,8 @@ point*: pre-triage, triage, or post-triage (§10).
 - Ad-hoc mode: a single target repository given on the CLI with default settings.
 - `--analyses NAME[,NAME...]` (repeatable, comma-separable) selects adapter-declared
   analyses for a run: it is the selection in ad-hoc mode and overrides corpus-declared
-  selections for every selected project otherwise.
+  selections for every selected project otherwise. The reserved name `none` (alone)
+  selects no analyses; empty names are rejected.
 - Selection: by name (`-k`), `--all`, or `--max-cost SECONDS` (greedy under declared cost
   for the chosen tool).
 - The initial corpus list is deferred to a Phase 1 task (~5–10 permissively licensed,

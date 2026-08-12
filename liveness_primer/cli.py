@@ -179,7 +179,7 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
         action='append',
         default=[],
         metavar='NAME[,NAME...]',
-        help='enable adapter-declared opt-in analyses; repeatable, overrides corpus selections',
+        help="enable adapter-declared opt-in analyses; repeatable, overrides corpus selections ('none' selects none)",
     )
     run_parser.add_argument('--max-results', type=_positive_int, default=200, help='per-project cap on rendered diffs')
     run_parser.add_argument(
@@ -323,10 +323,11 @@ def _check_run_mode(args: argparse.Namespace) -> bool:
     return escape
 
 
-def _resolve_analyses(args: argparse.Namespace) -> tuple[str, ...]:
+def _resolve_analyses(args: argparse.Namespace) -> tuple[str, ...] | None:
     """Resolve the ``--analyses`` selection against the adapter (contract §12).
 
-    Repeated flags and comma-separated lists union; empty names are ignored.
+    Repeated flags and comma-separated lists union; the reserved name
+    ``none`` selects no analyses (overriding any corpus selection).
 
     Parameters
     ----------
@@ -335,16 +336,27 @@ def _resolve_analyses(args: argparse.Namespace) -> tuple[str, ...]:
 
     Returns
     -------
-    tuple[str, ...]
-        Validated analysis names in selection order.
+    tuple[str, ...] | None
+        Validated analysis names in selection order, the empty tuple for
+        the explicit ``none`` selection, or ``None`` when ``--analyses``
+        was not given.
 
     Raises
     ------
     RunnerError
-        If a name is not declared by the tool's adapter or repeats.
+        If a name is empty, repeats, combines with ``none``, or is not
+        declared by the tool's adapter.
     """
-    names = tuple(name for chunk in args.analyses for name in chunk.split(',') if name)
-    if not names:
+    if not args.analyses:
+        return None
+    names = tuple(name for chunk in args.analyses for name in chunk.split(','))
+    if any(not name for name in names):
+        msg = "--analyses got an empty name; use '--analyses none' to run with no opt-in analyses"
+        raise RunnerError(msg)
+    if 'none' in names:
+        if len(names) > 1:
+            msg = "'--analyses none' cannot be combined with other selections"
+            raise RunnerError(msg)
         return ()
     declared = get_adapter(args.tool).analyses
     unknown = [name for name in names if name not in declared]
@@ -406,7 +418,7 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
         if args.keywords or args.select_all or args.max_cost is not None:
             msg = '--project (ad-hoc mode) does not take -k/--all/--max-cost'
             raise RunnerError(msg)
-        return (ad_hoc_project(args.project_url, tool=args.tool, analyses=analyses),)
+        return (ad_hoc_project(args.project_url, tool=args.tool, analyses=analyses if analyses is not None else ()),)
     corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
     selected = select_projects(
         corpus,
@@ -415,7 +427,7 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
         select_all=args.select_all,
         max_cost=args.max_cost,
     )
-    if not analyses:
+    if analyses is None:
         return selected
     return tuple(_with_analyses(project, tool=args.tool, analyses=analyses) for project in selected)
 

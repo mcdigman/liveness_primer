@@ -266,6 +266,21 @@ def test_run_rejects_duplicate_analyses_selections(capsys: pytest.CaptureFixture
     assert "--analyses selects 'quality' more than once" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize('selection', ['', 'danger,', ',danger'])
+def test_run_rejects_empty_analyses_names(selection: str, capsys: pytest.CaptureFixture[str]) -> None:
+    # A blank selection is a probable typo, never a silent fallback to the
+    # corpus defaults; the explicit spelling for "no analyses" is `none`.
+    argv = ['run', '--tool', 'skylos', '--project', 'https://example.invalid/x', '--old-cmd', 'x', '--new-cmd', 'y']
+    assert main([*argv, '--analyses', selection]) == EXIT_FAILURE
+    assert '--analyses got an empty name' in capsys.readouterr().err
+
+
+def test_run_rejects_none_combined_with_other_analyses(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ['run', '--tool', 'skylos', '--project', 'https://example.invalid/x', '--old-cmd', 'x', '--new-cmd', 'y']
+    assert main([*argv, '--analyses', 'none,danger']) == EXIT_FAILURE
+    assert "'--analyses none' cannot be combined" in capsys.readouterr().err
+
+
 @pytest.mark.usefixtures('_isolated_cache')
 def test_run_analyses_override_corpus_selections(
     tmp_path: Path,
@@ -323,6 +338,11 @@ def test_run_analyses_override_corpus_selections(
     corpus_run = Report.model_validate_json(capsys.readouterr().out)
     assert corpus_run.projects[0].analyses == ('danger',)
     assert [entry.kind for entry in corpus_run.projects[0].diffs] == ['danger']
+    # `--analyses none` clears the corpus selection: dead-code only.
+    assert main([*argv[: argv.index('--analyses')], '--analyses', 'none', '--output', 'json']) == EXIT_OK
+    cleared_run = Report.model_validate_json(capsys.readouterr().out)
+    assert cleared_run.projects[0].analyses == ()
+    assert cleared_run.projects[0].diffs == ()
 
 
 def test_run_unknown_tool_fails_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
