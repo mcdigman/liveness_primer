@@ -689,3 +689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except LivenessPrimerError as exc:
         sys.stderr.write(f'error: {exc}\n')
         return EXIT_FAILURE
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -123,6 +123,12 @@ exclude = '\.git|\.tox|\.venv|\.eggs|_build|buck-out|build|dist|__pycache__|\.my
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.report]
+# exclude_also appends to coverage's defaults rather than replacing them. The
+# script guard in cli.py delegates straight to main(), which the CLI tests call
+# directly; executing it under coverage would only re-enter a covered function.
+exclude_also = ["if __name__ == '__main__':"]
+
 [build-system]
 requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"

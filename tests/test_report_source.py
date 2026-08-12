@@ -244,7 +244,7 @@ def test_collect_unreadable_file_warns_without_leaking_the_checkout(tmp_path: Pa
         unreadable.chmod(0o600)
     assert locked.head_occurrence is not None
     assert readable.head_occurrence is not None
-    if locked.head_occurrence.source_excerpt is not None:  # pragma: no cover - only when running as root
+    if locked.head_occurrence.source_excerpt is not None:  # only reachable when running as root
         pytest.skip('the process can read mode 000 files')
     (warning,) = warnings
     assert warning == 'pkg/locked.py: file could not be read'

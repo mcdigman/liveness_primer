@@ -338,7 +338,7 @@ design intentionally blocks it, but it is not gated in CI initially.
 
 ## 19. Phases and acceptance criteria
 
-1. **Core.** Corpus TOML and validation, the `vulture` and `skylos` adapters, two-revision
+1. **Core.** Corpus YAML and validation, the `vulture` and `skylos` adapters, two-revision
    runner with fingerprint-keyed caching and enforced network isolation, diff engine, all
    three report modes, `corpus validate` and `license-check` CI, schemas exported and
    sync-checked, initial corpus list chosen. Acceptance: an end-to-end run against a real
