@@ -86,9 +86,12 @@ point*: pre-triage, triage, or post-triage (§10).
   AI-defect diagnostics) are ingested only where a corpus per-tool table opts in through
   `analyses`, validated against the adapter's declared analysis set (§5). Adapters may
   declare a static, side-identical invocation environment; the skylos adapter pins config
-  discovery to a packaged neutral file via `SKYLOS_CONFIG_FILE`, so the analyzed
-  repository's own skylos policy cannot alter which analyses execute (best-effort on
-  revisions predating the variable; parse-side gating protects the report regardless).
+  discovery to a packaged neutral file via `SKYLOS_CONFIG_FILE`, so an analyzed
+  repository's `[tool.skylos]` policy cannot alter which analyses execute. Skylos still
+  merges a target `.skylos/config.yaml`, which can enable unselected analyses and affect
+  execution cost, exit status, timeouts, and run completeness; revisions predating the
+  variable can likewise discover target configuration. Parse-side gating protects report
+  content in either case.
   The interface is not Python-specific (paths plus optional symbol), leaving room for
   tools such as `knip`.
 - Future candidates (non-normative): `pydeadcode`, `dangle`, `deadpy`, `uncalled`, and
