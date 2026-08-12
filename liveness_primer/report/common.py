@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Formatting helpers shared by the report renderers (contract §8, §9).
-
-Copyright (C) 2026 Matthew C. Digman
 
 The helpers here fix the semantic text of both human renderers — class
 glyphs, confidence forms, changed-field tokens, and aggregate rollup lines

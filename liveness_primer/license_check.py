@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """GitHub-API license verification for corpus repositories (contract §6).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Queries the GitHub license API per repository and compares against the
 declared SPDX identifier; mismatches fail the check. Detection is

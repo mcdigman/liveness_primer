@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """The JSON report renderer: the CI-consumable full report.
-
-Copyright (C) 2026 Matthew C. Digman
 
 The JSON report is the full ``Report`` payload and retains detail the
 rendered reports cap. JSON string escaping is the structural

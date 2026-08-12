@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """The GitHub step-summary (markdown) report renderer (contract §9, reporting §7).
-
-Copyright (C) 2026 Matthew C. Digman
 
 GitHub does not interpret ANSI styling, and markdown links do not work
 inside fenced ``diff`` blocks: exact pinned source links and readable

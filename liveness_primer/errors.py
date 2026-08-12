@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Exception hierarchy shared across the package.
-
-Copyright (C) 2026 Matthew C. Digman
 
 Every domain error raised by this package subclasses
 :class:`LivenessPrimerError`, so the CLI can distinguish run failures from

@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the report renderers and mandatory sanitization (contract §9, §15).
-
-Copyright (C) 2026 Matthew C. Digman
 
 The text and GitHub renderers are locked by golden files; regenerate them
 with ``LP_UPDATE_GOLDENS=1 python -m pytest tests/test_report.py``. Color

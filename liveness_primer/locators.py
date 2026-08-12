@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Serialized finding-locator assignment (explorer contract §4.2).
-
-Copyright (C) 2026 Matthew C. Digman
 
 ``line`` is the diff class's reference-side start line (head for ``new``,
 base for ``dropped`` and ``changed``); the identity hash covers the start

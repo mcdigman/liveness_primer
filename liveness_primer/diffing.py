@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """The deterministic, order-independent diff engine (contract §8).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Both revisions see identical files; matching proceeds in three stages per
 finding identity: (1) full-field-equal occurrences are removed by multiset

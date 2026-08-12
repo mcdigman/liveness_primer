@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Bounded, containment-enforcing filesystem helpers.
-
-Copyright (C) 2026 Matthew C. Digman
 
 Shared by pinned-source evidence collection (reporting contract §3.3) and
 the shipped test utilities: relative paths stay beneath their trusted root,

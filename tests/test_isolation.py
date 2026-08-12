@@ -1,7 +1,6 @@
-"""Tests for network-isolation detection, enforcement, and env scrubbing (contract §3, §11, §15).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for network-isolation detection, enforcement, and env scrubbing (contract §3, §11, §15)."""
 
 import sys
 from collections.abc import Mapping, Sequence

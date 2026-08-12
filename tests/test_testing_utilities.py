@@ -1,7 +1,6 @@
-"""Tests for the shipped fake detector and fake project factory (contract §15).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for the shipped fake detector and fake project factory (contract §15)."""
 
 import json
 import stat

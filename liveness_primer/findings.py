@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Versioned schema models for findings, diffs, manifests, reports, and annotations.
-
-Copyright (C) 2026 Matthew C. Digman
 
 Pydantic models are the source of truth; JSON Schema files under
 ``liveness_primer/schemas/`` are exported from them by ``schema export``.

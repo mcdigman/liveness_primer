@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Fingerprint-keyed detector environment cache and install machinery (contract §3).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Detector refs are installed into isolated cached virtualenvs. Dependencies
 are resolved by statically parsing ``[project.dependencies]`` and

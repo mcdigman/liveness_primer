@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Adapter for the ``skylos`` dead-code detector (contract §4).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Skylos emits a JSON document on stdout under ``--json``. The dead-code
 arrays are always ingested; the diagnostic arrays (``danger``, ``secrets``,

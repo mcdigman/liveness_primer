@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Borderless table layout for the terminal renderer (reporting contract §4).
-
-Copyright (C) 2026 Matthew C. Digman
 
 The layout engine measures sanitized cells with Rich's terminal cell
 metrics — never Python string length — so combining and wide Unicode

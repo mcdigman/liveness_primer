@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """AST-walking enforcement of the audited-launcher rule (contract §11, §15).
-
-Copyright (C) 2026 Matthew C. Digman
 
 No call anywhere in the package may pass a ``shell`` keyword, and no module
 outside the launcher may reach the raw subprocess APIs — including event-loop

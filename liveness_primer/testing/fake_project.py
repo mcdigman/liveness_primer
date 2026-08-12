@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """A factory for small synthetic corpus projects (contract §15).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Produces throwaway projects with injected characteristics — optionally as
 real ``git init`` repositories so checkout and pin resolution can be

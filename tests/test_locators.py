@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Tests for serialized finding locators and the shared golden fixture (explorer contract §4.2).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Python generates the checked-in locator golden fixture; the explorer's
 frontend tests and the future ``bisect --occurrence`` tests consume the

@@ -1,7 +1,6 @@
-"""Tests for the three-stage deterministic diff engine (contract §8).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for the three-stage deterministic diff engine (contract §8)."""
 
 from collections.abc import Iterable, Sequence
 

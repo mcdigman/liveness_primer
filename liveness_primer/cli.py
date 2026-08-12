@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """The command-line interface (contract §12).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Commands: ``run``, ``corpus validate``, ``corpus license-check``, and
 ``schema export``. Exit codes (contract §9): 0 for any successful run

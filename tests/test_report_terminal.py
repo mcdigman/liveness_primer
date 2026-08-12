@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Tests for terminal capabilities, styling, width, and layout (reporting §4.6, §6).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Color and hyperlink tests assert capabilities and visible width separately
 from the unstyled golden files (reporting contract §10).

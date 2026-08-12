@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Pinned-source evidence collection (reporting contract §3.3).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Source evidence is derived from the byte-identical pinned corpus checkout
 after the adapter has normalized and validated the reported path — never

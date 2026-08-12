@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Corpus specification models, license rules, and project selection (contract §5, §6).
-
-Copyright (C) 2026 Matthew C. Digman
 
 The corpus is a human-authored YAML file parsed with ``PyYAML`` and validated
 into the pydantic models here, which are the source of truth.

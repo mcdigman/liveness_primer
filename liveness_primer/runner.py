@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """The two-revision runner: fetch, build, and analysis steps (contract §3).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Corpus refs are resolved once per run and then pinned; both detector
 revisions analyze byte-identical checkouts. ``asyncio`` orchestrates

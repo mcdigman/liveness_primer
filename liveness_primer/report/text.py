@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """The Rich-based terminal report renderer (contract §9, reporting contract §4-§6).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Findings render in a compact, borderless, aligned table whose class glyphs
 (``+``/``-``/``~``) and legend preserve meaning without color. All

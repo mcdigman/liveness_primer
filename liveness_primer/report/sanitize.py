@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Mandatory sanitization of untrusted report text (contract §9, reporting §8).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Paths, messages, symbols, kinds, source text, detector rule IDs, errors,
 and warnings are untrusted. Renderers replace terminal control characters,

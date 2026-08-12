@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the adapter protocol and the vulture/skylos adapters (contract §4, §15).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Adapters are tested against recorded raw-output fixtures.
 """

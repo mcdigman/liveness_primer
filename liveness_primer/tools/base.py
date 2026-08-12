@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """The typed detector-adapter protocol and shared adapter plumbing (contract §4).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Adapters turn raw invocation output into ``list[Finding]``, declare
 capabilities and a build recipe, and never interpolate corpus content into

@@ -1,7 +1,6 @@
-"""Tests for the environment cache and detector install machinery (contract §3, §15).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for the environment cache and detector install machinery (contract §3, §15)."""
 
 import json
 import shutil

@@ -1,7 +1,6 @@
-"""Registry of the detector adapters shipped in this build (contract §4).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Registry of the detector adapters shipped in this build (contract §4)."""
 
 from liveness_primer.tools.base import DetectorAdapter, UnknownToolError
 from liveness_primer.tools.skylos import SkylosAdapter

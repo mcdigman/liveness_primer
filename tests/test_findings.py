@@ -1,7 +1,6 @@
-"""Tests for the schema models and finding identity (contract §7).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for the schema models and finding identity (contract §7)."""
 
 from datetime import UTC, date, datetime
 

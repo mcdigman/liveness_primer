@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Checkout and pin resolution for corpus and detector repositories (contract §3, §5).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Refs are resolved once per run and then pinned; checkout caches are keyed by
 (repository, SHA) under the ``platformdirs`` cache directory and guarded by

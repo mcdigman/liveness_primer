@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Stable GitHub source permalinks for the pinned corpus tree (reporting §5).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Repository and path components are parsed and encoded, never interpolated
 from an unvalidated raw detector path. Permalinks target the pinned corpus

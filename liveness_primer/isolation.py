@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Network isolation for build- and analysis-step subprocesses (contract §11).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Networking is disabled via Linux network namespaces, enforced on the Linux
 reference platform and best-effort elsewhere. ``--no-index`` alone is not

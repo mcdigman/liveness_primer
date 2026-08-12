@@ -1,7 +1,6 @@
-"""Tests for checkout and pin resolution against throwaway git repositories (contract §15).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for checkout and pin resolution against throwaway git repositories (contract §15)."""
 
 import shutil
 from collections.abc import Mapping, Sequence

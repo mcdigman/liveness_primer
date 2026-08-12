@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """A fake detector producing any required output or diff characteristic (contract §15).
-
-Copyright (C) 2026 Matthew C. Digman
 
 The fake detector reads a JSON script and emits vulture-format report lines
 or a skylos-format JSON document, so runs parse through the real adapters.

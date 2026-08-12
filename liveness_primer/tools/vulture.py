@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Adapter for the ``vulture`` dead-code detector (contract §4).
-
-Copyright (C) 2026 Matthew C. Digman
 
 Vulture prints one finding per stdout line as
 ``path:line: message (NN% confidence)`` and exits 0 when clean, 3 when

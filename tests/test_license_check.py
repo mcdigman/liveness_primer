@@ -1,7 +1,6 @@
-"""Tests for GitHub-API license verification (contract §6, §15).
-
-Copyright (C) 2026 Matthew C. Digman
-"""
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for GitHub-API license verification (contract §6, §15)."""
 
 import importlib
 import json

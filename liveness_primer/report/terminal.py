@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Terminal capability controls for the text renderer (reporting contract §6.3).
-
-Copyright (C) 2026 Matthew C. Digman
 
 ``--color`` and ``--hyperlinks`` both default to ``auto``. Hyperlink
 support cannot be inferred from terminfo or Rich; ``auto`` therefore

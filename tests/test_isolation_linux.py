@@ -1,6 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
+# SPDX-License-Identifier: Apache-2.0
 """Linux-only integration tests for the real isolation boundary (contract §11, §15).
-
-Copyright (C) 2026 Matthew C. Digman
 
 These run against the actual rootless ``unshare`` on the Linux reference
 platform (and therefore in CI), demonstrating that the sandbox denies
