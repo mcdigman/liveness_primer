@@ -439,6 +439,7 @@ class PrimerRunner:
             workspace = await asyncio.to_thread(self._materialize_side, item.checkout)
             try:
                 environment = scrubbed_environment(home=workspace.home)
+                environment.update(self._adapter.invocation_env)
                 try:
                     async with asyncio.timeout(timeout):
                         result = await self._async_launcher(

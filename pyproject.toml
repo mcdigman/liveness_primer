@@ -131,4 +131,4 @@ build-backend = "setuptools.build_meta"
 include = ["liveness_primer*"]
 
 [tool.setuptools.package-data]
-liveness_primer = ["py.typed", "schemas/*.schema.json"]
+liveness_primer = ["py.typed", "schemas/*.schema.json", "tools/*.toml"]

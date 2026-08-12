@@ -84,8 +84,13 @@ point*: pre-triage, triage, or post-triage (§10).
   metadata are unsupported. Adapters ingest dead-code finding kinds by default; a
   detector's other report categories (e.g. skylos's security, secrets, quality, and
   AI-defect diagnostics) are ingested only where a corpus per-tool table opts in through
-  `analyses`, validated against the adapter's declared analysis set (§5). The interface is
-  not Python-specific (paths plus optional symbol), leaving room for tools such as `knip`.
+  `analyses`, validated against the adapter's declared analysis set (§5). Adapters may
+  declare a static, side-identical invocation environment; the skylos adapter pins config
+  discovery to a packaged neutral file via `SKYLOS_CONFIG_FILE`, so the analyzed
+  repository's own skylos policy cannot alter which analyses execute (best-effort on
+  revisions predating the variable; parse-side gating protects the report regardless).
+  The interface is not Python-specific (paths plus optional symbol), leaving room for
+  tools such as `knip`.
 - Future candidates (non-normative): `pydeadcode`, `dangle`, `deadpy`, `uncalled`, and
   subset-capability tools (ruff, mypy, pyright, CodeQL).
 - Licensing rule: GPL/AGPL detectors (e.g. `deadcode` AGPL-3.0, pylint GPL-2.0) may only
@@ -107,8 +112,10 @@ point*: pre-triage, triage, or post-triage (§10).
 - `expected_clean` semantics: findings or a nonzero tool exit on the base side of an
   expected-clean (project, tool) pair are reported as **corpus-integrity warnings** (the
   comparison still runs); `--fail-on corpus-integrity` opts into gating on them.
-- Ad-hoc mode: a single target repository given on the CLI with default settings;
-  repeatable `--analyses NAME` opts the run into adapter-declared analyses.
+- Ad-hoc mode: a single target repository given on the CLI with default settings.
+- `--analyses NAME[,NAME...]` (repeatable, comma-separable) selects adapter-declared
+  analyses for a run: it is the selection in ad-hoc mode and overrides corpus-declared
+  selections for every selected project otherwise.
 - Selection: by name (`-k`), `--all`, or `--max-cost SECONDS` (greedy under declared cost
   for the chosen tool).
 - The initial corpus list is deferred to a Phase 1 task (~5–10 permissively licensed,
@@ -239,7 +246,7 @@ printing the package version and `SCHEMA_VERSION`. Commands:
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
   [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
   [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]
-  [--analyses NAME]`
+  [--analyses NAME[,NAME...]]`
 - `corpus validate` — parse and validate the corpus YAML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF

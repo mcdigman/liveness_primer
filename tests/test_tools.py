@@ -296,6 +296,36 @@ def test_skylos_unselected_diagnostic_buckets_are_filtered() -> None:
     assert [entry.kind for entry in partial] == ['function', 'danger']
 
 
+def test_skylos_danger_name_is_a_rule_marker_not_a_symbol() -> None:
+    # Real SKY-D260 output carries name=prompt_injection as a rule marker;
+    # promoting it to the symbol would change the finding identity. Only
+    # quality diagnostics name their subject in `name`.
+    document = {
+        'danger': [
+            {
+                'rule_id': 'SKY-D260',
+                'severity': 'HIGH',
+                'message': 'Potential prompt injection sink',
+                'file': 'a.py',
+                'line': 3,
+                'name': 'prompt_injection',
+            }
+        ]
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT, analyses=('danger',))
+    assert finding.symbol is None
+
+
+def test_adapters_declare_invocation_environments() -> None:
+    env = dict(SkylosAdapter.invocation_env)
+    assert set(env) == {'SKYLOS_CONFIG_FILE'}
+    neutral_config = Path(env['SKYLOS_CONFIG_FILE'])
+    assert neutral_config.is_absolute()
+    assert neutral_config.is_file()
+    assert '[skylos]' in neutral_config.read_text(encoding='utf-8')
+    assert dict(VultureAdapter.invocation_env) == {}
+
+
 def test_skylos_parse_rejects_undeclared_analyses() -> None:
     with pytest.raises(AdapterError, match="skylos does not provide analysis 'sca'"):
         SkylosAdapter.parse(raw('{}'), project='demo', root=ROOT, analyses=('sca',))

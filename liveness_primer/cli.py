@@ -178,8 +178,8 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
         '--analyses',
         action='append',
         default=[],
-        metavar='NAME',
-        help='ad-hoc mode: enable an adapter-declared opt-in analysis; repeatable',
+        metavar='NAME[,NAME...]',
+        help='enable adapter-declared opt-in analyses; repeatable, overrides corpus selections',
     )
     run_parser.add_argument('--max-results', type=_positive_int, default=200, help='per-project cap on rendered diffs')
     run_parser.add_argument(
@@ -323,8 +323,67 @@ def _check_run_mode(args: argparse.Namespace) -> bool:
     return escape
 
 
+def _resolve_analyses(args: argparse.Namespace) -> tuple[str, ...]:
+    """Resolve the ``--analyses`` selection against the adapter (contract §12).
+
+    Repeated flags and comma-separated lists union; empty names are ignored.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed ``run`` arguments.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Validated analysis names in selection order.
+
+    Raises
+    ------
+    RunnerError
+        If a name is not declared by the tool's adapter or repeats.
+    """
+    names = tuple(name for chunk in args.analyses for name in chunk.split(',') if name)
+    if not names:
+        return ()
+    declared = get_adapter(args.tool).analyses
+    unknown = [name for name in names if name not in declared]
+    if unknown:
+        msg = f'tool {args.tool!r} does not provide analysis {unknown[0]!r}'
+        raise RunnerError(msg)
+    duplicates = {name for name in names if names.count(name) > 1}
+    if duplicates:
+        msg = f'--analyses selects {min(duplicates)!r} more than once'
+        raise RunnerError(msg)
+    return names
+
+
+def _with_analyses(project: CorpusProject, *, tool: str, analyses: tuple[str, ...]) -> CorpusProject:
+    """Override one corpus project's analyses selection for the run's tool.
+
+    Parameters
+    ----------
+    project : CorpusProject
+        The selected corpus entry.
+    tool : str
+        Adapter name the run targets.
+    analyses : tuple[str, ...]
+        Validated ``--analyses`` selection replacing the corpus one.
+
+    Returns
+    -------
+    CorpusProject
+        The entry with the tool's ``analyses`` replaced.
+    """
+    settings = project.tool_settings(tool).model_copy(update={'analyses': analyses})
+    return project.model_copy(update={'tools': {**project.tools, tool: settings}})
+
+
 def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
     """Resolve the projects a ``run`` targets (contract §5).
+
+    A ``--analyses`` selection overrides corpus-declared analyses for every
+    selected project.
 
     Parameters
     ----------
@@ -339,30 +398,26 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
     Raises
     ------
     RunnerError
-        If ad-hoc mode is mixed with corpus selectors, ``--analyses`` is
-        used outside ad-hoc mode, or an analysis is not declared.
+        If ad-hoc mode is mixed with corpus selectors, or an ``--analyses``
+        selection is invalid.
     """
+    analyses = _resolve_analyses(args)
     if args.project_url is not None:
         if args.keywords or args.select_all or args.max_cost is not None:
             msg = '--project (ad-hoc mode) does not take -k/--all/--max-cost'
             raise RunnerError(msg)
-        declared = get_adapter(args.tool).analyses
-        unknown = [name for name in args.analyses if name not in declared]
-        if unknown:
-            msg = f'tool {args.tool!r} does not provide analysis {unknown[0]!r}'
-            raise RunnerError(msg)
-        return (ad_hoc_project(args.project_url, tool=args.tool, analyses=tuple(args.analyses)),)
-    if args.analyses:
-        msg = '--analyses applies to ad-hoc --project runs; corpus runs select analyses in the corpus file'
-        raise RunnerError(msg)
+        return (ad_hoc_project(args.project_url, tool=args.tool, analyses=analyses),)
     corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
-    return select_projects(
+    selected = select_projects(
         corpus,
         tool=args.tool,
         keywords=tuple(args.keywords),
         select_all=args.select_all,
         max_cost=args.max_cost,
     )
+    if not analyses:
+        return selected
+    return tuple(_with_analyses(project, tool=args.tool, analyses=analyses) for project in selected)
 
 
 def _terminal_width() -> int | None:

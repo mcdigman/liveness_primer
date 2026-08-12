@@ -40,6 +40,19 @@ DIAGNOSTIC_KINDS = MappingProxyType(
 # own skylos configuration cannot widen the run beyond its provenance.
 _ANALYSIS_BUCKETS = {'danger': 'danger', 'secrets': 'secrets', 'quality': 'quality', 'ai-defects': 'ai_defects'}
 
+# Buckets whose entries name their subject in ``name``; elsewhere ``name``
+# is a rule marker (e.g. danger's SKY-D260 carries name=prompt_injection),
+# never a source symbol.
+_NAME_SUBJECT_BUCKETS = frozenset({'quality'})
+
+# Neutral config shipped with the package. Skylos revisions honoring
+# SKYLOS_CONFIG_FILE read it instead of discovering the analyzed
+# repository's own pyproject.toml, so a target's [tool.skylos] policy
+# cannot enable (and spend runtime on) analyses the run never selected;
+# explicitly selected analyses still win as CLI flags. Older revisions
+# ignore the variable, where the parse-side gate still protects the report.
+_NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
+
 # Documented, versioned mapping from each ingested skylos structured output
 # bucket to its canonical rule ID (reporting contract §3.1). A rule ID
 # explicitly present on the detector finding takes precedence; a rule ID is
@@ -102,6 +115,9 @@ class SkylosAdapter:
         ``--json`` for machine-readable output.
     analyses : Mapping[str, tuple[str, ...]]
         Opt-in analyses selectable in a corpus file, mapped to their flags.
+    invocation_env : Mapping[str, str]
+        ``SKYLOS_CONFIG_FILE`` pinned to the packaged neutral config, so
+        the analyzed repository's own skylos policy never alters the run.
     success_exit_codes : frozenset[int]
         0 only; skylos exits 2 when analysis errors occurred.
     capabilities : AdapterCapabilities
@@ -123,6 +139,7 @@ class SkylosAdapter:
             'ai-defects': ('--ai-defects',),
         }
     )
+    invocation_env: Mapping[str, str] = MappingProxyType({'SKYLOS_CONFIG_FILE': str(_NEUTRAL_CONFIG)})
     success_exit_codes: frozenset[int] = frozenset({0})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,
@@ -270,11 +287,12 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) 
         msg = f'malformed skylos entry in {key!r}: {exc}'
         raise AdapterError(msg) from exc
     line = max(entry.line, 1)
+    subject_name = entry.name if key in _NAME_SUBJECT_BUCKETS else None
     return Finding(
         tool=SkylosAdapter.name,
         project=project,
         path=normalize_finding_path(entry.file, root, allow_root=True),
-        symbol=entry.symbol if entry.symbol is not None else entry.name,
+        symbol=entry.symbol if entry.symbol is not None else subject_name,
         kind=DIAGNOSTIC_KINDS[key],
         message=entry.message,
         start_line=line,

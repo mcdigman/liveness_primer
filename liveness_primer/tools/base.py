@@ -132,6 +132,10 @@ class DetectorAdapter(Protocol):
     analyses : Mapping[str, tuple[str, ...]]
         Opt-in analyses the adapter supports, mapped to the arguments each
         one adds; corpus ``analyses`` selections validate against the keys.
+    invocation_env : Mapping[str, str]
+        Static, side-identical environment variables layered over the
+        scrubbed environment of every detector invocation (e.g. pinning a
+        detector's config discovery, contract §3, §11).
     success_exit_codes : frozenset[int]
         Exit codes that mean the run completed (findings or clean).
     capabilities : AdapterCapabilities
@@ -145,6 +149,7 @@ class DetectorAdapter(Protocol):
     executable: str
     default_args: tuple[str, ...]
     analyses: Mapping[str, tuple[str, ...]]
+    invocation_env: Mapping[str, str]
     success_exit_codes: frozenset[int]
     capabilities: AdapterCapabilities
     build_recipe: BuildRecipe

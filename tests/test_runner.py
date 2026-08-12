@@ -785,6 +785,7 @@ def test_fake_skylos_analyses_selection_reaches_argv_and_report(tmp_path: Path) 
         output_format='skylos',
     )
     seen: list[tuple[str, ...]] = []
+    environs: list[dict[str, str]] = []
 
     async def spying_launcher(
         argv: Sequence[str],
@@ -793,6 +794,7 @@ def test_fake_skylos_analyses_selection_reaches_argv_and_report(tmp_path: Path) 
         env: Mapping[str, str] | None = None,
     ) -> LaunchResult:
         seen.append(tuple(argv))
+        environs.append(dict(env) if env is not None else {})
         return await run_async(list(argv), cwd=cwd, env=env)
 
     runner = PrimerRunner(
@@ -807,6 +809,9 @@ def test_fake_skylos_analyses_selection_reaches_argv_and_report(tmp_path: Path) 
     assert project_report.errors == ()
     assert project_report.analyses == ('danger', 'secrets')
     assert all(argv[-3:] == ('--danger', '--secrets', '.') for argv in seen)
+    # The adapter's invocation environment pins skylos config discovery to
+    # the packaged neutral file on both sides (contract §3, §11).
+    assert all(environment['SKYLOS_CONFIG_FILE'].endswith('skylos_neutral_config.toml') for environment in environs)
     fresh = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.NEW)
     assert fresh.kind == 'secret'
     assert fresh.symbol == 'API_KEY'

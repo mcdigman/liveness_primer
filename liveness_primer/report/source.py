@@ -229,6 +229,11 @@ def collect_source_evidence(
     warnings: dict[str, None] = {}
     enriched: list[FindingDiff] = []
     for diff in diffs:
+        # Repository-level findings (path '.') name no file: there is no
+        # source evidence to collect and none missing, so no warning.
+        if diff.path == '.':
+            enriched.append(diff)
+            continue
         updates: dict[str, FindingOccurrence] = {}
         for field_name, occurrence in _sides_to_collect(diff):
             lines = cache.lines(diff.path)

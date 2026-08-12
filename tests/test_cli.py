@@ -14,6 +14,7 @@ import pytest
 
 import liveness_primer.cli
 from liveness_primer.cli import EXIT_FAILURE, EXIT_GATE, EXIT_OK, main
+from liveness_primer.config import Corpus, CorpusProject, ToolSettings
 from liveness_primer.filesystem import atomic_write_text, read_small_text
 from liveness_primer.findings import SCHEMA_VERSION, Report
 from liveness_primer.isolation import UNENFORCED, Isolation, IsolationError
@@ -238,7 +239,7 @@ def test_run_ad_hoc_analyses_reach_the_report(
         '--new-cmd',
         shlex.join(head_cmd),
         '--analyses',
-        'secrets',
+        'secrets,danger',
         '--output',
         'json',
     ]
@@ -247,7 +248,7 @@ def test_run_ad_hoc_analyses_reach_the_report(
     assert code == EXIT_OK
     report = Report.model_validate_json(captured.out)
     (project_report,) = report.projects
-    assert project_report.analyses == ('secrets',)
+    assert project_report.analyses == ('secrets', 'danger')
     (diff,) = project_report.diffs
     assert diff.kind == 'secret'
     assert diff.symbol == 'API_KEY'
@@ -259,10 +260,69 @@ def test_run_ad_hoc_rejects_undeclared_analyses(tmp_path: Path, capsys: pytest.C
     assert "tool 'vulture' does not provide analysis 'danger'" in capsys.readouterr().err
 
 
-def test_run_rejects_analyses_outside_ad_hoc_mode(capsys: pytest.CaptureFixture[str]) -> None:
-    argv = ['run', '--tool', 'skylos', '--old-cmd', 'x', '--new-cmd', 'y', '--all', '--analyses', 'danger']
-    assert main(argv) == EXIT_FAILURE
-    assert 'corpus runs select analyses in the corpus file' in capsys.readouterr().err
+def test_run_rejects_duplicate_analyses_selections(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ['run', '--tool', 'skylos', '--project', 'https://example.invalid/x', '--old-cmd', 'x', '--new-cmd', 'y']
+    assert main([*argv, '--analyses', 'quality,quality']) == EXIT_FAILURE
+    assert "--analyses selects 'quality' more than once" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_analyses_override_corpus_selections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Contract §5/§12: --analyses replaces corpus-declared selections for
+    # every selected project, in the argv, the parse gate, and the record.
+    origin = create_fake_project(tmp_path / 'origin', init_git=True)
+    assert origin.head_sha is not None
+    project = CorpusProject(
+        name='fakeproj',
+        repo=origin.url,
+        pin=origin.head_sha,
+        tools={'skylos': ToolSettings(analyses=('danger',))},
+    )
+    # model_construct skips the corpus-level GitHub-hosting rule so the run
+    # can target the local fixture repository.
+    monkeypatch.setattr(
+        liveness_primer.cli,
+        'load_corpus',
+        lambda *_args, **_kwargs: Corpus.model_construct(projects=(project,)),
+    )
+    secret = FakeFinding(path='pkg/mod.py', line=4, symbol='API_KEY', bucket='secrets', rule_id='SKY-S101')
+    danger = FakeFinding(path='pkg/mod.py', line=9, symbol='run', bucket='danger', rule_id='SKY-D209')
+    base_cmd = write_fake_detector_script(tmp_path / 'sky-base.json', [], output_format='skylos')
+    head_cmd = write_fake_detector_script(tmp_path / 'sky-head.json', [secret, danger], output_format='skylos')
+    argv = [
+        'run',
+        '--tool',
+        'skylos',
+        '-k',
+        'fake',
+        '--old-cmd',
+        shlex.join(base_cmd),
+        '--new-cmd',
+        shlex.join(head_cmd),
+        '--analyses',
+        'secrets',
+        '--output',
+        'json',
+    ]
+    code = main(argv)
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    report = Report.model_validate_json(captured.out)
+    (project_report,) = report.projects
+    # The corpus selected danger; the CLI override replaces it, so only
+    # the secrets diagnostic is ingested and recorded.
+    assert project_report.analyses == ('secrets',)
+    (diff,) = project_report.diffs
+    assert diff.kind == 'secret'
+    # Without --analyses the corpus selection stands.
+    assert main([*argv[: argv.index('--analyses')], '--output', 'json']) == EXIT_OK
+    corpus_run = Report.model_validate_json(capsys.readouterr().out)
+    assert corpus_run.projects[0].analyses == ('danger',)
+    assert [entry.kind for entry in corpus_run.projects[0].diffs] == ['danger']
 
 
 def test_run_unknown_tool_fails_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
