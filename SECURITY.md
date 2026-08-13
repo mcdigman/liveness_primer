@@ -33,8 +33,11 @@ to hold — for example:
 - Detector or corpus code escaping the network isolation the runner asserts
   (`liveness_primer/isolation.py`), or the run being reported as isolated when
   it was not.
-- Path traversal or writes outside the cache root when unpacking checkouts or
-  building environments (`liveness_primer/corpus.py`, `envcache.py`).
+- Path traversal in `liveness_primer`'s own cache management that causes a
+  checkout or detector environment to be created outside the configured cache
+  root (`liveness_primer/corpus.py`, `envcache.py`). This is not a general
+  filesystem sandbox: detector build hooks and subprocesses retain the current
+  user's access to host-visible paths.
 - Corpus or report input causing code execution during parsing — the corpus is
   loaded with PyYAML's safe loader and validated by pydantic, so anything that
   reaches `eval`/`exec`/arbitrary constructors is a bug.
@@ -47,6 +50,7 @@ Out of scope:
   corpus projects — report those to their maintainers.
 - Wrong, missing, or noisy detector findings. That is a correctness bug; open a
   normal issue.
-- Running `liveness_primer` against a corpus you assembled from untrusted
-  repositories without any sandbox. Treat the tool as a code execution engine
-  and run CI-side comparisons in a disposable container.
+- Running detector refs you do not trust without external filesystem and
+  resource isolation. The built-in isolation removes network access and
+  credentials but does not restrict filesystem access; run such comparisons in
+  a disposable container.

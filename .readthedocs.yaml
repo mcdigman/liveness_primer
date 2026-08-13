@@ -18,7 +18,10 @@ build:
     # project floor is 3.12).
     python: "3.13"
   commands:
-    - pip install uv
+    # uv is a build-time tool that executes in the docs build, so it is pinned
+    # rather than floating, the same discipline the workflows apply to actions
+    # (full commit SHA + version comment). Bump deliberately.
+    - pip install uv==0.11.28
     - >
       uv run --extra docs
       sphinx-build -W --keep-going -b html docs $READTHEDOCS_OUTPUT/html

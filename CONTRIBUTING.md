@@ -25,6 +25,9 @@ The `prek` hooks include `ruff check --fix --preview`, `ruff format`, `ssort`,
 `pyrefly`, and `actionlint`. CI additionally runs `mypy --strict`, `pyright`,
 `pydoclint`, a `skylos` dead-code job, and a coverage job.
 
+The explorer front end in [explorer/](explorer/) is a separate toolchain with
+its own gates; see [Explorer changes](#explorer-changes) below.
+
 ## House rules
 
 These are enforced by CI, so they are not stylistic preferences:
@@ -42,11 +45,62 @@ These are enforced by CI, so they are not stylistic preferences:
 - **Licensing.** New source files carry the SPDX header used throughout
   `liveness_primer/`. Contributions are accepted under Apache-2.0.
 
+## Corpus changes
+
 Corpus changes have their own gate: `corpus validate` and a GitHub license
 check run on PRs touching
 [liveness_primer/data/corpus.yaml](liveness_primer/data/corpus.yaml). New
 entries must be GitHub-hosted, permissively licensed per the §6 allowlist, and
 pinned to a full commit SHA.
+
+The `--corpus` default is the copy that ships inside the *installed* package.
+`uv sync` installs the project editable, so `uv run liveness-primer corpus
+validate` reads the file you just edited. If you instead installed
+non-editably (`pip install .`, `uv pip install .`), that default points at a
+snapshot taken at install time — validate the working tree explicitly:
+
+```bash
+liveness-primer corpus validate --corpus liveness_primer/data/corpus.yaml
+```
+
+## Explorer changes
+
+The report explorer in [explorer/](explorer/) is a separate Node toolchain,
+gated by its own workflow. Install with `npm ci --ignore-scripts` and run from
+`explorer/`:
+
+```bash
+npm run generate-validators && npm run format && npm run lint && npm run typecheck && npm run coverage && npm run build && npm run licenses
+```
+
+Points worth knowing before you push:
+
+- The Ajv standalone validators in `src/generated/` are committed, and CI fails
+  if regenerating them produces a diff. The pydantic models remain the source
+  of truth for the schemas, so a schema change means re-running
+  `npm run generate-validators` and committing the result.
+- `npm run coverage` enforces line/function coverage at 100% and branches at
+  96%; `npm run lint` runs with `--max-warnings 0`.
+- Browser, layout, accessibility, and network suites run under Playwright
+  (`npm run test:browser`) against chromium, firefox, and webkit. Locally you
+  may only have some of those browsers; CI covers all three.
+- The production bundle is checked for leaked developer paths and test
+  fixtures, so keep absolute paths and golden files out of shipped code.
+
+## Cutting a release
+
+Maintainer checklist; the ordering matters:
+
+1. Bump the version in **both** [pyproject.toml](pyproject.toml)
+   (`project.version`) and [CITATION.cff](CITATION.cff) (`version:`), and add
+   `date-released:` to `CITATION.cff`. Nothing enforces that these agree, so a
+   mismatch ships a distribution whose citation metadata names a different
+   version. The report/manifest `schema_version` is versioned independently and
+   is bumped only when a payload changes.
+2. Move the `## [Unreleased]` heading in [CHANGELOG.md](CHANGELOG.md) to the new
+   version with its release date.
+3. Publish a GitHub Release; [.github/workflows/publish.yml](.github/workflows/publish.yml)
+   builds the sdist and wheel and uploads them via PyPI Trusted Publishing.
 
 ## Use of AI tools
 
