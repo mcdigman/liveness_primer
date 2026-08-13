@@ -410,6 +410,7 @@ class PrimerRunner:
         *,
         side: str,
         command: tuple[str, ...],
+        runtime_env: tuple[tuple[str, str], ...],
         semaphore: asyncio.Semaphore,
     ) -> _SideOutcome:
         """Run the detector once on one side of one project (analysis step, §3).
@@ -422,6 +423,8 @@ class PrimerRunner:
             ``base`` or ``head``.
         command : tuple[str, ...]
             Detector command prefix for this side.
+        runtime_env : tuple[tuple[str, str], ...]
+            Side-specific managed environment variables.
         semaphore : asyncio.Semaphore
             The ``--jobs`` limiter.
 
@@ -440,6 +443,7 @@ class PrimerRunner:
             try:
                 environment = scrubbed_environment(home=workspace.home)
                 environment.update(self._adapter.invocation_env)
+                environment.update(runtime_env)
                 try:
                     async with asyncio.timeout(timeout):
                         result = await self._async_launcher(
@@ -530,6 +534,8 @@ class PrimerRunner:
         semaphore: asyncio.Semaphore,
         base_command: tuple[str, ...],
         head_command: tuple[str, ...],
+        base_runtime_env: tuple[tuple[str, str], ...],
+        head_runtime_env: tuple[tuple[str, str], ...],
     ) -> ProjectReport:
         """Analyze one project on both sides and diff the outcomes.
 
@@ -543,6 +549,10 @@ class PrimerRunner:
             Base detector command prefix.
         head_command : tuple[str, ...]
             Head detector command prefix.
+        base_runtime_env : tuple[tuple[str, str], ...]
+            Managed environment variables for the base side.
+        head_runtime_env : tuple[tuple[str, str], ...]
+            Managed environment variables for the head side.
 
         Returns
         -------
@@ -550,8 +560,24 @@ class PrimerRunner:
             The per-project slice of the blast radius.
         """
         async with asyncio.TaskGroup() as group:
-            base_task = group.create_task(self._invoke(item, side='base', command=base_command, semaphore=semaphore))
-            head_task = group.create_task(self._invoke(item, side='head', command=head_command, semaphore=semaphore))
+            base_task = group.create_task(
+                self._invoke(
+                    item,
+                    side='base',
+                    command=base_command,
+                    runtime_env=base_runtime_env,
+                    semaphore=semaphore,
+                )
+            )
+            head_task = group.create_task(
+                self._invoke(
+                    item,
+                    side='head',
+                    command=head_command,
+                    runtime_env=head_runtime_env,
+                    semaphore=semaphore,
+                )
+            )
         return self._project_report(item, base_task.result(), head_task.result())
 
     async def _analyze_all(
@@ -560,6 +586,8 @@ class PrimerRunner:
         *,
         base_command: tuple[str, ...],
         head_command: tuple[str, ...],
+        base_runtime_env: tuple[tuple[str, str], ...],
+        head_runtime_env: tuple[tuple[str, str], ...],
     ) -> tuple[ProjectReport, ...]:
         """Fan analysis out over projects under the jobs limit (contract §3).
 
@@ -571,6 +599,10 @@ class PrimerRunner:
             Base detector command prefix.
         head_command : tuple[str, ...]
             Head detector command prefix.
+        base_runtime_env : tuple[tuple[str, str], ...]
+            Managed environment variables for the base side.
+        head_runtime_env : tuple[tuple[str, str], ...]
+            Managed environment variables for the head side.
 
         Returns
         -------
@@ -586,6 +618,8 @@ class PrimerRunner:
                         semaphore=semaphore,
                         base_command=base_command,
                         head_command=head_command,
+                        base_runtime_env=base_runtime_env,
+                        head_runtime_env=head_runtime_env,
                     )
                 )
                 for item in work
@@ -687,7 +721,13 @@ class PrimerRunner:
         with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
             work, corpus_fetches = self._fetch_corpus(projects)
             project_reports = asyncio.run(
-                self._analyze_all(work, base_command=(pair.base.executable,), head_command=(pair.head.executable,))
+                self._analyze_all(
+                    work,
+                    base_command=(pair.base.executable,),
+                    head_command=(pair.head.executable,),
+                    base_runtime_env=pair.base.runtime_env,
+                    head_runtime_env=pair.head.runtime_env,
+                )
             )
         manifest = self._manifest(
             detector_repo=detector_repo,
@@ -727,7 +767,13 @@ class PrimerRunner:
         """
         work, corpus_fetches = self._fetch_corpus(projects)
         project_reports = asyncio.run(
-            self._analyze_all(work, base_command=tuple(base_cmd), head_command=tuple(head_cmd))
+            self._analyze_all(
+                work,
+                base_command=tuple(base_cmd),
+                head_command=tuple(head_cmd),
+                base_runtime_env=(),
+                head_runtime_env=(),
+            )
         )
         manifest = self._manifest(
             detector_repo=None,

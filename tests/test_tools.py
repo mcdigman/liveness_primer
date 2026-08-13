@@ -6,7 +6,7 @@ Adapters are tested against recorded raw-output fixtures.
 """
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -16,6 +16,7 @@ from liveness_primer.tools.base import (
     AdapterError,
     BuildRecipe,
     DetectorAdapter,
+    GoExecutableBuild,
     RawToolOutput,
     ToolchainRequirement,
     UnknownToolError,
@@ -50,8 +51,19 @@ def test_registry_rejects_unknown_tools() -> None:
 def test_build_recipe_digest_is_stable_and_content_sensitive() -> None:
     plain = BuildRecipe(backend='python-source')
     rust = BuildRecipe(backend='maturin', toolchain=(ToolchainRequirement(name='rust', minimum_version='1.74'),))
+    go = BuildRecipe(
+        backend='python-source',
+        go_executable=GoExecutableBuild(
+            source_dir=PurePosixPath('engine'),
+            package='./cmd/tool',
+            executable='tool-go',
+            runtime_env='TOOL_GO_BIN',
+            minimum_version='1.22',
+        ),
+    )
     assert plain.digest() == BuildRecipe(backend='python-source').digest()
     assert plain.digest() != rust.digest()
+    assert plain.digest() != go.digest()
 
 
 def test_build_invocation_defaults() -> None:

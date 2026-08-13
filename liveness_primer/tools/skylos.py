@@ -10,7 +10,7 @@ when a corpus config opts into the matching analysis (contract §4, §5).
 
 import json
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -20,6 +20,7 @@ from liveness_primer.tools.base import (
     AdapterCapabilities,
     AdapterError,
     BuildRecipe,
+    GoExecutableBuild,
     RawToolOutput,
     normalize_finding_path,
 )
@@ -157,7 +158,16 @@ class SkylosAdapter:
         has_severity=True,
         output_format='json',
     )
-    build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
+    build_recipe: BuildRecipe = BuildRecipe(
+        backend='python-source',
+        go_executable=GoExecutableBuild(
+            source_dir=PurePosixPath('skylos/engines/go'),
+            package='./cmd/skylos-go',
+            executable='skylos-go',
+            runtime_env='SKYLOS_GO_BIN',
+            minimum_version='1.22',
+        ),
+    )
 
     @staticmethod
     def parse(output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()) -> list[Finding]:

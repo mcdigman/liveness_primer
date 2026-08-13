@@ -32,6 +32,11 @@ liveness-primer run --tool vulture --project https://github.com/pytest-dev/plugg
 In CI, render the human report to the step summary and archive the JSON
 report — the CI-consumable product — from the same run:
 
+Managed Skylos comparisons build each revision's native Go engine when its
+source is present. Put Go 1.22 or newer on ``PATH`` first (for example with a
+SHA-pinned Go setup action in CI); builds are offline and never use an ambient
+``skylos-go`` binary.
+
 ```bash
 liveness-primer run --tool skylos --repo "$REPO" --old "$BASE" --new "$HEAD" \
   --all --output github --json-out liveness-primer-report.json \

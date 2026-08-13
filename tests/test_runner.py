@@ -3,18 +3,19 @@
 """Tests for the two-revision runner over the fake detector (contract §3, §15)."""
 
 import asyncio
+import contextlib
 import re
 import sys
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import cast
+from typing import cast, override
 
 import pytest
 
 from liveness_primer.config import CorpusProject, ToolSettings
 from liveness_primer.corpus import CheckoutStore
-from liveness_primer.envcache import DetectorEnvironments
+from liveness_primer.envcache import DetectorEnvironments, PreparedPair
 from liveness_primer.filesystem import atomic_write_text, read_small_text
 from liveness_primer.findings import ChangedField, DiffClass, DiffRollup, DiffTotals, Report
 from liveness_primer.isolation import UNENFORCED, Isolation
@@ -23,6 +24,7 @@ from liveness_primer.report import render_github, render_text
 from liveness_primer.report.terminal import TextRenderOptions
 from liveness_primer.runner import PrimerRunner, RunnerError, RunOptions, evaluate_gates, report_has_failures
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
+from liveness_primer.tools.base import DetectorAdapter
 from liveness_primer.tools.registry import get_adapter
 
 BASE_FINDING = FakeFinding(path='pkg/mod.py', line=5, symbol='unused_helper', kind='function', confidence=60)
@@ -373,6 +375,33 @@ class ScriptedEnvInstaller:
         return ('vulture @ file:///fake',)
 
 
+class RuntimeEnvDetectorEnvironments(DetectorEnvironments):
+    """Test provider that supplies distinct managed variables per side."""
+
+    @contextlib.contextmanager
+    @override
+    def prepare_pair(
+        self,
+        repo: str,
+        base_ref: str,
+        head_ref: str,
+        adapter: DetectorAdapter,
+    ) -> Iterator[PreparedPair]:
+        """Add side-specific runtime variables to a prepared pair.
+
+        Yields
+        ------
+        PreparedPair
+            Pair carrying distinct test values.
+        """
+        with super().prepare_pair(repo, base_ref, head_ref, adapter) as pair:
+            yield replace(
+                pair,
+                base=replace(pair.base, runtime_env=(('SKYLOS_GO_BIN', '/managed/base/skylos-go'),)),
+                head=replace(pair.head, runtime_env=(('SKYLOS_GO_BIN', '/managed/head/skylos-go'),)),
+            )
+
+
 MINIMAL_DETECTOR_PYPROJECT = '[build-system]\nrequires = []\n\n[project]\nname = "vulture"\nversion = "9.9"\n'
 
 
@@ -565,14 +594,38 @@ def test_analysis_runs_with_a_scrubbed_environment(
         assert 'liveness-primer-side-' in env['HOME']
 
 
-def test_managed_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, fake_detector_repo: str) -> None:
+def test_managed_run_end_to_end(
+    tmp_path: Path,
+    corpus_project: CorpusProject,
+    fake_detector_repo: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('SKYLOS_GO_BIN', '/ambient/skylos-go')
+    captured: list[Mapping[str, str] | None] = []
+
+    async def spying_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        captured.append(env)
+        return await run_async(list(argv), cwd=cwd, env=env)
+
     installer = ScriptedEnvInstaller()
-    environments = DetectorEnvironments(
+    environments = RuntimeEnvDetectorEnvironments(
         CheckoutStore(tmp_path / 'cache'),
         tmp_path / 'cache',
         installer=installer,
     )
-    report = runner_for(tmp_path).run_managed(
+    runner = PrimerRunner(
+        adapter=get_adapter('vulture'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+        async_launcher=spying_launcher,
+    )
+    report = runner.run_managed(
         [corpus_project],
         detector_repo=fake_detector_repo,
         base_ref='base-branch',
@@ -591,6 +644,10 @@ def test_managed_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, f
     assert manifest.base_cmd is None
     assert report.totals == DiffTotals(new=2, dropped=1)
     assert not report_has_failures(report)
+    assert {env['SKYLOS_GO_BIN'] for env in captured if env is not None} == {
+        '/managed/base/skylos-go',
+        '/managed/head/skylos-go',
+    }
     git_fetches = [record for record in manifest.fetches if record.kind == 'git']
     assert fake_detector_repo in {record.name for record in git_fetches}
     assert corpus_project.repo in {record.name for record in git_fetches}

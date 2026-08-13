@@ -63,6 +63,31 @@ class ToolchainRequirement:
 
 
 @dataclass(frozen=True, slots=True)
+class GoExecutableBuild:
+    """One Go executable built from a detector revision.
+
+    Attributes
+    ----------
+    source_dir : PurePosixPath
+        Checkout-relative Go module directory.
+    package : str
+        Go package passed to ``go build``.
+    executable : str
+        Output executable name inside the managed environment.
+    runtime_env : str
+        Environment variable receiving the managed executable path.
+    minimum_version : str
+        Minimum supported Go toolchain version.
+    """
+
+    source_dir: PurePosixPath
+    package: str
+    executable: str
+    runtime_env: str
+    minimum_version: str
+
+
+@dataclass(frozen=True, slots=True)
 class BuildRecipe:
     """Build recipe an adapter declares (contract §4).
 
@@ -72,10 +97,13 @@ class BuildRecipe:
         Build path; ``python-source`` is the generic source-install path.
     toolchain : tuple[ToolchainRequirement, ...]
         Toolchain prerequisites the runner verifies before building.
+    go_executable : GoExecutableBuild | None
+        Revision-scoped Go executable to build when its source is present.
     """
 
     backend: str
     toolchain: tuple[ToolchainRequirement, ...] = ()
+    go_executable: GoExecutableBuild | None = None
 
     def digest(self) -> str:
         """Hash the recipe for the environment-cache fingerprint (contract §3).
@@ -89,6 +117,17 @@ class BuildRecipe:
             {
                 'backend': self.backend,
                 'toolchain': [[entry.name, entry.minimum_version] for entry in self.toolchain],
+                'go_executable': (
+                    None
+                    if self.go_executable is None
+                    else {
+                        'source_dir': self.go_executable.source_dir.as_posix(),
+                        'package': self.go_executable.package,
+                        'executable': self.go_executable.executable,
+                        'runtime_env': self.go_executable.runtime_env,
+                        'minimum_version': self.go_executable.minimum_version,
+                    }
+                ),
             },
             sort_keys=True,
         )

@@ -8,7 +8,7 @@ import sys
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 import pytest
@@ -33,6 +33,8 @@ from liveness_primer.filesystem import atomic_write_bytes, atomic_write_text
 from liveness_primer.findings import DependencyDelta
 from liveness_primer.isolation import UNENFORCED, Isolation
 from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
+from liveness_primer.tools.base import BuildRecipe, GoExecutableBuild
+from liveness_primer.tools.skylos import SkylosAdapter
 from liveness_primer.tools.vulture import VultureAdapter
 
 PYPROJECT = """
@@ -168,6 +170,13 @@ def test_environment_fingerprint_varies_by_inputs() -> None:
     assert base != environment_fingerprint('https://other', 'a' * 40, adapter, 'pip 25.0')
     assert base != environment_fingerprint('https://r', 'b' * 40, adapter, 'pip 25.0')
     assert base != environment_fingerprint('https://r', 'a' * 40, adapter, 'uv 0.9')
+    assert base != environment_fingerprint(
+        'https://r',
+        'a' * 40,
+        adapter,
+        'pip 25.0',
+        toolchain_identity='go version go1.22.3',
+    )
 
 
 @dataclass
@@ -359,6 +368,30 @@ def detector_repo(tmp_path: Path) -> DetectorRepo:
     return DetectorRepo(url=repo_dir.as_uri(), path=repo_dir)
 
 
+@pytest.fixture
+def go_detector_repo(tmp_path: Path) -> DetectorRepo:
+    repo_dir = tmp_path / 'go-detector-origin'
+    repo_dir.mkdir()
+    git('init', '--quiet', str(repo_dir))
+    git('symbolic-ref', 'HEAD', 'refs/heads/base-branch', cwd=repo_dir)
+    git('config', 'user.email', 'test@example.invalid', cwd=repo_dir)
+    git('config', 'user.name', 'Test', cwd=repo_dir)
+    write_pyproject(repo_dir)
+    go_module = repo_dir / 'skylos' / 'engines' / 'go'
+    (go_module / 'cmd' / 'skylos-go').mkdir(parents=True)
+    atomic_write_text(go_module / 'go.mod', 'module example.invalid/skylos-go\n\ngo 1.22\n')
+    main = go_module / 'cmd' / 'skylos-go' / 'main.go'
+    atomic_write_text(main, 'package main\n// base revision\nfunc main() {}\n')
+    git('add', 'pyproject.toml', 'skylos', cwd=repo_dir)
+    git('commit', '--quiet', '-m', 'base', cwd=repo_dir)
+    git('checkout', '--quiet', '-b', 'head-branch', cwd=repo_dir)
+    write_pyproject(repo_dir, PYPROJECT.replace('tomli>=2', 'tomli>=2.1'))
+    atomic_write_text(main, 'package main\n// head revision\nfunc main() {}\n')
+    git('add', 'pyproject.toml', 'skylos', cwd=repo_dir)
+    git('commit', '--quiet', '-m', 'head', cwd=repo_dir)
+    return DetectorRepo(url=repo_dir.as_uri(), path=repo_dir)
+
+
 @dataclass
 class FakeInstaller:
     """Scripted installer that fabricates environments without pip."""
@@ -400,7 +433,7 @@ class FakeInstaller:
         """Create the environment directory like a real venv would."""
         del isolation
         self.events.append('create')
-        env_dir.mkdir(parents=True)
+        (env_dir / 'bin').mkdir(parents=True)
         self.created.append(env_dir)
         self.build_envs.append(env)
 
@@ -431,12 +464,68 @@ class FakeInstaller:
         return self.freezes.popleft()
 
 
+@dataclass
+class GoLauncher:
+    """Fake Go launcher that emits revision-distinct executable bytes."""
+
+    version: str = 'go version go1.22.3 test/arch\n'
+    version_returncode: int = 0
+    build_returncode: int = 0
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+    directories: list[Path | None] = field(default_factory=list)
+    envs: list[Mapping[str, str] | None] = field(default_factory=list)
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> LaunchResult:
+        """Record a Go probe or materialize its requested build output.
+
+        Returns
+        -------
+        LaunchResult
+            Scripted toolchain result.
+        """
+        del timeout
+        command = tuple(argv)
+        self.calls.append(command)
+        self.directories.append(cwd)
+        self.envs.append(env)
+        is_version = command[-1] == 'version'
+        returncode = self.version_returncode if is_version else self.build_returncode
+        if not is_version and returncode == 0:
+            assert cwd is not None
+            output = Path(command[command.index('-o') + 1])
+            source = cwd / 'cmd' / 'skylos-go' / 'main.go'
+            output.write_bytes(source.read_bytes())
+        return LaunchResult(
+            argv=command,
+            returncode=returncode,
+            stdout=self.version if is_version else '',
+            stderr='go failed' if returncode else '',
+            duration_seconds=0.0,
+            timed_out=False,
+        )
+
+
+@dataclass(slots=True)
+class GoTestAdapter(VultureAdapter):
+    """Vulture-compatible test adapter with a configurable Go build."""
+
+    build_recipe: BuildRecipe
+
+
 def environments(
     tmp_path: Path,
     installer: FakeInstaller,
     *,
     fresh: bool = False,
     lock_timeout: float | None = None,
+    launcher: SyncLauncher = run_sync,
 ) -> DetectorEnvironments:
     store = CheckoutStore(tmp_path / 'cache')
     extra: dict[str, float] = {} if lock_timeout is None else {'lock_timeout': lock_timeout}
@@ -445,6 +534,7 @@ def environments(
         tmp_path / 'cache',
         installer=installer,
         isolation=SANDBOX,
+        launcher=launcher,
         fresh=fresh,
         **extra,
     )
@@ -453,6 +543,319 @@ def environments(
 FREEZE_A = ('vulture @ file:///x', 'tomli==2.4.0')
 FREEZE_B = ('vulture @ file:///y', 'tomli==2.4.0')
 FREEZE_BUMPED = ('vulture @ file:///y', 'tomli==2.5.0')
+SKYLOS_FREEZE_A = ('skylos @ file:///x', 'tomli==2.4.0')
+SKYLOS_FREEZE_B = ('skylos @ file:///y', 'tomli==2.4.0')
+
+
+def _fake_go_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    compiler = tmp_path / 'fake-go'
+    compiler.write_bytes(b'fake compiler')
+    compiler.chmod(0o755)
+    monkeypatch.setattr(shutil, 'which', lambda name: str(compiler) if name == 'go' else None)
+    return compiler
+
+
+def test_skylos_builds_revision_scoped_go_executables(
+    tmp_path: Path,
+    go_detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compiler = _fake_go_on_path(tmp_path, monkeypatch)
+    monkeypatch.setenv('LP_PLANTED_SECRET', 'do-not-copy')
+    monkeypatch.setenv('SKYLOS_GO_BIN', '/ambient/skylos-go')
+    launcher = GoLauncher()
+    installer = FakeInstaller(freezes=deque([SKYLOS_FREEZE_A, SKYLOS_FREEZE_B]))
+
+    with environments(tmp_path, installer, launcher=launcher).prepare_pair(
+        go_detector_repo.url,
+        'base-branch',
+        'head-branch',
+        SkylosAdapter(),
+    ) as pair:
+        base_binary = Path(dict(pair.base.runtime_env)['SKYLOS_GO_BIN'])
+        head_binary = Path(dict(pair.head.runtime_env)['SKYLOS_GO_BIN'])
+        assert base_binary.read_bytes() != head_binary.read_bytes()
+        assert b'base revision' in base_binary.read_bytes()
+        assert b'head revision' in head_binary.read_bytes()
+        assert base_binary.parent == pair.base.env_dir / 'bin'
+        assert head_binary.parent == pair.head.env_dir / 'bin'
+
+    version_call, base_build, head_build = launcher.calls
+    assert version_call == ('sandbox-wrap', str(compiler), 'version')
+    for build_call in (base_build, head_build):
+        assert build_call[:3] == ('sandbox-wrap', str(compiler), 'build')
+        assert '-trimpath' in build_call
+        assert '-buildvcs=false' in build_call
+        assert '-mod=readonly' in build_call
+        assert build_call[-1] == './cmd/skylos-go'
+    for build_env in launcher.envs[1:]:
+        assert build_env is not None
+        assert 'LP_PLANTED_SECRET' not in build_env
+        assert 'SKYLOS_GO_BIN' not in build_env
+        assert build_env['GOPROXY'] == 'off'
+        assert build_env['GOSUMDB'] == 'off'
+        assert build_env['GOTOOLCHAIN'] == 'local'
+        assert build_env['GOWORK'] == 'off'
+        assert build_env['CGO_ENABLED'] == '0'
+        assert build_env['GOCACHE'].startswith(build_env['HOME'])
+        assert build_env['GOMODCACHE'].startswith(build_env['HOME'])
+        assert build_env['GOPATH'].startswith(build_env['HOME'])
+        assert build_env['TMPDIR'].startswith(build_env['HOME'])
+    assert pair.base.record.fingerprint != pair.head.record.fingerprint
+    manifest = json.loads((pair.base.env_dir / 'liveness-primer-env.json').read_text(encoding='utf-8'))
+    assert list(manifest['artifacts']) == ['bin/skylos-go']
+
+
+@pytest.mark.parametrize('corruption', ['missing', 'symlink', 'non-executable', 'content', 'manifest'])
+def test_skylos_rebuilds_a_corrupt_cached_go_executable(
+    tmp_path: Path,
+    go_detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+    corruption: str,
+) -> None:
+    _fake_go_on_path(tmp_path, monkeypatch)
+    first_launcher = GoLauncher()
+    first = FakeInstaller(freezes=deque([SKYLOS_FREEZE_A, SKYLOS_FREEZE_B]))
+    with environments(tmp_path, first, launcher=first_launcher).prepare_pair(
+        go_detector_repo.url,
+        'base-branch',
+        'head-branch',
+        SkylosAdapter(),
+    ) as primed:
+        pass
+    binary = Path(dict(primed.base.runtime_env)['SKYLOS_GO_BIN'])
+    manifest_path = primed.base.env_dir / 'liveness-primer-env.json'
+    if corruption == 'missing':
+        binary.unlink()
+    elif corruption == 'symlink':
+        binary.unlink()
+        binary.symlink_to(tmp_path / 'outside')
+    elif corruption == 'non-executable':
+        binary.chmod(0o644)
+    elif corruption == 'content':
+        binary.write_bytes(b'tampered')
+    else:
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        manifest['artifacts'] = dict[str, str]()
+        manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+
+    second_launcher = GoLauncher()
+    second = FakeInstaller(freezes=deque([SKYLOS_FREEZE_A]))
+    with environments(tmp_path, second, launcher=second_launcher).prepare_pair(
+        go_detector_repo.url,
+        'base-branch',
+        'head-branch',
+        SkylosAdapter(),
+    ) as pair:
+        pass
+    assert pair.base.record.rebuilt
+    assert pair.head.record.from_cache
+    assert b'base revision' in Path(dict(pair.base.runtime_env)['SKYLOS_GO_BIN']).read_bytes()
+    assert len(second_launcher.calls) == 2
+
+
+def test_skylos_without_engine_source_never_uses_an_ambient_binary(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shutil, 'which', lambda _name: None)
+    installer = FakeInstaller(freezes=deque([SKYLOS_FREEZE_A]))
+    with environments(tmp_path, installer).prepare_pair(
+        detector_repo.url,
+        'base-branch',
+        'base-branch',
+        SkylosAdapter(),
+    ) as pair:
+        managed = Path(dict(pair.base.runtime_env)['SKYLOS_GO_BIN'])
+    assert managed == pair.base.env_dir / 'bin' / 'skylos-go'
+    assert not managed.exists()
+
+
+def test_skylos_handles_engine_added_or_removed_between_revisions(
+    tmp_path: Path,
+    go_detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_go_on_path(tmp_path, monkeypatch)
+    origin = go_detector_repo.path
+    git('checkout', '--quiet', '-b', 'without-engine', cwd=origin)
+    shutil.rmtree(origin / 'skylos')
+    git('add', '--all', cwd=origin)
+    git('commit', '--quiet', '-m', 'remove engine', cwd=origin)
+
+    first = FakeInstaller(freezes=deque([SKYLOS_FREEZE_A, SKYLOS_FREEZE_B]))
+    with environments(tmp_path, first, launcher=GoLauncher()).prepare_pair(
+        go_detector_repo.url,
+        'base-branch',
+        'without-engine',
+        SkylosAdapter(),
+    ) as removed:
+        pass
+    assert Path(dict(removed.base.runtime_env)['SKYLOS_GO_BIN']).is_file()
+    assert not Path(dict(removed.head.runtime_env)['SKYLOS_GO_BIN']).exists()
+
+    second = FakeInstaller(freezes=deque())
+    with environments(tmp_path, second, launcher=GoLauncher()).prepare_pair(
+        go_detector_repo.url,
+        'without-engine',
+        'base-branch',
+        SkylosAdapter(),
+    ) as added:
+        pass
+    assert not Path(dict(added.base.runtime_env)['SKYLOS_GO_BIN']).exists()
+    assert Path(dict(added.head.runtime_env)['SKYLOS_GO_BIN']).is_file()
+    assert added.base.record.from_cache
+    assert added.head.record.from_cache
+
+
+def _go_build(*, source_dir: str = 'engine', minimum_version: str = '1.22') -> GoExecutableBuild:
+    return GoExecutableBuild(
+        source_dir=PurePosixPath(source_dir),
+        package='./cmd/tool',
+        executable='tool-go',
+        runtime_env='TOOL_GO_BIN',
+        minimum_version=minimum_version,
+    )
+
+
+def _go_adapter(*, source_dir: str = 'engine', minimum_version: str = '1.22') -> GoTestAdapter:
+    return GoTestAdapter(
+        build_recipe=BuildRecipe(
+            backend='python-source',
+            go_executable=_go_build(source_dir=source_dir, minimum_version=minimum_version),
+        )
+    )
+
+
+@pytest.mark.parametrize('source_dir', ['', '/absolute', '../escape', 'engine/../escape'])
+def test_go_source_directory_rejects_unsafe_paths(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    source_dir: str,
+) -> None:
+    installer = FakeInstaller(freezes=deque())
+    with (
+        pytest.raises(EnvCacheError, match='invalid Go build source'),
+        environments(tmp_path, installer).prepare_pair(
+            detector_repo.url,
+            'base-branch',
+            'head-branch',
+            _go_adapter(source_dir=source_dir),
+        ),
+    ):
+        pass
+
+
+def test_go_source_directory_rejects_symlinks_and_malformed_modules(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+) -> None:
+    origin = detector_repo.path
+    (origin / 'outside').mkdir()
+    (origin / 'outside' / 'go.mod').write_text('module outside\n', encoding='utf-8')
+    (origin / 'engine-link').symlink_to('outside')
+    (origin / 'engine-file').write_text('not a directory', encoding='utf-8')
+    (origin / 'engine-empty').mkdir()
+    (origin / 'engine-empty' / 'marker').write_text('tracked', encoding='utf-8')
+    (origin / 'engine-mod-link').mkdir()
+    (origin / 'engine-mod-link' / 'go.mod').symlink_to('../outside/go.mod')
+    git('add', '--all', cwd=origin)
+    git('commit', '--quiet', '-m', 'malformed engines', cwd=origin)
+
+    for source_dir, match in (
+        ('engine-link', 'traverses a symlink'),
+        ('engine-file', 'is not a directory'),
+        ('engine-empty', r'no regular go\.mod'),
+        ('engine-mod-link', r'no regular go\.mod'),
+    ):
+        installer = FakeInstaller(freezes=deque())
+        with (
+            pytest.raises(EnvCacheError, match=match),
+            environments(tmp_path, installer).prepare_pair(
+                detector_repo.url,
+                'head-branch',
+                'head-branch',
+                _go_adapter(source_dir=source_dir),
+            ),
+        ):
+            pass
+
+
+@pytest.mark.parametrize(
+    ('version', 'minimum', 'match'),
+    [
+        ('unexpected output\n', '1.22', 'could not parse'),
+        ('go version go1.22.3 test/arch\n', 'not-a-version', 'invalid Go toolchain version'),
+        ('go version go1.21.9 test/arch\n', '1.22', 'requires Go >= 1.22'),
+    ],
+)
+def test_go_toolchain_rejects_invalid_versions(
+    tmp_path: Path,
+    go_detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str,
+    minimum: str,
+    match: str,
+) -> None:
+    _fake_go_on_path(tmp_path, monkeypatch)
+    installer = FakeInstaller(freezes=deque())
+    with (
+        pytest.raises(EnvCacheError, match=match),
+        environments(tmp_path, installer, launcher=GoLauncher(version=version)).prepare_pair(
+            go_detector_repo.url,
+            'base-branch',
+            'head-branch',
+            _go_adapter(source_dir='skylos/engines/go', minimum_version=minimum),
+        ),
+    ):
+        pass
+
+
+def test_go_toolchain_requires_a_regular_working_compiler(
+    tmp_path: Path,
+    go_detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for compiler, launcher, match in (
+        (None, GoLauncher(), r'requires Go >= 1\.22 on PATH'),
+        (str(tmp_path), GoLauncher(), 'not a regular file'),
+        (str(_fake_go_on_path(tmp_path, monkeypatch)), GoLauncher(version_returncode=1), 'go version failed'),
+    ):
+        monkeypatch.setattr(shutil, 'which', lambda _name, result=compiler: result)
+        installer = FakeInstaller(freezes=deque())
+        with (
+            pytest.raises(EnvCacheError, match=match),
+            environments(tmp_path, installer, launcher=launcher).prepare_pair(
+                go_detector_repo.url,
+                'base-branch',
+                'head-branch',
+                _go_adapter(source_dir='skylos/engines/go'),
+            ),
+        ):
+            pass
+
+
+def test_go_build_failure_does_not_install_a_partial_binary(
+    tmp_path: Path,
+    go_detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_go_on_path(tmp_path, monkeypatch)
+    launcher = GoLauncher(build_returncode=1)
+    installer = FakeInstaller(freezes=deque())
+    with (
+        pytest.raises(EnvCacheError, match='build skylos-go failed'),
+        environments(tmp_path, installer, launcher=launcher).prepare_pair(
+            go_detector_repo.url,
+            'base-branch',
+            'head-branch',
+            SkylosAdapter(),
+        ),
+    ):
+        pass
+    env_dirs = tuple((tmp_path / 'cache' / 'envs').glob('*'))
+    assert all(not (entry / 'bin' / 'skylos-go').exists() for entry in env_dirs if entry.is_dir())
 
 
 def test_cold_cache_builds_both_and_records_fetches(tmp_path: Path, detector_repo: DetectorRepo) -> None:
@@ -622,7 +1025,17 @@ def test_corrupt_env_manifest_triggers_rebuild(tmp_path: Path, detector_repo: De
     ) as primed:
         pass
     manifest = primed.base.env_dir / 'liveness-primer-env.json'
-    for corrupt in ('not json', '[1]', '{"other": 1}', '{"freeze": "nope"}', '{"freeze": [1]}'):
+    valid = json.loads(manifest.read_text(encoding='utf-8'))
+    corrupt_manifests = (
+        'not json',
+        '[1]',
+        json.dumps({**valid, 'fingerprint': 'wrong'}),
+        json.dumps({**valid, 'freeze': 'nope'}),
+        json.dumps({**valid, 'freeze': [1]}),
+        json.dumps({**valid, 'artifacts': 'nope'}),
+        json.dumps({**valid, 'artifacts': {'bin/tool': 1}}),
+    )
+    for corrupt in corrupt_manifests:
         manifest.write_text(corrupt, encoding='utf-8')
         again = FakeInstaller(freezes=deque([FREEZE_A]))
         with environments(tmp_path, again).prepare_pair(

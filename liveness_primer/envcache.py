@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import sysconfig
@@ -24,7 +25,7 @@ import tomllib
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeGuard, runtime_checkable
 
 from filelock import BaseFileLock, FileLock, Timeout
 from packaging.requirements import InvalidRequirement, Requirement
@@ -35,17 +36,19 @@ from packaging.utils import (
     parse_sdist_filename,
     parse_wheel_filename,
 )
+from packaging.version import InvalidVersion, Version
 
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.findings import DependencyDelta, EnvironmentRecord, FetchRecord
 from liveness_primer.isolation import UNENFORCED, Isolation, scrubbed_environment
 from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
-from liveness_primer.tools.base import DetectorAdapter
+from liveness_primer.tools.base import DetectorAdapter, GoExecutableBuild
 
 _DEFAULT_BUILD_REQUIRES: tuple[str, ...] = ('setuptools>=40.8.0', 'wheel')
 
 _INSTALL_TIMEOUT = 1800.0
+_GO_VERSION_PATTERN = re.compile(r'\bgo(?P<version>[0-9]+(?:\.[0-9]+){1,2})\b')
 
 # Upper bound for the statically parsed pyproject.toml: real files are a few
 # KiB; anything larger is hostile or broken (contract §11 untrusted content).
@@ -58,6 +61,31 @@ class EnvCacheError(LivenessPrimerError):
 
 class UnsupportedDetectorError(EnvCacheError):
     """Raised for detectors violating the §4 static-metadata rule."""
+
+
+@dataclass(frozen=True, slots=True)
+class _GoToolchain:
+    """Resolved Go compiler used by one managed environment build."""
+
+    executable: str
+    identity: str
+
+
+@dataclass(frozen=True, slots=True)
+class _GoBuildPlan:
+    """Resolved revision-scoped Go build inputs."""
+
+    source: Path
+    recipe: GoExecutableBuild
+    toolchain: _GoToolchain
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedEnvironment:
+    """Validated private cache metadata for one managed environment."""
+
+    freeze: tuple[str, ...]
+    artifacts: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,6 +415,135 @@ def _checked(result: LaunchResult, *, action: str) -> LaunchResult:
         msg = f'{action} failed: {detail}'
         raise EnvCacheError(msg)
     return result
+
+
+def _artifact_digest(path: Path) -> str:
+    """Hash one regular, non-symlink build artifact.
+
+    Parameters
+    ----------
+    path : Path
+        Artifact path.
+
+    Returns
+    -------
+    str
+        SHA-256 hex digest.
+
+    Raises
+    ------
+    EnvCacheError
+        If the path is not a regular file.
+    """
+    if path.is_symlink() or not path.is_file():
+        msg = f'build artifact is not a regular file: {path.name}'
+        raise EnvCacheError(msg)
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1_048_576), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _go_source_directory(checkout: Path, build: GoExecutableBuild) -> Path | None:
+    """Resolve an optional Go module without following checkout symlinks.
+
+    Parameters
+    ----------
+    checkout : Path
+        Detector checkout.
+    build : GoExecutableBuild
+        Adapter-declared build specification.
+
+    Returns
+    -------
+    Path | None
+        Go module path, or ``None`` when the revision has no module.
+
+    Raises
+    ------
+    EnvCacheError
+        If the declared source is unsafe or malformed.
+    """
+    relative = build.source_dir
+    if not relative.parts or relative.is_absolute() or '..' in relative.parts:
+        msg = f'invalid Go build source directory: {relative.as_posix()!r}'
+        raise EnvCacheError(msg)
+    candidate = checkout
+    for part in relative.parts:
+        candidate /= part
+        if candidate.is_symlink():
+            msg = f'Go build source traverses a symlink: {relative.as_posix()}'
+            raise EnvCacheError(msg)
+    if not candidate.exists():
+        return None
+    if not candidate.is_dir():
+        msg = f'Go build source is not a directory: {relative.as_posix()}'
+        raise EnvCacheError(msg)
+    go_mod = candidate / 'go.mod'
+    if go_mod.is_symlink() or not go_mod.is_file():
+        msg = f'Go build source has no regular go.mod: {relative.as_posix()}'
+        raise EnvCacheError(msg)
+    return candidate
+
+
+def _resolve_go_toolchain(
+    build: GoExecutableBuild,
+    *,
+    launcher: SyncLauncher,
+    isolation: Isolation,
+) -> _GoToolchain:
+    """Resolve, validate, and identify the host Go compiler.
+
+    Parameters
+    ----------
+    build : GoExecutableBuild
+        Adapter-declared build specification.
+    launcher : SyncLauncher
+        Audited launcher for the version probe.
+    isolation : Isolation
+        Network isolation wrapper.
+
+    Returns
+    -------
+    _GoToolchain
+        Validated compiler path and cache identity.
+
+    Raises
+    ------
+    EnvCacheError
+        If Go is missing, invalid, or too old.
+    """
+    executable = shutil.which('go')
+    if executable is None:
+        msg = f'{build.executable} requires Go >= {build.minimum_version} on PATH'
+        raise EnvCacheError(msg)
+    resolved = Path(executable).resolve()
+    if not resolved.is_file():
+        msg = f'Go toolchain is not a regular file: {executable}'
+        raise EnvCacheError(msg)
+    with tempfile.TemporaryDirectory(prefix='liveness-primer-go-version-home-') as scratch_home:
+        env = scrubbed_environment(home=Path(scratch_home))
+        env['GOTOOLCHAIN'] = 'local'
+        result = _checked(
+            launcher(isolation.wrap([str(resolved), 'version']), env=env, timeout=60.0),
+            action='go version',
+        )
+    match = _GO_VERSION_PATTERN.search(result.stdout)
+    if match is None:
+        msg = f'could not parse Go version from {result.stdout.strip()!r}'
+        raise EnvCacheError(msg)
+    try:
+        version = Version(match.group('version'))
+        minimum = Version(build.minimum_version)
+    except InvalidVersion as exc:
+        msg = f'invalid Go toolchain version: {exc}'
+        raise EnvCacheError(msg) from exc
+    if version < minimum:
+        msg = f'{build.executable} requires Go >= {minimum}; found {version}'
+        raise EnvCacheError(msg)
+    identity = f'{result.stdout.strip()} sha256:{_artifact_digest(resolved)}'
+    return _GoToolchain(executable=str(resolved), identity=identity)
 
 
 @dataclass(frozen=True, slots=True)
@@ -789,7 +946,14 @@ def _fetch_records_for(wheelhouse: Path, added: Iterable[str]) -> tuple[FetchRec
     return tuple(records)
 
 
-def environment_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, installer_identity: str) -> str:
+def environment_fingerprint(
+    repo: str,
+    sha: str,
+    adapter: DetectorAdapter,
+    installer_identity: str,
+    *,
+    toolchain_identity: str | None = None,
+) -> str:
     """Compute the full environment fingerprint (contract §3).
 
     Parameters
@@ -802,6 +966,8 @@ def environment_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, insta
         Adapter supplying the build-recipe hash.
     installer_identity : str
         Installer name and version.
+    toolchain_identity : str | None
+        Native toolchain identity when the revision builds an artifact.
 
     Returns
     -------
@@ -818,25 +984,107 @@ def environment_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, insta
             'abi': sysconfig.get_config_var('SOABI') or '',
             'platform': sysconfig.get_platform(),
             'installer': installer_identity,
+            'toolchain': toolchain_identity,
         },
         sort_keys=True,
     )
     return hashlib.sha256(material.encode('utf-8')).hexdigest()[:24]
 
 
-def _read_env_manifest(env_manifest: Path) -> tuple[str, ...] | None:
+def _is_str_list(value: object) -> TypeGuard[list[str]]:
+    """Check for a list containing only strings.
+
+    Parameters
+    ----------
+    value : object
+        Untrusted manifest value.
+
+    Returns
+    -------
+    TypeGuard[list[str]]
+        Whether the value is a string list.
+    """
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_str_dict(value: object) -> TypeGuard[dict[str, str]]:
+    """Check for a string-to-string dictionary.
+
+    Parameters
+    ----------
+    value : object
+        Untrusted manifest value.
+
+    Returns
+    -------
+    TypeGuard[dict[str, str]]
+        Whether the value is a string dictionary.
+    """
+    return isinstance(value, dict) and all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    )
+
+
+def _validate_cached_artifacts(
+    env_dir: Path,
+    artifacts: Mapping[str, str],
+    expected_artifacts: tuple[str, ...],
+) -> tuple[tuple[str, str], ...] | None:
+    """Validate every cached artifact against its recorded digest.
+
+    Parameters
+    ----------
+    env_dir : Path
+        Managed environment directory.
+    artifacts : Mapping[str, str]
+        Manifest artifact paths and digests.
+    expected_artifacts : tuple[str, ...]
+        Artifact paths required by the build recipe.
+
+    Returns
+    -------
+    tuple[tuple[str, str], ...] | None
+        Validated artifact entries, or ``None`` on mismatch.
+    """
+    if set(artifacts) != set(expected_artifacts):
+        return None
+    validated: list[tuple[str, str]] = []
+    for relative, digest in sorted(artifacts.items()):
+        artifact = env_dir / relative
+        try:
+            actual_digest = _artifact_digest(artifact)
+        except (EnvCacheError, OSError):
+            return None
+        if not os.access(artifact, os.X_OK) or actual_digest != digest:
+            return None
+        validated.append((relative, digest))
+    return tuple(validated)
+
+
+def _read_env_manifest(
+    env_manifest: Path,
+    *,
+    fingerprint: str,
+    env_dir: Path,
+    expected_artifacts: tuple[str, ...],
+) -> _CachedEnvironment | None:
     """Read a cached environment manifest, tolerating corruption.
 
     Parameters
     ----------
     env_manifest : Path
         The per-environment manifest file.
+    fingerprint : str
+        Expected environment fingerprint.
+    env_dir : Path
+        Managed environment containing recorded artifacts.
+    expected_artifacts : tuple[str, ...]
+        Relative artifact paths required by this revision's recipe.
 
     Returns
     -------
-    tuple[str, ...] | None
-        The stored freeze, or ``None`` when absent or unusable (which
-        triggers a rebuild).
+    _CachedEnvironment | None
+        Validated metadata, or ``None`` when a rebuild is required.
     """
     if env_manifest.is_symlink() or not env_manifest.is_file():
         return None
@@ -844,15 +1092,17 @@ def _read_env_manifest(env_manifest: Path) -> tuple[str, ...] | None:
         stored = json.loads(env_manifest.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return None
-    if not isinstance(stored, dict):
+    if not isinstance(stored, dict) or stored.get('fingerprint') != fingerprint:
         return None
     freeze = stored.get('freeze')
-    if not isinstance(freeze, list) or any(not isinstance(line, str) for line in freeze):
+    artifacts = stored.get('artifacts')
+    if not _is_str_list(freeze) or not _is_str_dict(artifacts):
         return None
-    return tuple(freeze)
+    validated = _validate_cached_artifacts(env_dir, artifacts, expected_artifacts)
+    return None if validated is None else _CachedEnvironment(freeze=tuple(freeze), artifacts=validated)
 
 
-def _write_env_manifest(env_manifest: Path, fingerprint: str, freeze: tuple[str, ...]) -> None:
+def _write_env_manifest(env_manifest: Path, fingerprint: str, cached: _CachedEnvironment) -> None:
     """Atomically replace one environment manifest.
 
     Parameters
@@ -861,10 +1111,16 @@ def _write_env_manifest(env_manifest: Path, fingerprint: str, freeze: tuple[str,
         Destination manifest path.
     fingerprint : str
         Full environment fingerprint.
-    freeze : tuple[str, ...]
-        Installed distribution freeze.
+    cached : _CachedEnvironment
+        Installed distribution freeze and native-artifact digests.
     """
-    payload = json.dumps({'fingerprint': fingerprint, 'freeze': list(freeze)})
+    payload = json.dumps(
+        {
+            'fingerprint': fingerprint,
+            'freeze': list(cached.freeze),
+            'artifacts': dict(cached.artifacts),
+        }
+    )
     descriptor, temporary_name = tempfile.mkstemp(prefix='.liveness-primer-env-', dir=env_manifest.parent)
     temporary = Path(temporary_name)
     try:
@@ -887,11 +1143,14 @@ class EnvHandle:
         The virtualenv directory.
     executable : str
         Path to the detector console script.
+    runtime_env : tuple[tuple[str, str], ...]
+        Side-specific managed environment variables for analysis.
     """
 
     record: EnvironmentRecord
     env_dir: Path
     executable: str
+    runtime_env: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -933,6 +1192,8 @@ class DetectorEnvironments:
         prefetch.
     isolation : Isolation
         Network isolation for build-step subprocesses (contract §11).
+    launcher : SyncLauncher
+        Audited launcher for native toolchain probes and builds.
     fresh : bool
         Force same-run rebuilds of both environments (``--fresh``).
     lock_timeout : float
@@ -946,6 +1207,7 @@ class DetectorEnvironments:
         *,
         installer: Installer,
         isolation: Isolation = UNENFORCED,
+        launcher: SyncLauncher = run_sync,
         fresh: bool = False,
         lock_timeout: float = _INSTALL_TIMEOUT,
     ) -> None:
@@ -953,6 +1215,8 @@ class DetectorEnvironments:
         self._cache_dir = cache_dir
         self._installer = installer
         self._isolation = isolation
+        validate_sync_launcher(launcher)
+        self._launcher = launcher
         self._fresh = fresh
         self._lock_timeout = lock_timeout
         self._fetches: list[FetchRecord] = []
@@ -1014,7 +1278,91 @@ class DetectorEnvironments:
             requirements.extend(metadata.build_requires)
         return self._prefetch(requirements)
 
-    def _build(self, fingerprint: str, checkout: Path, wheelhouse: Path) -> tuple[str, ...]:
+    def _build_go_executable(
+        self,
+        env_dir: Path,
+        source: Path,
+        build: GoExecutableBuild,
+        toolchain: _GoToolchain,
+        *,
+        env: Mapping[str, str],
+    ) -> tuple[str, str]:
+        """Build one revision-scoped Go executable into its environment.
+
+        Parameters
+        ----------
+        env_dir : Path
+            Managed environment receiving the executable.
+        source : Path
+            Validated detector-revision Go module.
+        build : GoExecutableBuild
+            Adapter-declared build specification.
+        toolchain : _GoToolchain
+            Validated Go compiler and its cache identity.
+        env : Mapping[str, str]
+            Scrubbed, credential-free base environment.
+
+        Returns
+        -------
+        tuple[str, str]
+            Environment-relative executable path and SHA-256 digest.
+        """
+        destination = Path(env_executable(env_dir, build.executable))
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f'.{build.executable}-', dir=destination.parent)
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        scratch = Path(env['HOME'])
+        build_env = dict(env)
+        build_env.update(
+            {
+                'CGO_ENABLED': '0',
+                'GOCACHE': str(scratch / 'go-build-cache'),
+                'GOMODCACHE': str(scratch / 'go-module-cache'),
+                'GOPATH': str(scratch / 'go-path'),
+                'GOPROXY': 'off',
+                'GOSUMDB': 'off',
+                'GOTOOLCHAIN': 'local',
+                'GOWORK': 'off',
+                'TMPDIR': str(scratch / 'tmp'),
+            }
+        )
+        Path(build_env['TMPDIR']).mkdir()
+        argv = [
+            toolchain.executable,
+            'build',
+            '-trimpath',
+            '-buildvcs=false',
+            '-mod=readonly',
+            '-o',
+            str(temporary),
+            build.package,
+        ]
+        try:
+            _checked(
+                self._launcher(
+                    self._isolation.wrap(argv),
+                    cwd=source,
+                    env=build_env,
+                    timeout=_INSTALL_TIMEOUT,
+                ),
+                action=f'build {build.executable}',
+            )
+            digest = _artifact_digest(temporary)
+            temporary.chmod(0o755)
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        relative = destination.relative_to(env_dir).as_posix()
+        return relative, digest
+
+    def _build(
+        self,
+        fingerprint: str,
+        checkout: Path,
+        wheelhouse: Path,
+        *,
+        go_plan: _GoBuildPlan | None,
+    ) -> _CachedEnvironment:
         """Build one environment: venv, offline sandboxed install, freeze.
 
         Every build-step subprocess runs under the §11 sandbox with a
@@ -1028,11 +1376,13 @@ class DetectorEnvironments:
             Detector checkout to install.
         wheelhouse : Path
             Prefetched wheel cache both sides install from.
+        go_plan : _GoBuildPlan | None
+            Resolved native build inputs, when this revision has them.
 
         Returns
         -------
-        tuple[str, ...]
-            The freeze of the built environment.
+        _CachedEnvironment
+            The freeze and native-artifact digests of the built environment.
         """
         env_dir = self._cache_dir / 'envs' / Path(fingerprint).name
         if env_dir.exists():
@@ -1041,35 +1391,49 @@ class DetectorEnvironments:
             env = scrubbed_environment(home=Path(scratch_home))
             self._installer.create_venv(env_dir, isolation=self._isolation, env=env)
             self._installer.install_offline(env_dir, wheelhouse, checkout, isolation=self._isolation, env=env)
-        return self._installer.freeze(env_dir)
+            artifacts: tuple[tuple[str, str], ...] = ()
+            if go_plan is not None:
+                artifacts = (
+                    self._build_go_executable(
+                        env_dir,
+                        go_plan.source,
+                        go_plan.recipe,
+                        go_plan.toolchain,
+                        env=env,
+                    ),
+                )
+        return _CachedEnvironment(freeze=self._installer.freeze(env_dir), artifacts=artifacts)
 
     def _ensure(
         self,
         *,
-        repo: str,
         ref: str,
         sha: str,
+        checkout: Path,
         adapter: DetectorAdapter,
         fingerprint: str,
         wheelhouse: Callable[[], Path],
+        go_plan: _GoBuildPlan | None,
         force_rebuild: bool,
     ) -> EnvHandle:
         """Return a cached environment or build it; the caller holds its lock.
 
         Parameters
         ----------
-        repo : str
-            Detector repository URL.
         ref : str
             Ref as requested on the CLI.
         sha : str
             Resolved commit SHA.
+        checkout : Path
+            Materialized detector revision.
         adapter : DetectorAdapter
             Adapter for recipe, distribution, and executable names.
         fingerprint : str
             Full environment fingerprint of this ref.
         wheelhouse : Callable[[], Path]
             Lazy provider of the pair's prefetched wheelhouse.
+        go_plan : _GoBuildPlan | None
+            Resolved native build inputs, when this revision has them.
         force_rebuild : bool
             Skip cache reuse and rebuild.
 
@@ -1080,33 +1444,56 @@ class DetectorEnvironments:
         """
         env_dir = self._cache_dir / 'envs' / Path(fingerprint).name
         env_manifest = env_dir / 'liveness-primer-env.json'
-        cached_freeze = None if force_rebuild else _read_env_manifest(env_manifest)
-        if cached_freeze is not None:
+        go_build = adapter.build_recipe.go_executable
+        expected_artifacts: tuple[str, ...] = ()
+        if go_plan is not None:
+            expected_artifacts = (
+                Path(env_executable(env_dir, go_plan.recipe.executable)).relative_to(env_dir).as_posix(),
+            )
+        cached = (
+            None
+            if force_rebuild
+            else _read_env_manifest(
+                env_manifest,
+                fingerprint=fingerprint,
+                env_dir=env_dir,
+                expected_artifacts=expected_artifacts,
+            )
+        )
+        if cached is not None:
             record = EnvironmentRecord(
                 ref=ref,
                 sha=sha,
                 fingerprint=fingerprint,
-                freeze=cached_freeze,
+                freeze=cached.freeze,
                 from_cache=True,
                 rebuilt=False,
             )
         else:
             house = wheelhouse()
-            checkout = self._store.materialize(repo, sha)
-            freeze = self._build(fingerprint, checkout, house)
-            _write_env_manifest(env_manifest, fingerprint, freeze)
+            cached = self._build(
+                fingerprint,
+                checkout,
+                house,
+                go_plan=go_plan,
+            )
+            _write_env_manifest(env_manifest, fingerprint, cached)
             record = EnvironmentRecord(
                 ref=ref,
                 sha=sha,
                 fingerprint=fingerprint,
-                freeze=freeze,
+                freeze=cached.freeze,
                 from_cache=False,
                 rebuilt=True,
             )
+        runtime_env = (
+            () if go_build is None else ((go_build.runtime_env, env_executable(env_dir, go_build.executable)),)
+        )
         return EnvHandle(
             record=record,
             env_dir=env_dir,
             executable=env_executable(env_dir, adapter.executable),
+            runtime_env=runtime_env,
         )
 
     def _acquire_locks(self, stack: contextlib.ExitStack, fingerprints: Iterable[str]) -> None:
@@ -1168,8 +1555,36 @@ class DetectorEnvironments:
         if head_sha != base_sha:
             self._fetches.append(FetchRecord(kind='git', name=repo, resolved=head_sha))
         installer_identity = self._installer.identity()
-        base_fingerprint = environment_fingerprint(repo, base_sha, adapter, installer_identity)
-        head_fingerprint = environment_fingerprint(repo, head_sha, adapter, installer_identity)
+        base_checkout = self._store.materialize(repo, base_sha)
+        head_checkout = base_checkout if head_sha == base_sha else self._store.materialize(repo, head_sha)
+        go_build = adapter.build_recipe.go_executable
+        base_go_plan: _GoBuildPlan | None = None
+        head_go_plan: _GoBuildPlan | None = None
+        if go_build is not None:
+            base_go_source = _go_source_directory(base_checkout, go_build)
+            head_go_source = _go_source_directory(head_checkout, go_build)
+            if base_go_source is not None or head_go_source is not None:
+                go_toolchain = _resolve_go_toolchain(go_build, launcher=self._launcher, isolation=self._isolation)
+                if base_go_source is not None:
+                    base_go_plan = _GoBuildPlan(base_go_source, go_build, go_toolchain)
+                if head_go_source is not None:
+                    head_go_plan = _GoBuildPlan(head_go_source, go_build, go_toolchain)
+        base_toolchain_identity = None if base_go_plan is None else base_go_plan.toolchain.identity
+        head_toolchain_identity = None if head_go_plan is None else head_go_plan.toolchain.identity
+        base_fingerprint = environment_fingerprint(
+            repo,
+            base_sha,
+            adapter,
+            installer_identity,
+            toolchain_identity=base_toolchain_identity,
+        )
+        head_fingerprint = environment_fingerprint(
+            repo,
+            head_sha,
+            adapter,
+            installer_identity,
+            toolchain_identity=head_toolchain_identity,
+        )
         (self._cache_dir / 'envs').mkdir(parents=True, exist_ok=True)
         wheelhouse: Path | None = None
 
@@ -1189,21 +1604,23 @@ class DetectorEnvironments:
         with contextlib.ExitStack() as stack:
             self._acquire_locks(stack, (base_fingerprint, head_fingerprint))
             base = self._ensure(
-                repo=repo,
                 ref=base_ref,
                 sha=base_sha,
+                checkout=base_checkout,
                 adapter=adapter,
                 fingerprint=base_fingerprint,
                 wheelhouse=pair_wheelhouse,
+                go_plan=base_go_plan,
                 force_rebuild=self._fresh,
             )
             head = self._ensure(
-                repo=repo,
                 ref=head_ref,
                 sha=head_sha,
+                checkout=head_checkout,
                 adapter=adapter,
                 fingerprint=head_fingerprint,
                 wheelhouse=pair_wheelhouse,
+                go_plan=head_go_plan,
                 force_rebuild=self._fresh,
             )
             delta = dependency_delta(
@@ -1215,21 +1632,23 @@ class DetectorEnvironments:
                 # Attribution is temporal, never textual: rebuild both sides
                 # in this run before attributing the delta to the refs (§3).
                 base = self._ensure(
-                    repo=repo,
                     ref=base_ref,
                     sha=base_sha,
+                    checkout=base_checkout,
                     adapter=adapter,
                     fingerprint=base_fingerprint,
                     wheelhouse=pair_wheelhouse,
+                    go_plan=base_go_plan,
                     force_rebuild=True,
                 )
                 head = self._ensure(
-                    repo=repo,
                     ref=head_ref,
                     sha=head_sha,
+                    checkout=head_checkout,
                     adapter=adapter,
                     fingerprint=head_fingerprint,
                     wheelhouse=pair_wheelhouse,
+                    go_plan=head_go_plan,
                     force_rebuild=True,
                 )
                 delta = dependency_delta(
