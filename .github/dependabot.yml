@@ -1,0 +1,52 @@
+# Dependabot version updates. GitHub's Dependabot *security* updates are
+# already enabled for this repository; those only fire on advisories for
+# vulnerable dependencies. This file covers routine bumps, which matters most
+# for the workflows: every action is pinned to a full commit SHA, so nothing
+# else moves those pins. Dependabot rewrites the SHA and keeps the trailing
+# `# vX.Y.Z` comment in step.
+#
+# The Python dependencies in pyproject.toml are deliberately declared as
+# floors (`>=`) with no upper caps, so there is little for the pip ecosystem
+# to raise; it is listed anyway to catch caps that do exist (httpx <1) and any
+# future pin.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      # One PR per month for routine action bumps rather than one per action.
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      dev-dependencies:
+        dependency-type: development
+
+  # The explorer front end (explorer/package-lock.json) pins an exact tree,
+  # so npm updates here are real version movements rather than no-ops.
+  - package-ecosystem: npm
+    directory: /explorer
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(explorer)"
+    groups:
+      npm-development:
+        dependency-type: development
+      npm-production:
+        dependency-type: production

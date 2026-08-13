@@ -16,10 +16,12 @@ from liveness_primer.config import (
     ToolSettings,
     ad_hoc_project,
     classify_license,
+    default_corpus_path,
     github_owner_repo,
     load_corpus,
     select_projects,
 )
+from liveness_primer.tools.registry import adapter_analyses, adapter_names
 
 PIN_A = 'a' * 40
 PIN_B = 'b' * 40
@@ -426,3 +428,17 @@ def test_select_by_cost_ties_break_by_name() -> None:
     )
     names = [entry.name for entry in select_projects(corpus, tool='vulture', max_cost=4.0)]
     assert names == ['alpha']
+
+
+def test_packaged_corpus_loads_against_the_real_registry() -> None:
+    """The shipped corpus resolves inside the package and validates (contract §5).
+
+    The CLI's ``--corpus`` default points here, so this guards both the
+    packaging (the file must travel with the distribution) and the corpus
+    content against the adapters actually registered.
+    """
+    path = default_corpus_path()
+    assert path.is_file()
+    assert path.parent.parent.name == 'liveness_primer'
+    corpus = load_corpus(path, known_tools=adapter_names(), known_analyses=adapter_analyses())
+    assert corpus.projects

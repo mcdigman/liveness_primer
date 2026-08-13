@@ -41,7 +41,9 @@ This is the first release version of `liveness_primer`, so everything is new.
 - **Corpus** — a `corpus.yaml` validated into pydantic models,
   with per-tool overrides, `expected_clean` corpus-integrity warnings, and
   selection by `-k`, `--all`, or `--max-cost`. Seeded with permissively licensed,
-  pinned projects.
+  pinned projects. The corpus ships inside the package
+  (`liveness_primer/data/corpus.yaml`) and is the `--corpus` default, so an
+  installed `liveness-primer` works from any directory.
 - **License verification** — `corpus license-check` confirms each entry's
   declared SPDX ID against the GitHub API, and runs credential-free on pull
   requests.

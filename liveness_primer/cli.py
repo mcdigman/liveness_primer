@@ -20,7 +20,13 @@ from importlib.metadata import version as metadata_version
 from pathlib import Path
 from typing import cast
 
-from liveness_primer.config import CorpusProject, ad_hoc_project, load_corpus, select_projects
+from liveness_primer.config import (
+    CorpusProject,
+    ad_hoc_project,
+    default_corpus_path,
+    load_corpus,
+    select_projects,
+)
 from liveness_primer.corpus import CheckoutStore, cache_root
 from liveness_primer.envcache import DetectorEnvironments, choose_installer
 from liveness_primer.errors import LivenessPrimerError
@@ -172,7 +178,9 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     run_parser.add_argument('-k', dest='keywords', action='append', default=[], help='select projects by substring')
     run_parser.add_argument('--all', dest='select_all', action='store_true', help='select every applicable project')
     run_parser.add_argument('--max-cost', type=_positive_float, help='greedy selection budget in CPU-seconds')
-    run_parser.add_argument('--corpus', type=Path, default=Path('corpus.yaml'), help='corpus YAML file')
+    run_parser.add_argument(
+        '--corpus', type=Path, default=default_corpus_path(), help='corpus YAML file (default: the packaged corpus)'
+    )
     run_parser.add_argument('--project', dest='project_url', help='ad-hoc mode: single target repository URL')
     run_parser.add_argument(
         '--analyses',
@@ -236,9 +244,13 @@ def _add_corpus_parser(subcommands: 'argparse._SubParsersAction[argparse.Argumen
     corpus_parser = subcommands.add_parser('corpus', help='corpus maintenance commands')
     corpus_commands = corpus_parser.add_subparsers(dest='corpus_command', required=True)
     validate_parser = corpus_commands.add_parser('validate', help='parse and validate the corpus YAML')
-    validate_parser.add_argument('--corpus', type=Path, default=Path('corpus.yaml'), help='corpus YAML file')
+    validate_parser.add_argument(
+        '--corpus', type=Path, default=default_corpus_path(), help='corpus YAML file (default: the packaged corpus)'
+    )
     license_parser = corpus_commands.add_parser('license-check', help='verify licenses via the GitHub API (§6)')
-    license_parser.add_argument('--corpus', type=Path, default=Path('corpus.yaml'), help='corpus YAML file')
+    license_parser.add_argument(
+        '--corpus', type=Path, default=default_corpus_path(), help='corpus YAML file (default: the packaged corpus)'
+    )
 
 
 def _add_schema_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentParser]') -> None:

@@ -360,6 +360,22 @@ def _check_tool_names(
         raise CorpusConfigError('; '.join(problems))
 
 
+def default_corpus_path() -> Path:
+    """Locate the corpus file shipped inside the installed package.
+
+    The corpus travels with the distribution rather than sitting at the
+    repository root, so ``liveness-primer run`` and ``corpus validate`` work
+    from any working directory once the package is installed. Operators
+    override it with ``--corpus``.
+
+    Returns
+    -------
+    Path
+        ``liveness_primer/data/corpus.yaml``.
+    """
+    return Path(__file__).parent / 'data' / 'corpus.yaml'
+
+
 def _read_corpus_text(path: Path) -> str:
     """Read a bounded UTF-8 corpus file from a regular resolved path.
 

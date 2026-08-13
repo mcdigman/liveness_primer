@@ -1,0 +1,24 @@
+# Read the Docs build configuration.
+# https://docs.readthedocs.com/platform/stable/config-file/v2.html
+#
+# The build mirrors .github/workflows/docs.yml: uv resolves the project plus the
+# [docs] extra, then sphinx-build runs with -W --keep-going so any warning
+# (broken reference, stale docstring) fails the build here exactly as it does in
+# CI. docs/conf.py reads the release from importlib.metadata, so the package
+# itself must be installed in the build environment -- `uv run` installs it
+# alongside the extra.
+
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    # The CI docs job builds on 3.14; Read the Docs does not yet offer it as a
+    # stock tool version, and the docs build is not version-sensitive (the
+    # project floor is 3.12).
+    python: "3.13"
+  commands:
+    - pip install uv
+    - >
+      uv run --extra docs
+      sphinx-build -W --keep-going -b html docs $READTHEDOCS_OUTPUT/html

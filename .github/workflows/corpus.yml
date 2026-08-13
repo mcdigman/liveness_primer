@@ -6,9 +6,9 @@ name: Corpus
 on:
   push:
     branches: [main]
-    paths: [corpus.yaml]
+    paths: [liveness_primer/data/corpus.yaml]
   pull_request:
-    paths: [corpus.yaml]
+    paths: [liveness_primer/data/corpus.yaml]
   workflow_dispatch:
 
 concurrency:
