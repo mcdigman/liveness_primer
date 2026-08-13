@@ -35,7 +35,10 @@ point*: pre-triage, triage, or post-triage (§10).
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
   statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and
   `[build-system].requires` — no build backend is invoked, so no code from the detector
-  refs executes; every fetch is recorded in the run manifest — URLs,
+  refs executes. The build installs the checkout with no extras selected, so v1 prefetches
+  only `[project.dependencies]` and `[build-system].requires`;
+  `[project.optional-dependencies]` is still parsed and validated (§4) but not fetched.
+  Every fetch is recorded in the run manifest — URLs,
   resolved SHAs, installed versions), then a **build** step (networking disabled per §11;
   the detector installs from the local cache, e.g. `--no-index --find-links`, so
   build-backend hooks run sandboxed; Rust detectors prefetch crates during fetch and build
@@ -64,7 +67,7 @@ point*: pre-triage, triage, or post-triage (§10).
   non-comparable runs. `--fresh` forces same-run rebuilds of both environments.
 - Concurrency: `asyncio` orchestrates per-project subprocesses; parallelism is set by
   `--jobs N` and the default per-(project, tool) timeout by `--timeout S` (§12), with
-  per-(project, tool) `timeout` overrides in the corpus TOML (§5).
+  per-(project, tool) `timeout` overrides in the corpus YAML (§5).
 
 ## 4. Supported detectors
 
@@ -81,10 +84,21 @@ point*: pre-triage, triage, or post-triage (§10).
   requirements — `dependencies`/`optional-dependencies` must not be listed in `dynamic`
   (§3); other fields such as `version` may be dynamic and resolve during the sandboxed
   build (vulture's `dynamic = ["version"]` is fine). Detectors with dynamic dependency
-  metadata are unsupported. Adapters ingest only dead-code finding kinds: other report
-  categories (e.g. skylos's security, secrets, and quality findings) are filtered at the
-  adapter. The interface is not Python-specific (paths plus optional symbol), leaving room
-  for tools such as `knip`.
+  metadata are unsupported. Adapters ingest dead-code finding kinds by default; a
+  detector's other report categories (e.g. skylos's security, secrets, quality, and
+  AI-defect diagnostics) are ingested only where a corpus per-tool table opts in through
+  `analyses`, validated against the adapter's declared analysis set (§5). Adapters may
+  declare a static, side-identical invocation environment; the skylos adapter pins config
+  discovery to a packaged neutral file via `SKYLOS_CONFIG_FILE`, so an analyzed
+  repository's `[tool.skylos]` policy cannot alter which analyses execute, and pins
+  `SKYLOS_GREP_BUDGET` so both sides run the grep-verify post-pass under the same
+  wall-clock allowance rather than the ambient default. Skylos still
+  merges a target `.skylos/config.yaml`, which can enable unselected analyses and affect
+  execution cost, exit status, timeouts, and run completeness; revisions predating the
+  variable can likewise discover target configuration. Parse-side gating protects report
+  content in either case.
+  The interface is not Python-specific (paths plus optional symbol), leaving room for
+  tools such as `knip`.
 - Future candidates (non-normative): `pydeadcode`, `dangle`, `deadpy`, `uncalled`, and
   subset-capability tools (ruff, mypy, pyright, CodeQL).
 - Licensing rule: GPL/AGPL detectors (e.g. `deadcode` AGPL-3.0, pylint GPL-2.0) may only
@@ -93,18 +107,24 @@ point*: pre-triage, triage, or post-triage (§10).
 
 ## 5. Corpus specification
 
-- The corpus is a human-authored TOML file parsed with `tomllib` and validated into pydantic
+- The corpus is a human-authored YAML file parsed with PyYAML and validated into pydantic
   models (the source of truth); JSON Schema is exported from the models (§7).
 - Per-project fields: `name` (unique key; the same repository may appear under distinct
   names to allow multiple pins), `repo` URL, `license` (SPDX ID), exactly one of `pin`
   (commit SHA) or `branch` (latest-on-branch), and per-tool tables with command/argument
-  overrides, target paths, `expected_clean: bool`, `timeout` overrides (§3), declared
+  overrides, opt-in `analyses` (validated against the adapter's declared set and recorded
+  per project in the report), target paths, `expected_clean: bool`, `timeout` overrides
+  (§3), declared
   `cost` in CPU-seconds (approximate, reference runner; measured actuals are recorded in
   the report), and include/exclude tool lists.
 - `expected_clean` semantics: findings or a nonzero tool exit on the base side of an
   expected-clean (project, tool) pair are reported as **corpus-integrity warnings** (the
   comparison still runs); `--fail-on corpus-integrity` opts into gating on them.
 - Ad-hoc mode: a single target repository given on the CLI with default settings.
+- `--analyses NAME[,NAME...]` (repeatable, comma-separable) selects adapter-declared
+  analyses for a run: it is the selection in ad-hoc mode and overrides corpus-declared
+  selections for every selected project otherwise. The reserved name `none` (alone)
+  selects no analyses; empty names are rejected.
 - Selection: by name (`-k`), `--all`, or `--max-cost SECONDS` (greedy under declared cost
   for the chosen tool).
 - The initial corpus list is deferred to a Phase 1 task (~5–10 permissively licensed,
@@ -131,33 +151,38 @@ point*: pre-triage, triage, or post-triage (§10).
 - A single package-wide `SCHEMA_VERSION` (semver) is embedded in every serialized payload.
   Minor versions are additive-only; breaking changes require a major bump.
 - `Finding` fields: tool, project, path (repo-relative POSIX), symbol (nullable), kind,
-  message, line span, `confidence: int | None`, raw excerpt reference.
-- Finding identity: a stable hash over (tool, project name, path, symbol, kind), excluding
-  line and confidence. Identity carries no positional ordinal; a report holds a *multiset*
-  of occurrences (line span, message, confidence) per identity. Persistent references — the
+  message, line span, `confidence: int | None`, `severity: str | None` (normalized:
+  uppercased, stripped to ASCII letters and digits), rule ID (nullable), raw excerpt
+  reference.
+- Finding identity: a stable hash over (tool, project name, path, symbol, kind, rule ID,
+  start line, end line), excluding message, confidence, and severity. A changed rule code
+  or a moved span is a dropped finding plus a new one, never one `changed` finding; for
+  detectors reporting truncated symbol names the line number is an inseparable part of the
+  identity. Identity carries no positional ordinal; a report holds a *multiset* of
+  occurrences (message, confidence, severity) per identity. Persistent references — the
   `bisect` input in particular — use a *finding locator* (report reference, identity, line),
-  never a position-dependent key.
+  never a position-dependent key; the identity pins the start line, so `line` is
+  denormalized display data.
 
 ## 8. Diff engine
 
 - Both revisions see identical files. Matching is deterministic and order-independent. The
   **canonical occurrence key** is the complete normalized occurrence tuple in fixed field
-  order (start line, end line, message, confidence, plus any observable field added later);
-  it governs all sorting below and the report ordering that `--occurrence` indexes (§12).
-  Stages: (1) full-field-equal occurrences are removed by multiset intersection;
-  (2) remaining occurrences sharing (identity, start line) are paired in canonical-key
-  order as `changed`; (3) remaining occurrences sharing identity are paired across lines
-  by a deterministic order-preserving alignment (both sides in canonical-key order, gaps
-  allowed) minimizing total start-line distance, ties broken toward earlier lines, as
-  `changed`; (4) leftovers classify as `new` or `dropped`. After
-  stage 1, canonical-key ties occur only between fully identical, interchangeable
-  occurrences. `changed` carries a `changed_fields ⊆ {line-span, message, confidence}` set
-  (confidence only for tools declaring that capability). Every normalized observable field
-  participates in the comparison; no identity-stable behavior change may go silently
-  unclassified.
+  order (start line, end line, message, confidence, rule ID, severity, plus any observable
+  field added later); it governs all sorting below and the report ordering that
+  `--occurrence` indexes (§12). Stages: (1) full-field-equal occurrences are removed by
+  multiset intersection; (2) surviving occurrences sharing the identity — which covers the
+  rule ID and line span — are paired positionally in canonical-key order as `changed`;
+  (3) leftovers classify as `new` or `dropped`. After stage 1, canonical-key ties occur
+  only between fully identical, interchangeable occurrences. `changed` carries a
+  `changed_fields ⊆ {message, confidence, severity}` set (confidence and severity only for
+  tools declaring the matching capability). Every normalized observable field participates
+  in the comparison; no identity-stable behavior change may go silently unclassified.
 - Caps on maximum results and excerpt lines are configurable; the report always states
-  totals before truncation (new/dropped/changed counts, with confidence changes broken out,
-  per project and overall) and notes any truncation. Rendered reports cap message-only
+  totals before truncation (new/dropped/changed counts, with confidence-only,
+  message-only, severity-only, and multiple-field changes broken out so they sum to the
+  changed count, per project and overall) and
+  notes any truncation. Rendered reports cap message-only
   changes to a count plus bounded examples; the JSON report retains full detail.
 
 ## 9. Reporting
@@ -229,8 +254,9 @@ printing the package version and `SCHEMA_VERSION`. Commands:
 
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
   [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
-  [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]`
-- `corpus validate` — parse and validate the corpus TOML.
+  [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]
+  [--analyses NAME[,NAME...]]`
+- `corpus validate` — parse and validate the corpus YAML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF
   --bad REF [--repo URL] [--predicate P]` — binary search over detector commits. The prior
@@ -296,7 +322,7 @@ design intentionally blocks it, but it is not gated in CI initially.
 
 ## 17. Dependencies
 
-- Runtime: `pydantic>=2`, `platformdirs>=4`, `filelock>=3`, `packaging>=24`.
+- Runtime: `pydantic>=2`, `platformdirs>=4`, `filelock>=3`, `packaging>=24`, `PyYAML>=6`.
 - Extras: `[license]` → `httpx` (license verification only).
 - Stdlib elsewhere: `tomllib`, `argparse`, `subprocess`/`venv`, `asyncio`. Git via
   subprocess; `uv` used opportunistically, never required. Detectors are never dependencies
@@ -312,7 +338,7 @@ design intentionally blocks it, but it is not gated in CI initially.
 
 ## 19. Phases and acceptance criteria
 
-1. **Core.** Corpus TOML and validation, the `vulture` and `skylos` adapters, two-revision
+1. **Core.** Corpus YAML and validation, the `vulture` and `skylos` adapters, two-revision
    runner with fingerprint-keyed caching and enforced network isolation, diff engine, all
    three report modes, `corpus validate` and `license-check` CI, schemas exported and
    sync-checked, initial corpus list chosen. Acceptance: an end-to-end run against a real

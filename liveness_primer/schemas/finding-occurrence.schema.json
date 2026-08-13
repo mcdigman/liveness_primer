@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "SourceExcerpt": {
+      "additionalProperties": false,
+      "description": "Bounded pinned-source evidence for one occurrence.\n\nThe excerpt is derived review context read from the byte-identical\npinned corpus checkout; it never participates in finding identity, the\ncanonical occurrence key, or changed-field classification.\n\nAttributes\n----------\nstart_line : int\n    Line number of the first retained line (1-based); always the\n    occurrence's reported ``start_line``.\nlines : tuple[str, ...]\n    Retained consecutive source lines, starting at ``start_line``.\nomitted_lines : int\n    Existing reported-span lines dropped by the evidence budget.",
+      "properties": {
+        "lines": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Lines",
+          "type": "array"
+        },
+        "omitted_lines": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Omitted Lines",
+          "type": "integer"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_line",
+        "lines"
+      ],
+      "title": "SourceExcerpt",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One occurrence of a finding identity in a report.\n\nA report holds a multiset of occurrences per identity; the canonical\noccurrence key orders them deterministically.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nmessage : str\n    Normalized message text.\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nseverity : SeverityLabel\n    Canonical severity label (e.g. ``HIGH``), for tools declaring the\n    capability; normalized on validation.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one.\nraw_excerpt : str | None\n    Untrusted raw detector output for this occurrence; sanitized on render.\nsource_excerpt : SourceExcerpt | None\n    Bounded pinned-source evidence.",
+  "properties": {
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "end_line": {
+      "minimum": 1,
+      "title": "End Line",
+      "type": "integer"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "raw_excerpt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Raw Excerpt"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
+    "schema_version": {
+      "const": "2.1.0",
+      "default": "2.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "severity": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Severity"
+    },
+    "source_excerpt": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SourceExcerpt"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "start_line": {
+      "minimum": 1,
+      "title": "Start Line",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "start_line",
+    "end_line",
+    "message"
+  ],
+  "title": "FindingOccurrence",
+  "type": "object"
+}

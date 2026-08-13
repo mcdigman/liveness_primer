@@ -29,12 +29,23 @@ keywords = [
 ]
 
 dependencies = [
-    "pydantic>=2",
+    # Contract §17 pins pydantic>=2; 2.8 supports the project Python 3.13
+    # and continues to support the 3.12 lowest-direct-resolution CI job.
+    "pydantic>=2.8",
     "platformdirs>=4",
     "filelock>=3.20.3",
     "packaging>=24",
+    "PyYAML>=6.0.1",
+    # The human-readable reporting contract §6.1 amends initial contract §17:
+    # the terminal renderer uses Rich for Unicode width, ANSI styling, and
+    # OSC-8 links rather than implementing them independently. The floor is
+    # installed and tested by the lowest-direct-resolution CI jobs.
+    "rich>=13",
 ]
 requires-python = ">=3.12"
+
+[project.scripts]
+liveness-primer = "liveness_primer.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mcdigman/liveness_primer"
@@ -55,7 +66,11 @@ dev = [
     "mypy",
     "pyright",
     "pyrefly",
+    "types-PyYAML",
     "prek",
+    # license_check.py imports httpx (the [license] extra); the dev extra
+    # carries it so tests and the strict type checkers resolve it.
+    "httpx>=0.28,<1",
 ]
 # Sphinx HTML documentation build (docs/). Built locally with
 # `make -C docs html` and in CI by .github/workflows/docs.yml.
@@ -108,9 +123,18 @@ exclude = '\.git|\.tox|\.venv|\.eggs|_build|buck-out|build|dist|__pycache__|\.my
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.report]
+# exclude_also appends to coverage's defaults rather than replacing them. The
+# script guard in cli.py delegates straight to main(), which the CLI tests call
+# directly; executing it under coverage would only re-enter a covered function.
+exclude_also = ["if __name__ == '__main__':"]
+
 [build-system]
 requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["liveness_primer*"]
+
+[tool.setuptools.package-data]
+liveness_primer = ["py.typed", "schemas/*.schema.json", "tools/*.toml"]

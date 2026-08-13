@@ -48,6 +48,11 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 [lint.flake8-quotes]
 inline-quotes="single"
 
+[lint.flake8-type-checking]
+# Pydantic models evaluate field annotations at class creation, so imports used
+# in them must stay runtime imports rather than move into TYPE_CHECKING blocks.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
 [lint.flake8-copyright]
 author = "Matthew C. Digman"
 min-file-size = 1024
@@ -99,8 +104,9 @@ min-file-size = 1024
 # are fixed names dictated by Sphinx.
 "docs/conf.py" = ["INP001"]
 # The audited launcher (contract §11) is the sole module allowed to touch the
-# raw subprocess APIs. S603 fires on every subprocess call, safe or not.
-"liveness_primer/launcher.py" = ["TID251", "S603"]
+# raw subprocess APIs. S603 fires on every subprocess call, safe or not, and
+# S404 fires on merely importing subprocess.
+"liveness_primer/launcher.py" = ["TID251", "S603", "S404"]
 
 [lint.pydocstyle]
 convention = "numpy"

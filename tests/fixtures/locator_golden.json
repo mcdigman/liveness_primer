@@ -1,0 +1,1056 @@
+{
+  "locators": [
+    {
+      "identity": "0b6221642d5235b00b0029ebc1d037477b871d95c3936c1eac75cb1967c1a81c",
+      "line": 5,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "0b6221642d5235b00b0029ebc1d037477b871d95c3936c1eac75cb1967c1a81c",
+      "line": 5,
+      "occurrence": 1,
+      "project": "alpha"
+    },
+    {
+      "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+      "line": 7,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+      "line": 7,
+      "occurrence": 1,
+      "project": "alpha"
+    },
+    {
+      "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+      "line": 7,
+      "occurrence": 2,
+      "project": "alpha"
+    },
+    {
+      "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+      "line": 8,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+      "line": 8,
+      "occurrence": 1,
+      "project": "alpha"
+    },
+    {
+      "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+      "line": 8,
+      "occurrence": 2,
+      "project": "alpha"
+    },
+    {
+      "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+      "line": 8,
+      "occurrence": 3,
+      "project": "alpha"
+    },
+    {
+      "identity": "4ca53992e973cb7309dce201c6a9570f39da40bb1f4ccd3e88a04cfeb34456ec",
+      "line": 9,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "ca41ed0a174bc1ccedad67e0b6df3e42027e461ed36bdd4e7bca77c155cad952",
+      "line": 9,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "d36142ccd11022fb7beba46a8c0446001f9a6c6705ee95e36ebe97a40ab85d91",
+      "line": 10,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "91ace4831f81eebab538121d55727bfe4e87990c011bc758553f8afa0049a301",
+      "line": 12,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "e96e25d174c9616910532902dc425f04c1f949e6650e08f872b2d5f6905399bd",
+      "line": 13,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "20fa20b12288bc55d8fd443f9f17e174728165c4261e276004e331dfe718b78a",
+      "line": 15,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "22933935c8501d988e36619fc114714657f42a5025d1910fa648f454ffd2a45b",
+      "line": 15,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "a14b4bdd7866a606a18350db519a73618228d1fbff901f777c1469571bc2e512",
+      "line": 16,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "abbb24471a5e53a77a50d95df9826bb8a56e440c84023f1d673b1df8983ae52b",
+      "line": 17,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "c5c96c95bfef758006350638eddaff68eaed79c183f26d4dfd16954b5e5b444d",
+      "line": 17,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "6fb2652bafe3201b97b074ea9c2f34009e07239fdb346651f1beb5add4b3f03b",
+      "line": 18,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "695f78e2a78a92b485e3634b995be80a1bc11c49ac17b385a02404cbdd00b06e",
+      "line": 20,
+      "occurrence": 0,
+      "project": "alpha"
+    },
+    {
+      "identity": "2eccd179bb03bd728e24139acdc5e403d67415f200018d3788d6df6d9543f605",
+      "line": 5,
+      "occurrence": 0,
+      "project": "beta"
+    }
+  ],
+  "report": {
+    "manifest": {
+      "base": null,
+      "base_cmd": [
+        "old-faketool"
+      ],
+      "comparable": false,
+      "corpus_pins": [
+        {
+          "name": "alpha",
+          "repo": "https://github.com/example/alpha",
+          "requested": "branch:main",
+          "resolved_sha": "3333333333333333333333333333333333333333"
+        },
+        {
+          "name": "beta",
+          "repo": "ssh://git@internal.invalid/beta.git",
+          "requested": "4444444444444444444444444444444444444444",
+          "resolved_sha": "4444444444444444444444444444444444444444"
+        }
+      ],
+      "created_at": "2026-07-29T12:00:00Z",
+      "detector_repo": null,
+      "environment_delta": [],
+      "fetches": [],
+      "head": null,
+      "head_cmd": [
+        "new-faketool"
+      ],
+      "installer": null,
+      "isolation_enforced": true,
+      "platform": "linux-x86_64",
+      "python_version": "3.14.0",
+      "schema_version": "2.1.0",
+      "settings": {
+        "excerpt_lines": 2,
+        "fail_on": [],
+        "jobs": 1,
+        "max_results": 200,
+        "selection": [
+          "alpha",
+          "beta"
+        ],
+        "timeout": 60.0
+      },
+      "tool": "faketool"
+    },
+    "projects": [
+      {
+        "analyses": [],
+        "base_findings": 14,
+        "diffs": [
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 5,
+              "message": "m",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 5
+            },
+            "changed_fields": [],
+            "diff_class": "dropped",
+            "head_occurrence": null,
+            "identity": "0b6221642d5235b00b0029ebc1d037477b871d95c3936c1eac75cb1967c1a81c",
+            "kind": "function",
+            "locator": {
+              "identity": "0b6221642d5235b00b0029ebc1d037477b871d95c3936c1eac75cb1967c1a81c",
+              "line": 5,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "dup",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 5,
+              "message": "m",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 5
+            },
+            "changed_fields": [],
+            "diff_class": "dropped",
+            "head_occurrence": null,
+            "identity": "0b6221642d5235b00b0029ebc1d037477b871d95c3936c1eac75cb1967c1a81c",
+            "kind": "function",
+            "locator": {
+              "identity": "0b6221642d5235b00b0029ebc1d037477b871d95c3936c1eac75cb1967c1a81c",
+              "line": 5,
+              "occurrence": 1,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "dup",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 7,
+              "message": "ee",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 7
+            },
+            "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+            "kind": "function",
+            "locator": {
+              "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+              "line": 7,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "triple",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 7,
+              "message": "aa",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 7
+            },
+            "changed_fields": [
+              "message"
+            ],
+            "diff_class": "changed",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 7,
+              "message": "cc",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 7
+            },
+            "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+            "kind": "function",
+            "locator": {
+              "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+              "line": 7,
+              "occurrence": 1,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "triple",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 7,
+              "message": "bb",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 7
+            },
+            "changed_fields": [
+              "message"
+            ],
+            "diff_class": "changed",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 7,
+              "message": "dd",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 7
+            },
+            "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+            "kind": "function",
+            "locator": {
+              "identity": "119a4315f584ae73d2102636d7d62711adcc40e984a3a1161acfaf9a160c5c82",
+              "line": 7,
+              "occurrence": 2,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "triple",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 8,
+              "message": "zz",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 8
+            },
+            "changed_fields": [],
+            "diff_class": "dropped",
+            "head_occurrence": null,
+            "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+            "kind": "function",
+            "locator": {
+              "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+              "line": 8,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "mixed",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 8,
+              "message": "aa",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 8
+            },
+            "changed_fields": [
+              "message"
+            ],
+            "diff_class": "changed",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 8,
+              "message": "aa2",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 8
+            },
+            "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+            "kind": "function",
+            "locator": {
+              "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+              "line": 8,
+              "occurrence": 1,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "mixed",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 8,
+              "message": "bb",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 8
+            },
+            "changed_fields": [
+              "message"
+            ],
+            "diff_class": "changed",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 8,
+              "message": "bb2",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 8
+            },
+            "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+            "kind": "function",
+            "locator": {
+              "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+              "line": 8,
+              "occurrence": 2,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "mixed",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 8,
+              "message": "yy",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 8
+            },
+            "changed_fields": [
+              "message"
+            ],
+            "diff_class": "changed",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 8,
+              "message": "yy2",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 8
+            },
+            "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+            "kind": "function",
+            "locator": {
+              "identity": "6ad49bdc6be359c6a2e627ffd03625c3e5de32e3e08cc19b87928ba114129bf7",
+              "line": 8,
+              "occurrence": 3,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "mixed",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": null,
+              "end_line": 9,
+              "message": "same",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 9
+            },
+            "changed_fields": [],
+            "diff_class": "dropped",
+            "head_occurrence": null,
+            "identity": "4ca53992e973cb7309dce201c6a9570f39da40bb1f4ccd3e88a04cfeb34456ec",
+            "kind": "function",
+            "locator": {
+              "identity": "4ca53992e973cb7309dce201c6a9570f39da40bb1f4ccd3e88a04cfeb34456ec",
+              "line": 9,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "ghost-a",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": null,
+              "end_line": 9,
+              "message": "same",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 9
+            },
+            "identity": "ca41ed0a174bc1ccedad67e0b6df3e42027e461ed36bdd4e7bca77c155cad952",
+            "kind": "function",
+            "locator": {
+              "identity": "ca41ed0a174bc1ccedad67e0b6df3e42027e461ed36bdd4e7bca77c155cad952",
+              "line": 9,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "ghost-b",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 11,
+              "message": "m",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 10
+            },
+            "changed_fields": [],
+            "diff_class": "dropped",
+            "head_occurrence": null,
+            "identity": "d36142ccd11022fb7beba46a8c0446001f9a6c6705ee95e36ebe97a40ab85d91",
+            "kind": "function",
+            "locator": {
+              "identity": "d36142ccd11022fb7beba46a8c0446001f9a6c6705ee95e36ebe97a40ab85d91",
+              "line": 10,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "mover",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 0,
+              "end_line": 12,
+              "message": "z",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 12
+            },
+            "changed_fields": [
+              "confidence"
+            ],
+            "diff_class": "changed",
+            "head_occurrence": {
+              "confidence": null,
+              "end_line": 12,
+              "message": "z",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 12
+            },
+            "identity": "91ace4831f81eebab538121d55727bfe4e87990c011bc758553f8afa0049a301",
+            "kind": "function",
+            "locator": {
+              "identity": "91ace4831f81eebab538121d55727bfe4e87990c011bc758553f8afa0049a301",
+              "line": 12,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "zero",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": 0,
+              "end_line": 13,
+              "message": "zn",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 13
+            },
+            "identity": "e96e25d174c9616910532902dc425f04c1f949e6650e08f872b2d5f6905399bd",
+            "kind": "function",
+            "locator": {
+              "identity": "e96e25d174c9616910532902dc425f04c1f949e6650e08f872b2d5f6905399bd",
+              "line": 13,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "zeronew",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 15,
+              "message": "r",
+              "raw_excerpt": null,
+              "rule_id": "SKY-U001",
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 15
+            },
+            "changed_fields": [],
+            "diff_class": "dropped",
+            "head_occurrence": null,
+            "identity": "20fa20b12288bc55d8fd443f9f17e174728165c4261e276004e331dfe718b78a",
+            "kind": "function",
+            "locator": {
+              "identity": "20fa20b12288bc55d8fd443f9f17e174728165c4261e276004e331dfe718b78a",
+              "line": 15,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "ruled",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 15,
+              "message": "r",
+              "raw_excerpt": null,
+              "rule_id": "SKY-U003",
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 15
+            },
+            "identity": "22933935c8501d988e36619fc114714657f42a5025d1910fa648f454ffd2a45b",
+            "kind": "function",
+            "locator": {
+              "identity": "22933935c8501d988e36619fc114714657f42a5025d1910fa648f454ffd2a45b",
+              "line": 15,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "ruled",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 16,
+              "message": "q",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 16
+            },
+            "identity": "a14b4bdd7866a606a18350db519a73618228d1fbff901f777c1469571bc2e512",
+            "kind": "function",
+            "locator": {
+              "identity": "a14b4bdd7866a606a18350db519a73618228d1fbff901f777c1469571bc2e512",
+              "line": 16,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "ruleless",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": 60,
+              "end_line": 17,
+              "message": "g",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 17
+            },
+            "changed_fields": [],
+            "diff_class": "dropped",
+            "head_occurrence": null,
+            "identity": "abbb24471a5e53a77a50d95df9826bb8a56e440c84023f1d673b1df8983ae52b",
+            "kind": "function",
+            "locator": {
+              "identity": "abbb24471a5e53a77a50d95df9826bb8a56e440c84023f1d673b1df8983ae52b",
+              "line": 17,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "gain",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 17,
+              "message": "g",
+              "raw_excerpt": null,
+              "rule_id": "SKY-U002",
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 17
+            },
+            "identity": "c5c96c95bfef758006350638eddaff68eaed79c183f26d4dfd16954b5e5b444d",
+            "kind": "function",
+            "locator": {
+              "identity": "c5c96c95bfef758006350638eddaff68eaed79c183f26d4dfd16954b5e5b444d",
+              "line": 17,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "gain",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": {
+              "confidence": null,
+              "end_line": 18,
+              "message": "sv",
+              "raw_excerpt": null,
+              "rule_id": "SKY-D203",
+              "schema_version": "2.1.0",
+              "severity": "MEDIUM",
+              "source_excerpt": null,
+              "start_line": 18
+            },
+            "changed_fields": [
+              "severity"
+            ],
+            "diff_class": "changed",
+            "head_occurrence": {
+              "confidence": null,
+              "end_line": 18,
+              "message": "sv",
+              "raw_excerpt": null,
+              "rule_id": "SKY-D203",
+              "schema_version": "2.1.0",
+              "severity": "HIGH",
+              "source_excerpt": null,
+              "start_line": 18
+            },
+            "identity": "6fb2652bafe3201b97b074ea9c2f34009e07239fdb346651f1beb5add4b3f03b",
+            "kind": "function",
+            "locator": {
+              "identity": "6fb2652bafe3201b97b074ea9c2f34009e07239fdb346651f1beb5add4b3f03b",
+              "line": 18,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "sev",
+            "tool": "faketool"
+          },
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": 60,
+              "end_line": 21,
+              "message": "m",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 20
+            },
+            "identity": "695f78e2a78a92b485e3634b995be80a1bc11c49ac17b385a02404cbdd00b06e",
+            "kind": "function",
+            "locator": {
+              "identity": "695f78e2a78a92b485e3634b995be80a1bc11c49ac17b385a02404cbdd00b06e",
+              "line": 20,
+              "occurrence": 0,
+              "project": "alpha"
+            },
+            "path": "pkg/a.py",
+            "project": "alpha",
+            "schema_version": "2.1.0",
+            "symbol": "mover",
+            "tool": "faketool"
+          }
+        ],
+        "errors": [],
+        "head_findings": 14,
+        "integrity_warnings": [],
+        "measured_cost_seconds": 1.5,
+        "project": "alpha",
+        "rollups": [
+          {
+            "count": 5,
+            "diff_class": "new",
+            "kind": "function",
+            "rule_id": null
+          },
+          {
+            "count": 1,
+            "diff_class": "new",
+            "kind": null,
+            "rule_id": "SKY-U002"
+          },
+          {
+            "count": 1,
+            "diff_class": "new",
+            "kind": null,
+            "rule_id": "SKY-U003"
+          },
+          {
+            "count": 6,
+            "diff_class": "dropped",
+            "kind": "function",
+            "rule_id": null
+          },
+          {
+            "count": 1,
+            "diff_class": "dropped",
+            "kind": null,
+            "rule_id": "SKY-U001"
+          },
+          {
+            "count": 6,
+            "diff_class": "changed",
+            "kind": "function",
+            "rule_id": null
+          },
+          {
+            "count": 1,
+            "diff_class": "changed",
+            "kind": null,
+            "rule_id": "SKY-D203"
+          }
+        ],
+        "source_warnings": [],
+        "totals": {
+          "changed": 7,
+          "changed_confidence_only": 1,
+          "changed_message_only": 5,
+          "changed_severity_only": 1,
+          "dropped": 7,
+          "new": 7
+        },
+        "truncated": false
+      },
+      {
+        "analyses": [],
+        "base_findings": 0,
+        "diffs": [
+          {
+            "base_occurrence": null,
+            "changed_fields": [],
+            "diff_class": "new",
+            "head_occurrence": {
+              "confidence": null,
+              "end_line": 5,
+              "message": "s",
+              "raw_excerpt": null,
+              "rule_id": null,
+              "schema_version": "2.1.0",
+              "severity": null,
+              "source_excerpt": null,
+              "start_line": 5
+            },
+            "identity": "2eccd179bb03bd728e24139acdc5e403d67415f200018d3788d6df6d9543f605",
+            "kind": "function",
+            "locator": {
+              "identity": "2eccd179bb03bd728e24139acdc5e403d67415f200018d3788d6df6d9543f605",
+              "line": 5,
+              "occurrence": 0,
+              "project": "beta"
+            },
+            "path": "lib/b.py",
+            "project": "beta",
+            "schema_version": "2.1.0",
+            "symbol": "solo",
+            "tool": "faketool"
+          }
+        ],
+        "errors": [],
+        "head_findings": 1,
+        "integrity_warnings": [],
+        "measured_cost_seconds": 0.5,
+        "project": "beta",
+        "rollups": [
+          {
+            "count": 1,
+            "diff_class": "new",
+            "kind": "function",
+            "rule_id": null
+          }
+        ],
+        "source_warnings": [],
+        "totals": {
+          "changed": 0,
+          "changed_confidence_only": 0,
+          "changed_message_only": 0,
+          "changed_severity_only": 0,
+          "dropped": 0,
+          "new": 1
+        },
+        "truncated": false
+      }
+    ],
+    "rollups": [
+      {
+        "count": 6,
+        "diff_class": "new",
+        "kind": "function",
+        "rule_id": null
+      },
+      {
+        "count": 1,
+        "diff_class": "new",
+        "kind": null,
+        "rule_id": "SKY-U002"
+      },
+      {
+        "count": 1,
+        "diff_class": "new",
+        "kind": null,
+        "rule_id": "SKY-U003"
+      },
+      {
+        "count": 6,
+        "diff_class": "dropped",
+        "kind": "function",
+        "rule_id": null
+      },
+      {
+        "count": 1,
+        "diff_class": "dropped",
+        "kind": null,
+        "rule_id": "SKY-U001"
+      },
+      {
+        "count": 6,
+        "diff_class": "changed",
+        "kind": "function",
+        "rule_id": null
+      },
+      {
+        "count": 1,
+        "diff_class": "changed",
+        "kind": null,
+        "rule_id": "SKY-D203"
+      }
+    ],
+    "schema_version": "2.1.0",
+    "totals": {
+      "changed": 7,
+      "changed_confidence_only": 1,
+      "changed_message_only": 5,
+      "changed_severity_only": 1,
+      "dropped": 7,
+      "new": 8
+    },
+    "truncated": false
+  }
+}

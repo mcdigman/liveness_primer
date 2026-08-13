@@ -1,0 +1,45 @@
+liveness primer report - tool: skylos
+schema: 2.1.0; created: 2026-07-28T12:00:00+00:00
+detector: https://github.com/duriantaco/skylos
+  base: main @ 111111111111 (cached)
+  head: pr-branch @ 222222222222 (rebuilt)
+comparable: yes
+isolation: NOT ENFORCED - build/analysis ran without a network sandbox
+installer: pip 26.0
+base findings 2, head findings 3
+totals: 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only)
+new 2: SKY-D205 1, SKY-U001 1
+dropped 1: SKY-D401 1
+changed 1: SKY-D203 1
+cost: 0.90s
+legend: + new; - dropped; ~ changed
+
+project sec - base 2 findings, head 3; 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only); cost 0.90s
+  corpus: https://github.com/example/sec/tree/5555555555555555555555555555555555555555
+  new 2: SKY-D205 1, SKY-U001 1
+  dropped 1: SKY-D401 1
+  changed 1: SKY-D203 1
+   rule      %    severity      kind      location         symbol      message                                     fields
++  SKY-D205  NA   CRITICAL      danger    app/load.py:L6   app.load    Untrusted deserialization via pickle.loads  -
+  6 |     return pickle.loads(data)
+
+~  SKY-D203  NA   MEDIUM->HIGH  danger    app/exec.py:L9   -           Use of os.system()                          severity
+  severity: MEDIUM -> HIGH
+  9 |     os.system(cmd)
+
+-  SKY-D401  NA   MEDIUM        danger    app/hash.py:L12  -           Weak hash algorithm md5                     -
+  12 | digest = hashlib.md5(blob)
+
++  SKY-U001  80%  NA            function  app/load.py:L20  app.unused  unused function 'unused'                    -
+  20 | def unused():
+
+summary
+base findings 2, head findings 3
+totals: 2 new, 1 dropped, 1 changed (0 confidence-only, 0 message-only, 1 severity-only)
+new 2: SKY-D205 1, SKY-U001 1
+dropped 1: SKY-D401 1
+changed 1: SKY-D203 1
+cost: 0.90s
+
+  project  base -> head  delta  ratio  new  dropped  changed   cost  warnings
+  sec      2 -> 3           +1  1.50x    2        1        1  0.90s         0

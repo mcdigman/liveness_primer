@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "AnnotationProvenance": {
+      "additionalProperties": false,
+      "description": "Provenance of an internal-corpus annotation.\n\nAttributes\n----------\nsource_project : str\n    Approved corpus project the entry was extracted from.\ncommit : str\n    Commit SHA of the source at extraction.\nextraction_date : date\n    Date the entry was extracted.",
+      "properties": {
+        "commit": {
+          "title": "Commit",
+          "type": "string"
+        },
+        "extraction_date": {
+          "format": "date",
+          "title": "Extraction Date",
+          "type": "string"
+        },
+        "source_project": {
+          "title": "Source Project",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_project",
+        "commit",
+        "extraction_date"
+      ],
+      "title": "AnnotationProvenance",
+      "type": "object"
+    },
+    "AnnotationTarget": {
+      "additionalProperties": false,
+      "description": "Target of an internal-corpus annotation.\n\nAttributes\n----------\npath : str\n    Repo-relative POSIX path.\nsymbol : str | None\n    Symbol name, when the annotation names one.\nline : int | None\n    Line number, when the annotation is line-scoped.",
+      "properties": {
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "AnnotationTarget",
+      "type": "object"
+    },
+    "EvidenceKind": {
+      "description": "Kind of evidence backing an annotation.\n\nAttributes\n----------\nCOVERAGE\n    Produced by a coverage run; can only support ``live`` or ``no-coverage``.\nMANUAL\n    Human judgment.\nLLM_ASSISTED\n    LLM-assisted judgment.\nRUNNER\n    Demonstrated by an executable runner file.",
+      "enum": [
+        "coverage",
+        "manual",
+        "llm-assisted",
+        "runner"
+      ],
+      "title": "EvidenceKind",
+      "type": "string"
+    },
+    "Verdict": {
+      "description": "Annotation verdict for internal-corpus entries.\n\nAttributes\n----------\nLIVE\n    The target is demonstrably reachable.\nDEAD\n    The target is demonstrably unreachable.\nNO_COVERAGE\n    An expected-meaningful coverage run reported no coverage of the target.\nUNKNOWN\n    Coverage has not been run, is not runnable, or cannot be meaningful.",
+      "enum": [
+        "live",
+        "dead",
+        "no-coverage",
+        "unknown"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One internal-corpus annotation with sidecar evidence.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\ntarget : AnnotationTarget\n    Annotated path/symbol/line.\nverdict : Verdict\n    ``live``, ``dead``, ``no-coverage``, or ``unknown``.\nevidence : EvidenceKind\n    Kind of evidence backing the verdict.\nprovenance : AnnotationProvenance\n    Source project, commit, and extraction date.\nrunner : str | None\n    Repo-relative path of a runner file demonstrating the evidence.",
+  "properties": {
+    "evidence": {
+      "$ref": "#/$defs/EvidenceKind"
+    },
+    "provenance": {
+      "$ref": "#/$defs/AnnotationProvenance"
+    },
+    "runner": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runner"
+    },
+    "schema_version": {
+      "const": "2.1.0",
+      "default": "2.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/AnnotationTarget"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "target",
+    "verdict",
+    "evidence",
+    "provenance"
+  ],
+  "title": "Annotation",
+  "type": "object"
+}

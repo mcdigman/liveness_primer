@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import {
+  encodedPath,
+  githubOwnerRepo,
+  rawSourceUrl,
+  sourceUrl,
+  treeReference,
+} from '../../src/lib/permalink.js';
+import { githubPin } from './helpers.mjs';
+
+test('githubOwnerRepo parses HTTPS GitHub URL forms', () => {
+  assert.deepEqual(githubOwnerRepo('https://github.com/example/alpha'), ['example', 'alpha']);
+  assert.deepEqual(githubOwnerRepo('https://github.com/example/alpha.git'), ['example', 'alpha']);
+  assert.deepEqual(githubOwnerRepo('https://github.com/example/alpha/'), ['example', 'alpha']);
+  assert.deepEqual(githubOwnerRepo('https://github.com/a-b/c_d.e'), ['a-b', 'c_d.e']);
+});
+
+test('githubOwnerRepo rejects everything else', () => {
+  for (const url of [
+    'ssh://git@github.com/example/alpha',
+    'http://github.com/example/alpha',
+    'https://github.com/-bad/alpha',
+    'https://github.com/example/..',
+    'https://github.com/example/../x',
+    'https://github.com/example/alpha/extra',
+    'https://evil.example/github.com/example/alpha',
+  ]) {
+    assert.equal(githubOwnerRepo(url), null, url);
+  }
+});
+
+test('encodedPath encodes per segment and refuses unsafe segments', () => {
+  assert.equal(encodedPath('pkg/a.py'), 'pkg/a.py');
+  assert.equal(encodedPath('pkg/with space.py'), 'pkg/with%20space.py');
+  assert.equal(encodedPath('päkg/ünï.py'), 'p%C3%A4kg/%C3%BCn%C3%AF.py');
+  for (const path of [
+    '',
+    '/leading',
+    'trailing/',
+    'a//b',
+    './a',
+    'a/../b',
+    'back\\slash.py',
+    'ctrl\u0007.py',
+    'null\u0000.py',
+    'nbsp\u00a0.py',
+    'lone\ud800.py',
+  ]) {
+    assert.equal(encodedPath(path), null, JSON.stringify(path));
+  }
+});
+
+test('treeReference names the pinned corpus tree', () => {
+  assert.deepEqual(treeReference(githubPin()), {
+    label: 'example/alpha',
+    url: `https://github.com/example/alpha/tree/${'3'.repeat(40)}`,
+  });
+  assert.equal(treeReference(githubPin({ repo: 'ssh://internal.invalid/beta.git' })), null);
+  assert.equal(treeReference(githubPin({ resolved_sha: 'branch-name' })), null);
+  assert.equal(treeReference(githubPin({ resolved_sha: '3'.repeat(39) })), null);
+});
+
+test('sourceUrl builds pinned span permalinks', () => {
+  const pin = githubPin();
+  assert.equal(
+    sourceUrl(pin, 'pkg/a.py', 10, 10),
+    `https://github.com/example/alpha/blob/${'3'.repeat(40)}/pkg/a.py#L10`,
+  );
+  assert.equal(
+    sourceUrl(pin, 'pkg/a.py', 10, 12),
+    `https://github.com/example/alpha/blob/${'3'.repeat(40)}/pkg/a.py#L10-L12`,
+  );
+  assert.equal(sourceUrl(pin, '../escape.py', 1, 1), null);
+  assert.equal(sourceUrl(githubPin({ resolved_sha: 'HEAD' }), 'pkg/a.py', 1, 1), null);
+});
+
+test('rawSourceUrl targets only the raw GitHub origin', () => {
+  const pin = githubPin();
+  assert.equal(
+    rawSourceUrl(pin, 'pkg/a.py'),
+    `https://raw.githubusercontent.com/example/alpha/${'3'.repeat(40)}/pkg/a.py`,
+  );
+  assert.equal(rawSourceUrl(githubPin({ repo: 'https://internal.invalid/x' }), 'pkg/a.py'), null);
+  assert.equal(rawSourceUrl(pin, 'bad\u0000.py'), null);
+});

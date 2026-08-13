@@ -9,6 +9,8 @@ repos:
   - id: end-of-file-fixer
   - id: check-yaml
   - id: check-added-large-files
+    # The authoritative explorer mockups (design/mockups/) are ~1.4-1.8 MB.
+    args: [--maxkb=2000]
   - id: check-case-conflict
   - id: check-docstring-first
   - id: check-json
@@ -60,8 +62,17 @@ repos:
   - id: pyrefly-check
     args: [--preset=strict]
     # The dedicated typecheck.yml workflow still runs mypy and pyright.
+    # These must cover every import in liveness_primer/ and tests/ so the
+    # isolated hook environment can resolve them.
     additional_dependencies:
-      - numpy>=1.22
+      - pydantic>=2
+      - platformdirs>=4
+      - filelock>=3
+      - packaging>=24
+      - PyYAML>=6
+      - types-PyYAML
+      - rich>=13
+      - httpx>=0.28,<1
       - pytest
 
 - repo: https://github.com/rhysd/actionlint

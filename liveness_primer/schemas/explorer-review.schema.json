@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "FindingLocator": {
+      "additionalProperties": false,
+      "description": "Persistent reference to one serialized finding diff (explorer contract \u00a74.2).\n\n``line`` is the diff class's reference-side start line \u2014 head for\n``new``, base for ``dropped`` and ``changed``. The identity hash covers\nthe start line, so every diff sharing ``identity`` shares ``line``; the\nfield stays serialized as denormalized display data. ``occurrence`` is\nthe diff's zero-based position within the subsequence of the same\nserialized ``ProjectReport.diffs`` tuple whose identity and\nreference-side start line equal ``(identity, line)``, in serialized\norder.\n\nAttributes\n----------\nproject : str\n    Corpus project name.\nidentity : str\n    Stable finding identity hash.\nline : int\n    Reference-side start line (1-based).\noccurrence : int\n    Zero-based index among diffs sharing ``(identity, line)``.",
+      "properties": {
+        "identity": {
+          "title": "Identity",
+          "type": "string"
+        },
+        "line": {
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        },
+        "occurrence": {
+          "minimum": 0,
+          "title": "Occurrence",
+          "type": "integer"
+        },
+        "project": {
+          "title": "Project",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "identity",
+        "line",
+        "occurrence"
+      ],
+      "title": "FindingLocator",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Portable review record exported by the report explorer (explorer contract \u00a76).\n\n``report_sha256`` is the SHA-256 digest of the exact report bytes; a\nbyte-different report never inherits workspace state. Report order of\nthe tuples is a producer obligation the model cannot check without the\nreport.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\nreport_sha256 : str\n    Lowercase hex SHA-256 digest of the exact report bytes.\nselected : tuple[FindingLocator, ...]\n    Locators selected for export; unique.\nhidden : tuple[FindingLocator, ...]\n    Locators hidden from the default findings view; unique.",
+  "properties": {
+    "hidden": {
+      "items": {
+        "$ref": "#/$defs/FindingLocator"
+      },
+      "title": "Hidden",
+      "type": "array"
+    },
+    "report_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Report Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.1.0",
+      "default": "2.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "selected": {
+      "items": {
+        "$ref": "#/$defs/FindingLocator"
+      },
+      "title": "Selected",
+      "type": "array"
+    }
+  },
+  "required": [
+    "report_sha256",
+    "selected",
+    "hidden"
+  ],
+  "title": "ExplorerReview",
+  "type": "object"
+}

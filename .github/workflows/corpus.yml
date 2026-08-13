@@ -1,0 +1,82 @@
+name: Corpus
+
+# Contract §5/§6: validate the corpus YAML and verify declared licenses
+# against the GitHub license API on PRs touching the corpus file. Detection
+# is advisory-strength but the check is binding in CI.
+on:
+  push:
+    branches: [main]
+    paths: [corpus.yaml]
+  pull_request:
+    paths: [corpus.yaml]
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+# Read-only tokens everywhere; on pull_request events NO token reaches the
+# job at all (see the license-check steps below).
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Install project
+        run: |
+          uv venv
+          uv pip install .
+
+      - name: Validate corpus
+        run: .venv/bin/liveness-primer corpus validate
+
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Install project with the license extra
+        run: |
+          uv venv
+          uv pip install ".[license]"
+
+      # Trust boundary (contract §11): on pull_request events this job
+      # executes code from the PR, so no credential may reach it — the PR
+      # step runs unauthenticated (rate limits are ample for a small
+      # corpus). Pushes to main and manual dispatches run repository code
+      # that has already been reviewed and merged, so they may use the
+      # read-only default token for headroom.
+      - name: Verify licenses via the GitHub API (PR, no credentials)
+        if: github.event_name == 'pull_request'
+        run: .venv/bin/liveness-primer corpus license-check
+
+      - name: Verify licenses via the GitHub API (trusted ref)
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .venv/bin/liveness-primer corpus license-check

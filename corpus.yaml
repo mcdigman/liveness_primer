@@ -1,0 +1,223 @@
+# The liveness_primer corpus (contract §5).
+#
+# Human-authored; parsed with PyYAML and validated by `liveness-primer
+# corpus validate` (pydantic models are the source of truth). Every project
+# is GitHub-hosted, permissively licensed per the §6 allowlist, actively
+# maintained, and moderate-size. Pins are full commit SHAs so both detector
+# revisions analyze byte-identical checkouts; declared costs are approximate
+# CPU-seconds on the reference runner (measured actuals land in the report).
+
+projects:
+  - name: attrs
+    repo: https://github.com/python-attrs/attrs
+    license: MIT
+    pin: f06ceaafbe5bdbdafad8a0c01a2daabb89386a42
+    tools:
+      vulture:
+        targets:
+          - src
+        cost: 2.0
+      skylos:
+        targets:
+          - src
+        cost: 6.0
+
+  - name: click
+    repo: https://github.com/pallets/click
+    license: BSD-3-Clause
+    pin: 00e592cea702e0b2caa0dee42489fdb1c22cd845
+    tools:
+      vulture:
+        targets:
+          - src/click
+        cost: 2.0
+      skylos:
+        targets:
+          - src/click
+        cost: 11.0
+
+  - name: jinja
+    repo: https://github.com/pallets/jinja
+    license: BSD-3-Clause
+    pin: 5ef70112a1ff19c05324ff889dd30405b1002044
+    tools:
+      vulture:
+        targets:
+          - src/jinja2
+        cost: 2.0
+      skylos:
+        targets:
+          - src/jinja2
+        cost: 19.0
+
+  - name: rich
+    repo: https://github.com/Textualize/rich
+    license: MIT
+    pin: 9d8f9a372cc5916fd4781fec207ced7ddac2f08f
+    tools:
+      vulture:
+        targets:
+          - rich
+        cost: 5.0
+      skylos:
+        targets:
+          - rich
+        cost: 38.0
+
+  - name: pluggy
+    repo: https://github.com/pytest-dev/pluggy
+    license: MIT
+    pin: 21bb5d175372aa474b44178b8a0577be1822279e
+    tools:
+      vulture:
+        targets:
+          - src/pluggy
+        cost: 1.0
+      skylos:
+        targets:
+          - src/pluggy
+        cost: 2.0
+
+  - name: more-itertools
+    repo: https://github.com/more-itertools/more-itertools
+    license: MIT
+    pin: 9ddc55c57390707d97d96302eea1992919c8d930
+    tools:
+      vulture:
+        targets:
+          - more_itertools
+        cost: 1.0
+      skylos:
+        targets:
+          - more_itertools
+        cost: 3.5
+
+  - name: platformdirs
+    repo: https://github.com/tox-dev/platformdirs
+    license: MIT
+    pin: 070777b43db39aa266f6bef2a10f2f4f37913fe1
+    tools:
+      vulture:
+        targets:
+          - src/platformdirs
+        cost: 1.0
+      skylos:
+        targets:
+          - src/platformdirs
+        cost: 2.5
+
+  - name: httpx
+    repo: https://github.com/encode/httpx
+    license: BSD-3-Clause
+    pin: b5addb64f0161ff6bfe94c124ef76f6a1fba5254
+    tools:
+      vulture:
+        targets:
+          - httpx
+        cost: 2.0
+      skylos:
+        targets:
+          - httpx
+        cost: 5.5
+
+  # Shared with Skylos's pinned real-repository framework corpus.
+  - name: pydantic
+    repo: https://github.com/pydantic/pydantic
+    license: MIT
+    pin: 718ef06e1062892128907f4f28e15f76ff1a38f9
+    tools:
+      vulture:
+        targets:
+          - pydantic
+        cost: 7.0
+      skylos:
+        targets:
+          - pydantic
+        cost: 90.0
+
+  - name: flask
+    repo: https://github.com/pallets/flask
+    license: BSD-3-Clause
+    pin: 6a2f545bfd8ed31e19066a299296917e034aca58
+    tools:
+      vulture:
+        targets:
+          - src/flask
+        cost: 2.0
+      skylos:
+        targets:
+          - src/flask
+        cost: 13.0
+
+  - name: pytest
+    repo: https://github.com/pytest-dev/pytest
+    license: MIT
+    pin: 28e86a6c2ae0173831e4925a4af89b02a2936d09
+    tools:
+      vulture:
+        targets:
+          - src/_pytest
+        cost: 6.0
+      skylos:
+        targets:
+          - src/_pytest
+        cost: 100.0
+
+  # Parent of psf/black#5041, preserving four maintainer-accepted dead symbols.
+  - name: black-pre-cleanup
+    repo: https://github.com/psf/black
+    license: MIT
+    pin: 0dae20b2d009f2f03de8696d06b0c947d3abafc9
+    tools:
+      vulture:
+        targets:
+          - src/black
+        cost: 2.0
+      skylos:
+        targets:
+          - src/black
+        cost: 8.0
+
+  - name: requests
+    repo: https://github.com/psf/requests
+    license: Apache-2.0
+    pin: 1f6589ec3a1ee910f9a65cc3ceac60b26677bc0e
+    tools:
+      vulture:
+        targets:
+          - src/requests
+        cost: 2.0
+      skylos:
+        targets:
+          - src/requests
+        cost: 8.5
+
+  # Parent of mitmproxy/mitmproxy#8136, preserving accepted dead-code removals.
+  - name: mitmproxy-pre-cleanup
+    repo: https://github.com/mitmproxy/mitmproxy
+    license: MIT
+    pin: 2a7bb7ba05a9a1c14b4fd7674d5356bc665a4182
+    tools:
+      vulture:
+        targets:
+          - mitmproxy
+        cost: 10.0
+      skylos:
+        targets:
+          - mitmproxy
+        cost: 110.0
+
+  # Shared with Skylos's pinned real-repository framework corpus.
+  - name: starlette
+    repo: https://github.com/Kludex/starlette
+    license: BSD-3-Clause
+    pin: 70a3bd4276712f0ee11b161c8b14225a84316df1
+    tools:
+      vulture:
+        targets:
+          - starlette
+        cost: 2.0
+      skylos:
+        targets:
+          - starlette
+        cost: 10.0

@@ -1,0 +1,9 @@
+dist/
+node_modules/
+playwright-report/
+test-results/
+src/generated/validators.js
+# The repository's pretty-format-json prek hook owns JSON formatting
+# (sorted keys); Prettier disagrees with its array layout, so it must not
+# also claim these files.
+*.json

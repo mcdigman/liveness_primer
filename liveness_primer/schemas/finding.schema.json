@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One normalized detector report item.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\ntool : str\n    Adapter name of the reporting detector.\nproject : str\n    Corpus project name.\npath : str\n    Repo-relative POSIX path of the reported file.\nsymbol : str | None\n    Reported symbol, when the detector names one.\nkind : str\n    Normalized finding kind (e.g. ``function``, ``import``).\nmessage : str\n    Normalized message text.\nstart_line : int\n    First line of the reported span (1-based).\nend_line : int\n    Last line of the reported span (1-based, inclusive).\nconfidence : int | None\n    Confidence percentage, for tools declaring the capability.\nseverity : SeverityLabel\n    Canonical severity label (e.g. ``HIGH``), for tools declaring the\n    capability; normalized on validation.\nrule_id : str | None\n    Detector rule ID, when the detector or its documented output\n    category supplies one.\nraw_excerpt : str | None\n    Untrusted raw detector output for this finding; sanitized on render.",
+  "properties": {
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "end_line": {
+      "minimum": 1,
+      "title": "End Line",
+      "type": "integer"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "project": {
+      "title": "Project",
+      "type": "string"
+    },
+    "raw_excerpt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Raw Excerpt"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
+    "schema_version": {
+      "const": "2.1.0",
+      "default": "2.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "severity": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Severity"
+    },
+    "start_line": {
+      "minimum": 1,
+      "title": "Start Line",
+      "type": "integer"
+    },
+    "symbol": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Symbol"
+    },
+    "tool": {
+      "title": "Tool",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool",
+    "project",
+    "path",
+    "symbol",
+    "kind",
+    "message",
+    "start_line",
+    "end_line"
+  ],
+  "title": "Finding",
+  "type": "object"
+}
