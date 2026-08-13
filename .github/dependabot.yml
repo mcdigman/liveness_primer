@@ -50,3 +50,10 @@ updates:
         dependency-type: development
       npm-production:
         dependency-type: production
+    # eslint-plugin-react currently supports ESLint only through major 9.
+    # Keep the paired core packages there until its peer range advances.
+    ignore:
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]

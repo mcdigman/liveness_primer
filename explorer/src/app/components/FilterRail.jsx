@@ -36,7 +36,7 @@ function Facet({ title, options, labelFor, chosen, onToggle }) {
 
 /**
  * @param {object} props
- * @param {ReturnType<import('../../lib/facets.js').facetCounts>} props.counts
+ * @param {ReturnType<typeof import('../../lib/facets.js').facetCounts>} props.counts
  * @param {FacetSelections} props.selections
  * @param {number} props.visibleCount
  * @param {boolean} props.hasSeverity the report carries severity labels (§2.3)
