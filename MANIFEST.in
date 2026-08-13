@@ -1,0 +1,15 @@
+# sdist contents beyond the setuptools defaults (package sources, README.md,
+# LICENSE, pyproject.toml). Ship the test suite so downstream packagers (e.g.
+# conda-forge) can run it from the sdist, plus the changelog, citation
+# metadata, and the community health files. The packaged corpus and JSON
+# schemas need no entry here: they are declared in
+# [tool.setuptools.package-data] and so land in both the sdist and the wheel.
+# Docs sources, design assets, the explorer front end, and CI/tooling configs
+# stay out to keep the sdist lean; they live in the GitHub tree.
+include CHANGELOG.md
+include CITATION.cff
+include CODE_OF_CONDUCT.md
+include CONTRIBUTING.md
+include SECURITY.md
+recursive-include tests *.py
+recursive-include tests/fixtures *

@@ -1,7 +1,7 @@
 [project]
 name = "liveness_primer"
 version = "0.0.1"
-description = "Primer for dead code detectors."
+description = "Differential testing harness for Python dead-code detectors and static linters: run a detector at two revisions across a corpus and diff the findings."
 readme = "README.md"
 authors = [
   { name="Matthew C. Digman", email="matthew.digman@vanderbilt.edu" }
@@ -9,7 +9,7 @@ authors = [
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Operating System :: OS Independent",
@@ -20,12 +20,27 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
     "Typing :: Typed",
+    "Environment :: Console",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
 ]
 
 keywords = [
     "dead code",
+    "dead code detection",
+    "unused code",
+    "static analysis",
+    "code quality",
+    "vulture",
+    "skylos",
     "liveness",
-    "primer",
+    "differential testing",
+    "regression testing",
+    "blast radius",
+    "mypy_primer",
+    "linter",
+    "ci",
 ]
 
 dependencies = [
@@ -49,7 +64,7 @@ liveness-primer = "liveness_primer.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mcdigman/liveness_primer"
-Documentation = "https://liveness_primer.readthedocs.io/en/latest/"
+Documentation = "https://liveness-primer.readthedocs.io/en/latest/"
 Repository = "https://github.com/mcdigman/liveness_primer"
 Issues = "https://github.com/mcdigman/liveness_primer/issues"
 Changelog = "https://github.com/mcdigman/liveness_primer/blob/main/CHANGELOG.md"
@@ -137,4 +152,4 @@ build-backend = "setuptools.build_meta"
 include = ["liveness_primer*"]
 
 [tool.setuptools.package-data]
-liveness_primer = ["py.typed", "schemas/*.schema.json", "tools/*.toml"]
+liveness_primer = ["py.typed", "schemas/*.schema.json", "tools/*.toml", "data/*.yaml"]
