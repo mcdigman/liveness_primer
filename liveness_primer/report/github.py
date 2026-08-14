@@ -63,6 +63,26 @@ _SOURCE_CAP = 120
 _NAME_CAP = 120
 
 
+def _native_tool_lines(manifest: RunManifest) -> list[str]:
+    """Render the operator-supplied native helpers a run admitted (contract §3).
+
+    Parameters
+    ----------
+    manifest : RunManifest
+        The run manifest.
+
+    Returns
+    -------
+    list[str]
+        One markdown line per admitted executable. Both sides shared it, so
+        the digest — not the path — is what makes the run reproducible.
+    """
+    return [
+        f'- **native tool**: {code_span(sanitize_inline(f"{tool.variable}={tool.path}"))} (sha256 `{tool.sha256[:12]}`)'
+        for tool in manifest.native_tools
+    ]
+
+
 def _manifest_lines(manifest: RunManifest) -> list[str]:
     """Render the manifest header as markdown.
 
@@ -101,6 +121,7 @@ def _manifest_lines(manifest: RunManifest) -> list[str]:
         lines.append('- **isolation**: :warning: **NOT ENFORCED** - no network sandbox')
     if manifest.installer is not None:
         lines.append(f'- **installer**: {manifest.installer}')
+    lines.extend(_native_tool_lines(manifest))
     if manifest.environment_delta:
         lines.extend(
             [

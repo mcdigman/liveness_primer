@@ -34,6 +34,7 @@ from liveness_primer.findings import (
     FetchRecord,
     FindingDiff,
     FindingOccurrence,
+    NativeToolRecord,
     ProjectReport,
     Report,
     RunManifest,
@@ -611,6 +612,26 @@ def test_escape_hatch_manifest_renders_commands() -> None:
     markdown = render_github(report.model_copy(update={'manifest': manifest}))
     assert "**base command**: `/private/var/folders/zz/old-vulture --flag 'a b'`" in markdown
     assert '**isolation**: enforced' in markdown
+
+
+def test_native_tool_provenance_renders_in_both_formats() -> None:
+    # An operator-supplied native helper is part of what produced the
+    # findings, so both rendered headers name it and its digest (§3).
+    report = build_report()
+    engine = NativeToolRecord(
+        variable='SKYLOS_GO_BIN',
+        path='/opt/tools/skylos-go',
+        sha256='ab12cd34ef56' + '0' * 52,
+    )
+    manifest = report.manifest.model_copy(update={'native_tools': (engine,)})
+    rendered = report.model_copy(update={'manifest': manifest})
+    text = render_text(rendered, WIDE)
+    assert 'native tool: SKYLOS_GO_BIN=/opt/tools/skylos-go (sha256 ab12cd34ef56)' in text
+    markdown = render_github(rendered)
+    assert '**native tool**: `SKYLOS_GO_BIN=/opt/tools/skylos-go` (sha256 `ab12cd34ef56`)' in markdown
+    # A run that admitted no native helper says nothing about one.
+    assert 'native tool' not in render_text(report, WIDE)
+    assert 'native tool' not in render_github(report)
 
 
 def test_text_report_shows_required_finding_columns() -> None:

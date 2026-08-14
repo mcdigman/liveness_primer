@@ -127,6 +127,13 @@ class SkylosAdapter:
         the analyzed repository's own skylos policy never alters the run,
         and ``SKYLOS_GREP_BUDGET`` pinned so both sides run the
         grep-verify post-pass under the same wall-clock allowance.
+    passthrough_env : tuple[str, ...]
+        ``SKYLOS_GO_BIN``, naming the prebuilt native Go engine. A project
+        containing Go sources — skylos itself, notably — is analyzed
+        incompletely without it, and on revisions that surface that as an
+        analysis error the invocation fails outright. Both sides receive
+        the same operator-supplied binary, so the engine is a constant of
+        the comparison rather than part of the diff.
     success_exit_codes : frozenset[int]
         0 only; skylos exits 2 when analysis errors occurred.
     capabilities : AdapterCapabilities
@@ -151,6 +158,7 @@ class SkylosAdapter:
     invocation_env: Mapping[str, str] = MappingProxyType(
         {'SKYLOS_CONFIG_FILE': str(_NEUTRAL_CONFIG), 'SKYLOS_GREP_BUDGET': _GREP_BUDGET_SECONDS}
     )
+    passthrough_env: tuple[str, ...] = ('SKYLOS_GO_BIN',)
     success_exit_codes: frozenset[int] = frozenset({0})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,

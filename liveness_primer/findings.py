@@ -28,7 +28,9 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 # total (reporting contract §3.1, §3.6).
 # 2.1.0 adds the additive per-project record of the corpus-selected opt-in
 # analyses (contract §5).
-SCHEMA_VERSION = '2.1.0'
+# 2.2.0 adds the additive manifest record of operator-supplied native helper
+# executables admitted into detector invocations (contract §3).
+SCHEMA_VERSION = '2.2.0'
 
 
 def _validated_schema_version(value: str) -> str:
@@ -693,6 +695,25 @@ class EnvironmentRecord(_FrozenModel):
     rebuilt: bool
 
 
+class NativeToolRecord(_FrozenModel):
+    """One operator-supplied native executable admitted into a run (contract §3).
+
+    Attributes
+    ----------
+    variable : str
+        Adapter-declared environment variable carrying the executable.
+    path : str
+        Absolute path of the executable, with symlinks resolved.
+    sha256 : str
+        Digest of the executable's bytes, so the run names exactly which
+        binary the detector called.
+    """
+
+    variable: str
+    path: str
+    sha256: str
+
+
 class DependencyDelta(_FrozenModel):
     """One surviving non-detector dependency difference between environments.
 
@@ -793,6 +814,9 @@ class RunManifest(_FrozenModel):
         Python version running the detectors.
     installer : str | None
         Installer name and version used to build environments.
+    native_tools : tuple[NativeToolRecord, ...]
+        Operator-supplied native executables admitted into both sides'
+        invocations; empty when the run used none (contract §3).
     fetches : tuple[FetchRecord, ...]
         Every fetch performed during the fetch step.
     corpus_pins : tuple[CorpusPinRecord, ...]
@@ -815,6 +839,7 @@ class RunManifest(_FrozenModel):
     platform: str
     python_version: str
     installer: str | None
+    native_tools: tuple[NativeToolRecord, ...] = ()
     fetches: tuple[FetchRecord, ...]
     corpus_pins: tuple[CorpusPinRecord, ...]
     settings: RunSettings

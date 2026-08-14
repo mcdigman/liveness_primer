@@ -22,6 +22,11 @@ This is the first release version of `liveness_primer`, so everything is new.
   common adapter base. `skylos` supports opt-in analyses selected per corpus entry
   or overridden per run with `--analyses`, and runs against a neutral pinned config
   so a target repository's own `.skylos/config.yaml` cannot alter the comparison.
+  An adapter may also declare native helper executables the operator supplies by
+  environment variable — `skylos` declares `SKYLOS_GO_BIN` for its prebuilt Go
+  engine, without which a project containing Go sources (skylos itself included)
+  is analyzed incompletely. The runner validates and hashes the path, hands the
+  same binary to both sides, and records it in the manifest as `native_tools`.
 - **Two-revision runner** — builds the detector at a base and a head ref,
   runs both over each selected project, and records measured cost. Detector
   environments are cached by fingerprint and rebuilt on `--fresh`.
