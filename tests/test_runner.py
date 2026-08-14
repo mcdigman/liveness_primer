@@ -4,7 +4,9 @@
 
 import asyncio
 import hashlib
+import os
 import re
+import stat
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -13,6 +15,7 @@ from typing import cast
 
 import pytest
 
+import liveness_primer.runner as runner_module
 from liveness_primer.config import CorpusProject, ToolSettings
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
@@ -872,7 +875,7 @@ def test_fake_skylos_analyses_selection_reaches_argv_and_report(tmp_path: Path) 
 
 
 def write_fake_native_engine(path: Path) -> Path:
-    path.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    atomic_write_text(path, '#!/bin/sh\nexit 0\n')
     path.chmod(0o755)
     return path
 
@@ -912,14 +915,89 @@ def test_native_tool_record_withholds_the_host_path(tmp_path: Path) -> None:
     assert admitted.path not in str(payload)
 
 
-@pytest.mark.parametrize('name', ['absent-engine', 'plain-file', 'a-directory'])
-def test_resolve_native_tools_rejects_unusable_paths(tmp_path: Path, name: str) -> None:
+def test_resolve_native_tools_rejects_a_symlink_swap_after_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    saved_engine = tmp_path / 'original-skylos-go'
+    replacement = write_fake_native_engine(tmp_path / 'replacement-skylos-go')
+    real_is_file = Path.is_file
+
+    def swap_after_check(self: Path) -> bool:
+        is_file = real_is_file(self)
+        if self == engine:
+            self.replace(saved_engine)
+            self.symlink_to(replacement)
+        return is_file
+
+    # The hook deterministically schedules a real symlink replacement in the
+    # otherwise nondeterministic resolve-to-admission race window.
+    monkeypatch.setattr(Path, 'is_file', swap_after_check)
+    with pytest.raises(RunnerError, match='native tool is not a regular non-symlink file'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+
+
+def test_resolve_native_tools_rejects_an_oversized_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    limit = engine.stat().st_size - 1
+    # Lowering the production cap avoids constructing a 256 MiB test artifact;
+    # the same size comparison and operator-facing error path are exercised.
+    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', limit)
+    with pytest.raises(RunnerError, match=rf'native tool exceeds {limit} bytes'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+
+
+def test_executable_digest_rejects_a_changed_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    real_fstat = os.fstat
+
+    def changed_fstat(descriptor: int) -> os.stat_result:
+        values = list(real_fstat(descriptor))
+        values[stat.ST_INO] += 1
+        return os.stat_result(values)
+
+    # A real lstat-to-open replacement race is nondeterministic. Altering only
+    # the opened inode pins the identity-mismatch branch; it is not end-to-end
+    # evidence that the later subprocess executes the recorded digest.
+    monkeypatch.setattr(os, 'fstat', changed_fstat)
+    with pytest.raises(RunnerError, match='native tool changed while it was being admitted'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+
+
+def test_executable_digest_stops_if_the_file_grows_while_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    actual_stat = engine.stat()
+    bounded_values = list(actual_stat)
+    bounded_values[stat.ST_SIZE] = actual_stat.st_size - 1
+    bounded_stat = os.stat_result(bounded_values)
+    # A concurrent grow during this short read would be flaky to schedule.
+    # Fixed stat results keep the admission checks below the lowered cap while
+    # the real stream crosses it, pinning only the post-open growth guard.
+    monkeypatch.setattr(Path, 'lstat', lambda _path: bounded_stat)
+    monkeypatch.setattr(os, 'fstat', lambda _descriptor: bounded_stat)
+    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', actual_stat.st_size - 1)
+    with pytest.raises(RunnerError, match='native tool exceeds'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+
+
+@pytest.mark.parametrize('kind', ['absent', 'plain-file', 'directory'])
+def test_resolve_native_tools_rejects_unusable_paths(tmp_path: Path, kind: str) -> None:
     # A wrong path must stop the run here: silently falling through would
     # leave both sides analyzing Go sources incompletely.
-    target = tmp_path / name
-    if name == 'plain-file':
-        target.write_text('not executable\n', encoding='utf-8')
-    elif name == 'a-directory':
+    target = tmp_path / 'unusable-native-tool'
+    if kind == 'plain-file':
+        atomic_write_text(target, 'not executable\n')
+    elif kind == 'directory':
         target.mkdir()
     with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(target)})

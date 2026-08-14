@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import liveness_primer.cli
+import liveness_primer.runner as runner_module
 from liveness_primer.cli import EXIT_FAILURE, EXIT_GATE, EXIT_OK, main
 from liveness_primer.config import Corpus, CorpusProject, ToolSettings
 from liveness_primer.filesystem import atomic_write_text, read_small_text
@@ -364,6 +365,37 @@ def test_run_unknown_tool_fails_cleanly(capsys: pytest.CaptureFixture[str]) -> N
     code = main(['run', '--tool', 'pylint', '--repo', 'r', '--old', 'a', '--new', 'b'])
     assert code == EXIT_FAILURE
     assert 'unknown tool' in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_reports_native_tool_admission_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    engine = tmp_path / 'skylos-go'
+    atomic_write_text(engine, '#!/bin/sh\nexit 0\n')
+    engine.chmod(0o755)
+    limit = engine.stat().st_size - 1
+    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', limit)
+    monkeypatch.setenv('SKYLOS_GO_BIN', str(engine))
+
+    code = main(
+        [
+            'run',
+            '--tool',
+            'skylos',
+            '--project',
+            'https://example.invalid/project',
+            '--old-cmd',
+            'true',
+            '--new-cmd',
+            'true',
+        ]
+    )
+
+    assert code == EXIT_FAILURE
+    assert f'native tool exceeds {limit} bytes' in capsys.readouterr().err
 
 
 def test_usage_errors_exit_two() -> None:
