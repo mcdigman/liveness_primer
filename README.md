@@ -49,12 +49,6 @@ pip install liveness_primer
 The built-in adapters support [Vulture](https://github.com/jendrikseipp/vulture)
 and [Skylos](https://github.com/duriantaco/skylos).
 
-Skylos analyzes Go sources with a prebuilt native engine. Export
-`SKYLOS_GO_BIN` with its absolute path when any analyzed project contains Go
-— including Skylos itself — or the detector exits nonzero on both sides. Both
-revisions receive the same binary, so the engine remains constant across the
-comparison rather than becoming part of the diff.
-
 License verification (`corpus license-check`) requires the `[license]` extra.
 
 ## Quick start
@@ -85,7 +79,7 @@ Project selection is explicit:
 | --- | --- | --- |
 | `+` new | Present only at the head revision | Intended new coverage or a new false positive |
 | `-` dropped | Present only at the base revision | Intended removal or a new false negative |
-| `~` changed | A matched finding has different recorded details | Location, message, confidence, or rule-attribution drift |
+| `~` changed | A matched finding has different recorded details | Message, confidence, or severity drift |
 | error | A detector invocation did not produce a valid result | Crash, timeout, or unparseable output |
 
 Reports also record the exact detector revisions, corpus pins, environment and
@@ -116,7 +110,7 @@ the browser rather than uploaded to an application server. The explorer can:
 - preserve review state in a versioned JSON record; and
 - export a focused Markdown or JSON handoff.
 
-[![Static report explorer showing filters, finding diffs, source context, and export controls](design/report_explorer_demo.png)](https://mcdigman.github.io/liveness_primer/)
+[![Static report explorer showing filters, finding diffs, source context, and export controls](https://raw.githubusercontent.com/mcdigman/liveness_primer/main/design/report_explorer_demo.png)](https://mcdigman.github.io/liveness_primer/)
 
 To build and serve the explorer locally:
 
@@ -128,8 +122,8 @@ npm run serve
 ```
 
 Open <http://127.0.0.1:4173/liveness-primer/explorer/>. See
-[`explorer/README.md`](explorer/README.md) for development and verification
-commands.
+[`explorer/README.md`](https://github.com/mcdigman/liveness_primer/blob/main/explorer/README.md)
+for development and verification commands.
 
 ## GitHub Actions
 
@@ -138,52 +132,68 @@ human report to the GitHub step summary and uploads the complete JSON report
 for the explorer, automation, or later review.
 
 ```yaml
-name: Liveness primer
+name: Liveness Primer
 
 on:
   pull_request:
+
+concurrency:
+  group: liveness-primer-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  LIVENESS_PRIMER_REF: main
+  PYTHON_VERSION: "3.13"
 
 permissions:
   contents: read
 
 jobs:
-  blast-radius:
+  skylos:
+    name: Skylos blast radius
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 45
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - name: Check out liveness_primer
+        uses: actions/checkout@v7
         with:
-          python-version: "3.13"
+          repository: mcdigman/liveness_primer
+          ref: ${{ env.LIVENESS_PRIMER_REF }}
+          path: _liveness_primer
+          persist-credentials: false
 
-      - name: Install liveness_primer
-        run: python -m pip install "liveness_primer==0.0.1"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: _liveness_primer/pyproject.toml
 
-      - name: Compare detector revisions
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          DETECTOR_REPO: ${{ github.server_url }}/${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Compare Skylos revisions across the corpus
         run: |
-          liveness-primer run \
-            --tool vulture \
-            --repo "$DETECTOR_REPO" \
-            --old "$BASE_SHA" \
-            --new "$HEAD_SHA" \
+          set -o pipefail
+          uvx --from ./_liveness_primer \
+            liveness-primer run \
+            --tool skylos \
+            --repo "${{ github.server_url }}/${{ github.repository }}" \
+            --old "${{ github.event.pull_request.base.sha }}" \
+            --new "${{ github.event.pull_request.head.sha }}" \
             --all \
+            --corpus ./_liveness_primer/corpus.yaml \
             --output github \
             --json-out liveness-primer-report.json \
-            --fail-on corpus-integrity \
-            >> "$GITHUB_STEP_SUMMARY"
+            --jobs 2 \
+            --timeout 300 \
+            | tee liveness-primer-report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload complete report
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Upload liveness_primer report
+        uses: actions/upload-artifact@v7
         with:
           name: liveness-primer-report
-          path: liveness-primer-report.json
-          if-no-files-found: warn
+          path: |
+            liveness-primer-report.md
+            liveness-primer-report.json
+          if-no-files-found: error
 ```
 
 Detector crashes, timeouts, and unparseable output fail the run without an
@@ -202,7 +212,7 @@ Instead of or in addition to the step summary, a workflow can post a compact
 digest as a pull-request comment and link reviewers to the complete report and
 JSON artifact:
 
-![Example GitHub Actions comment summarizing a liveness_primer comparison](design/liveness_primer_ci_application.png)
+![Example GitHub Actions comment summarizing a liveness_primer comparison](https://raw.githubusercontent.com/mcdigman/liveness_primer/main/design/liveness_primer_ci_application.png)
 
 ### LLM-assisted triage
 
@@ -221,7 +231,7 @@ let generated prose replace deterministic gates or human review.
 <summary>Example simulated LLM-assisted triage digest</summary>
 <br>
 <img
-  src="design/llm_review_example.png"
+  src="https://raw.githubusercontent.com/mcdigman/liveness_primer/main/design/llm_review_example.png"
   alt="Simulated LLM pull-request review clustering new findings, identifying likely false positives, and recommending follow-up validation"
   width="900"
 >
