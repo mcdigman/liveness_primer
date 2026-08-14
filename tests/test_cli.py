@@ -153,13 +153,25 @@ def test_run_source_urls_is_opt_in(
 
 @pytest.mark.usefixtures('_isolated_cache')
 def test_run_failure_exit_code(tmp_path: Path, project_url: str, capsys: pytest.CaptureFixture[str]) -> None:
-    base_cmd = write_fake_detector_script(tmp_path / 'cli-base.json', [], exit_code=2, stderr='blew up')
-    head_cmd = write_fake_detector_script(tmp_path / 'cli-head.json', [])
+    base_cmd = write_fake_detector_script(
+        tmp_path / 'cli-base.json',
+        [BASE],
+        output_format='skylos',
+        exit_code=2,
+        stderr='base analysis incomplete',
+    )
+    head_cmd = write_fake_detector_script(
+        tmp_path / 'cli-head.json',
+        [BASE, NEW],
+        output_format='skylos',
+        exit_code=2,
+        stderr='head analysis incomplete',
+    )
     code = main(
         [
             'run',
             '--tool',
-            'vulture',
+            'skylos',
             '--project',
             project_url,
             '--old-cmd',
@@ -170,6 +182,10 @@ def test_run_failure_exit_code(tmp_path: Path, project_url: str, capsys: pytest.
     )
     captured = capsys.readouterr()
     assert code == EXIT_FAILURE
+    assert '1 new, 0 dropped, 0 changed' in captured.out
+    assert 'fresh' in captured.out
+    assert 'error[base]: exit code 2: base analysis incomplete' in captured.out
+    assert 'error[head]: exit code 2: head analysis incomplete' in captured.out
     assert 'run failure' in captured.err
 
 

@@ -238,9 +238,10 @@ class _SideOutcome:
     side : str
         ``base`` or ``head``.
     findings : tuple[Finding, ...] | None
-        Parsed findings; ``None`` when the invocation failed.
+        Parsed findings, including usable partial failure output; ``None``
+        when no usable output was available.
     error : ToolError | None
-        The failure, when the invocation failed.
+        The invocation or output-parsing failure, when present.
     duration_seconds : float
         Wall-clock duration of the invocation.
     returncode : int | None
@@ -487,16 +488,18 @@ class PrimerRunner:
         _SideOutcome
             The parsed outcome.
         """
+        error: ToolError | None = None
         if result.returncode not in self._adapter.success_exit_codes:
             detail = f'exit code {result.returncode}: {result.stderr.strip()[-_STDERR_SNIPPET:]}'
             error = ToolError(side=side, exit_code=result.returncode, detail=detail)
-            return _SideOutcome(
-                side=side,
-                findings=None,
-                error=error,
-                duration_seconds=result.duration_seconds,
-                returncode=result.returncode,
-            )
+            if not result.stdout.strip():
+                return _SideOutcome(
+                    side=side,
+                    findings=None,
+                    error=error,
+                    duration_seconds=result.duration_seconds,
+                    returncode=result.returncode,
+                )
         raw = RawToolOutput(
             returncode=result.returncode if result.returncode is not None else 0,
             stdout=result.stdout,
@@ -505,7 +508,8 @@ class PrimerRunner:
         try:
             findings = self._adapter.parse(raw, project=item.project.name, root=root, analyses=item.settings.analyses)
         except AdapterError as exc:
-            error = ToolError(side=side, exit_code=result.returncode, detail=str(exc))
+            detail = str(exc) if error is None else f'{error.detail}; output parse failed: {exc}'
+            error = ToolError(side=side, exit_code=result.returncode, detail=detail)
             return _SideOutcome(
                 side=side,
                 findings=None,
@@ -516,7 +520,7 @@ class PrimerRunner:
         return _SideOutcome(
             side=side,
             findings=tuple(findings),
-            error=None,
+            error=error,
             duration_seconds=result.duration_seconds,
             returncode=result.returncode,
         )

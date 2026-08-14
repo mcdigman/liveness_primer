@@ -21,6 +21,7 @@ from liveness_primer.launcher import LauncherError, SyncLauncher, run_async, run
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.testing.fake_detector import main
 from liveness_primer.testing.fake_project import DEFAULT_FILES, FakeProjectError
+from liveness_primer.tools.skylos import BUCKET_RULE_IDS
 
 
 def test_fake_finding_report_line_matches_vulture_format() -> None:
@@ -271,7 +272,7 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
 def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     command = write_fake_detector_script(tmp_path / 'script.json', [], output_format='skylos')
     assert main(command[3:]) == 0
-    assert json.loads(capsys.readouterr().out) == {}
+    assert json.loads(capsys.readouterr().out) == {key: [] for key in BUCKET_RULE_IDS}
 
 
 def test_main_emits_skylos_danger_diagnostics(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

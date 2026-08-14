@@ -47,9 +47,9 @@ def corpus_project(tmp_path: Path) -> CorpusProject:
     return CorpusProject(name='fakeproj', repo=origin.url, pin=origin.head_sha)
 
 
-def runner_for(tmp_path: Path, options: RunOptions = DEFAULT_OPTIONS) -> PrimerRunner:
+def runner_for(tmp_path: Path, options: RunOptions = DEFAULT_OPTIONS, *, tool: str = 'vulture') -> PrimerRunner:
     return PrimerRunner(
-        adapter=get_adapter('vulture'),
+        adapter=get_adapter(tool),
         store=CheckoutStore(tmp_path / 'cache'),
         isolation=UNENFORCED,
         options=options,
@@ -151,6 +151,37 @@ def test_tool_failure_is_recorded_not_raised(tmp_path: Path, corpus_project: Cor
     assert report_has_failures(report)
 
 
+def test_failed_skylos_with_empty_result_buckets_does_not_diff(
+    tmp_path: Path,
+    corpus_project: CorpusProject,
+) -> None:
+    base_cmd = write_fake_detector_script(
+        tmp_path / 'base.json',
+        [BASE_FINDING],
+        output_format='skylos',
+    )
+    head_cmd = write_fake_detector_script(
+        tmp_path / 'head.json',
+        [],
+        output_format='skylos',
+        exit_code=2,
+        stderr='analysis aborted',
+    )
+    report = runner_for(tmp_path, tool='skylos').run_escape_hatch(
+        [corpus_project],
+        base_cmd=base_cmd,
+        head_cmd=head_cmd,
+    )
+    (project_report,) = report.projects
+    (error,) = project_report.errors
+    assert 'no findings in recognized result buckets' in error.detail
+    assert project_report.base_findings == 1
+    assert project_report.head_findings == 0
+    assert project_report.diffs == ()
+    assert project_report.totals == DiffTotals()
+    assert project_report.measured_cost_seconds is None
+
+
 def test_unparseable_output_is_recorded_as_error(tmp_path: Path, corpus_project: CorpusProject) -> None:
     base_cmd = write_fake_detector_script(tmp_path / 'base.json', [], raw_lines=['?? not a report line'])
     head_cmd = write_fake_detector_script(tmp_path / 'head.json', [])
@@ -159,6 +190,22 @@ def test_unparseable_output_is_recorded_as_error(tmp_path: Path, corpus_project:
     (error,) = project_report.errors
     assert error.side == 'base'
     assert 'unparseable vulture output' in error.detail
+
+
+def test_unparseable_failure_output_preserves_exit_error(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    base_cmd = write_fake_detector_script(
+        tmp_path / 'base.json',
+        [],
+        exit_code=2,
+        stderr='config exploded',
+        raw_lines=['?? not a report line'],
+    )
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [])
+    report = runner_for(tmp_path).run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
+    (error,) = report.projects[0].errors
+    assert error.exit_code == 2
+    assert 'config exploded' in error.detail
+    assert 'output parse failed' in error.detail
 
 
 def test_timeout_is_recorded_with_settings_override(tmp_path: Path) -> None:

@@ -222,6 +222,32 @@ def test_skylos_explicit_rule_id_takes_precedence_over_bucket_mapping() -> None:
     assert mapped.rule_id == 'SKY-U001'
 
 
+@pytest.mark.parametrize(
+    'document',
+    [
+        {},
+        {'error': 'analysis aborted before producing a report'},
+        {
+            'unused_functions': [],
+            'unused_imports': [],
+            'unused_classes': [],
+            'unused_variables': [],
+            'unused_parameters': [],
+            'analysis_errors': [{'rule_id': 'SKY-ANALYSIS-INCOMPLETE'}],
+        },
+    ],
+)
+def test_skylos_rejects_failed_output_without_findings(document: dict[str, object]) -> None:
+    with pytest.raises(AdapterError, match='no findings in recognized result buckets'):
+        SkylosAdapter.parse(raw(json.dumps(document), returncode=2), project='demo', root=ROOT)
+
+
+def test_skylos_accepts_failed_output_with_a_result_bucket() -> None:
+    document = {'unused_functions': [{'name': 'a', 'type': 'function', 'file': 'a.py', 'line': 1}]}
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document), returncode=2), project='demo', root=ROOT)
+    assert finding.symbol == 'a'
+
+
 def test_vulture_findings_carry_no_invented_rule_id() -> None:
     # Reporting contract §3.1 and acceptance 4: a detector without a native
     # rule ID yields None, never an invented tool-specific code.
@@ -454,7 +480,7 @@ def test_skylos_clamps_line_zero_to_one() -> None:
 
 def test_skylos_rejects_invalid_json() -> None:
     with pytest.raises(AdapterError, match='not valid JSON'):
-        SkylosAdapter.parse(raw('Error during analysis: boom'), project='demo', root=ROOT)
+        SkylosAdapter.parse(raw('Error during analysis: boom', returncode=2), project='demo', root=ROOT)
 
 
 def test_skylos_rejects_non_object_document() -> None:

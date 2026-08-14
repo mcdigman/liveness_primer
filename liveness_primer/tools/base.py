@@ -171,7 +171,7 @@ class DetectorAdapter(Protocol):
         Parameters
         ----------
         output : RawToolOutput
-            Captured detector output with a success exit code.
+            Captured detector output, possibly from a failed invocation.
         project : str
             Corpus project name to stamp onto findings.
         root : Path

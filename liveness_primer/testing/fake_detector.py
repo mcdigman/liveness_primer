@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 from liveness_primer.filesystem import atomic_write_text
-from liveness_primer.tools.skylos import DIAGNOSTIC_KINDS
+from liveness_primer.tools.skylos import BUCKET_RULE_IDS, DIAGNOSTIC_KINDS
 
 FakeFormat = Literal['vulture', 'skylos']
 
@@ -266,7 +266,7 @@ def _emit_skylos(findings: Sequence[FakeFinding]) -> int:
     int
         The default skylos exit code: 0.
     """
-    document: dict[str, list[dict[str, object]]] = {}
+    document: dict[str, list[dict[str, object]]] = {key: [] for key in BUCKET_RULE_IDS}
     for finding in findings:
         document.setdefault(finding.bucket, []).append(finding.skylos_entry())
     sys.stdout.write(json.dumps(document, indent=2) + '\n')
