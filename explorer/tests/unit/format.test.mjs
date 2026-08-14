@@ -17,7 +17,7 @@ import {
 
 function occurrence(overrides = {}) {
   return {
-    schema_version: '2.0.0',
+    schema_version: '2.2.0',
     start_line: 10,
     end_line: 10,
     message: 'unused',
@@ -32,7 +32,7 @@ function occurrence(overrides = {}) {
 
 function diff(overrides = {}) {
   return {
-    schema_version: '2.0.0',
+    schema_version: '2.2.0',
     diff_class: 'changed',
     identity: 'i',
     tool: 't',
