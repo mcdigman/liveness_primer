@@ -38,14 +38,19 @@ review, prefer immutable commits or release tags.
 
 ## Select target projects
 
-Project selection is explicit:
+Every run requires exactly one target-selection mode:
 
-- `-k NAME` selects matching projects from the packaged, commit-pinned corpus;
+- one or more `-k NAME` options select matching projects from the packaged,
+  commit-pinned corpus;
 - `--all` selects every corpus project supported by the adapter;
 - `--max-cost SECONDS` selects a useful subset within an estimated runtime
   budget; and
 - `--project URL` uses one ad-hoc target repository instead of the packaged
   corpus.
+
+Repeated `-k` options are combined into one selection. Do not combine that
+mode with `--all` or `--max-cost`, and do not combine `--project` with any
+corpus selector.
 
 ## Interpret the result
 
@@ -54,7 +59,12 @@ Project selection is explicit:
 | `+` new | Present only at the head revision | Intended new coverage or a new false positive |
 | `-` dropped | Present only at the base revision | Intended removal or a new false negative |
 | `~` changed | A matched finding has different recorded details | Message, confidence, or severity drift |
-| error | A detector invocation did not produce a valid result | Crash, timeout, or unparseable output |
+| error | A detector invocation failed | Failure details; usable partial findings may still be displayed |
+
+An error does not always mean that findings are absent. If a failed invocation
+emits parseable structured output, the report retains those findings and can
+still generate diffs while also recording the invocation error. Review both;
+the run still exits with a failure status.
 
 Path, symbol, kind, rule ID, and line span are part of finding identity. If one
 of those fields changes, the report contains one dropped and one new finding
