@@ -155,7 +155,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out liveness_primer
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           repository: mcdigman/liveness_primer
           ref: ${{ env.LIVENESS_PRIMER_REF }}
@@ -163,7 +163,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           enable-cache: true
           python-version: ${{ env.PYTHON_VERSION }}
@@ -179,7 +179,6 @@ jobs:
             --old "${{ github.event.pull_request.base.sha }}" \
             --new "${{ github.event.pull_request.head.sha }}" \
             --all \
-            --corpus ./_liveness_primer/corpus.yaml \
             --output github \
             --json-out liveness-primer-report.json \
             --jobs 2 \
@@ -187,7 +186,8 @@ jobs:
             | tee liveness-primer-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload liveness_primer report
-        uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: liveness-primer-report
           path: |
