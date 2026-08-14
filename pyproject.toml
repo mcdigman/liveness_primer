@@ -1,6 +1,6 @@
 [project]
 name = "liveness_primer"
-version = "0.0.1"
+version = "0.1.0"
 description = "Differential testing harness for Python dead-code detectors and static linters: run a detector at two revisions across a corpus and diff the findings."
 readme = "README.md"
 authors = [
