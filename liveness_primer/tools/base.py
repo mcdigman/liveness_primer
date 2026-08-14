@@ -139,9 +139,11 @@ class DetectorAdapter(Protocol):
     passthrough_env : tuple[str, ...]
         Environment variables naming an operator-supplied native helper
         executable the detector needs. The §3 scrub drops everything
-        unlisted, so a declared variable is the only way one reaches the
-        detector; the runner validates and hashes each value and records it
-        in the manifest.
+        unlisted, so a declared variable is the only way an operator sets
+        one for the analysis invocation (the build step does not receive
+        them); the runner validates and hashes each value and records it in
+        the manifest. A detector may still locate a helper by its own
+        means — bundled in its install, or on the surviving ``PATH``.
     success_exit_codes : frozenset[int]
         Exit codes that mean the run completed (findings or clean).
     capabilities : AdapterCapabilities

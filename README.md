@@ -38,6 +38,12 @@ liveness-primer run --tool skylos --repo "$REPO" --old "$BASE" --new "$HEAD" \
   >> "$GITHUB_STEP_SUMMARY"
 ```
 
+Skylos analyzes Go sources with a prebuilt native engine. Export
+`SKYLOS_GO_BIN` with its absolute path when any analyzed project contains Go
+— skylos itself does — or the detector exits nonzero on both sides. Both
+sides receive the same binary, so the engine is a constant of the
+comparison rather than part of the diff.
+
 Corpus and schema maintenance:
 
 ```bash

@@ -700,16 +700,24 @@ class NativeToolRecord(_FrozenModel):
 
     The executable's location on the run host is deliberately absent: a
     report is a publishable artifact, and an absolute path describes the
-    operator's filesystem rather than the comparison. The digest is the
-    reproducible identity — it names which binary ran without disclosing
-    where it lives.
+    operator's filesystem rather than the comparison. The digest identifies
+    the binary without disclosing where it lives.
+
+    These records cover only what the runner itself admitted. A detector
+    may resolve a native helper on its own — from its own installed
+    package, or by searching ``PATH``, which survives the §3 scrub — and
+    such a helper is neither validated nor recorded here. An empty
+    ``native_tools`` therefore means the runner admitted nothing, not that
+    no native helper ran.
 
     Attributes
     ----------
     variable : str
         Adapter-declared environment variable carrying the executable.
     sha256 : str
-        Digest of the executable's bytes.
+        Digest of the executable's bytes, taken once at run start rather
+        than at each invocation: it is the identity of what the operator
+        supplied, not proof of the bytes a given side executed.
     """
 
     variable: str
@@ -818,7 +826,8 @@ class RunManifest(_FrozenModel):
         Installer name and version used to build environments.
     native_tools : tuple[NativeToolRecord, ...]
         Operator-supplied native executables admitted into both sides'
-        invocations; empty when the run used none (contract §3).
+        invocations; empty when the runner admitted none, which is not the
+        same as none having run (contract §3).
     fetches : tuple[FetchRecord, ...]
         Every fetch performed during the fetch step.
     corpus_pins : tuple[CorpusPinRecord, ...]
