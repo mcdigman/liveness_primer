@@ -222,9 +222,23 @@ def test_skylos_explicit_rule_id_takes_precedence_over_bucket_mapping() -> None:
     assert mapped.rule_id == 'SKY-U001'
 
 
-@pytest.mark.parametrize('document', [{}, {'error': 'analysis aborted before producing a report'}])
-def test_skylos_rejects_failed_output_without_result_buckets(document: dict[str, object]) -> None:
-    with pytest.raises(AdapterError, match='no recognized result bucket'):
+@pytest.mark.parametrize(
+    'document',
+    [
+        {},
+        {'error': 'analysis aborted before producing a report'},
+        {
+            'unused_functions': [],
+            'unused_imports': [],
+            'unused_classes': [],
+            'unused_variables': [],
+            'unused_parameters': [],
+            'analysis_errors': [{'rule_id': 'SKY-ANALYSIS-INCOMPLETE'}],
+        },
+    ],
+)
+def test_skylos_rejects_failed_output_without_findings(document: dict[str, object]) -> None:
+    with pytest.raises(AdapterError, match='no findings in recognized result buckets'):
         SkylosAdapter.parse(raw(json.dumps(document), returncode=2), project='demo', root=ROOT)
 
 

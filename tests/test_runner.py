@@ -151,7 +151,7 @@ def test_tool_failure_is_recorded_not_raised(tmp_path: Path, corpus_project: Cor
     assert report_has_failures(report)
 
 
-def test_failed_skylos_without_result_buckets_does_not_diff(
+def test_failed_skylos_with_empty_result_buckets_does_not_diff(
     tmp_path: Path,
     corpus_project: CorpusProject,
 ) -> None:
@@ -174,7 +174,7 @@ def test_failed_skylos_without_result_buckets_does_not_diff(
     )
     (project_report,) = report.projects
     (error,) = project_report.errors
-    assert 'no recognized result bucket' in error.detail
+    assert 'no findings in recognized result buckets' in error.detail
     assert project_report.base_findings == 1
     assert project_report.head_findings == 0
     assert project_report.diffs == ()
