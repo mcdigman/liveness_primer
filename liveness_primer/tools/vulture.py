@@ -80,7 +80,7 @@ class VultureAdapter:
         Parameters
         ----------
         output : RawToolOutput
-            Captured vulture output with a success exit code.
+            Captured vulture output, possibly from a failed invocation.
         project : str
             Corpus project name to stamp onto findings.
         root : Path

@@ -174,7 +174,7 @@ class SkylosAdapter:
         Parameters
         ----------
         output : RawToolOutput
-            Captured skylos output with a success exit code.
+            Captured skylos output, possibly from a failed invocation.
         project : str
             Corpus project name to stamp onto findings.
         root : Path

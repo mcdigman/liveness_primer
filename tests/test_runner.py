@@ -161,6 +161,22 @@ def test_unparseable_output_is_recorded_as_error(tmp_path: Path, corpus_project:
     assert 'unparseable vulture output' in error.detail
 
 
+def test_unparseable_failure_output_preserves_exit_error(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    base_cmd = write_fake_detector_script(
+        tmp_path / 'base.json',
+        [],
+        exit_code=2,
+        stderr='config exploded',
+        raw_lines=['?? not a report line'],
+    )
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [])
+    report = runner_for(tmp_path).run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
+    (error,) = report.projects[0].errors
+    assert error.exit_code == 2
+    assert 'config exploded' in error.detail
+    assert 'output parse failed' in error.detail
+
+
 def test_timeout_is_recorded_with_settings_override(tmp_path: Path) -> None:
     origin = create_fake_project(tmp_path / 'origin', init_git=True)
     assert origin.head_sha is not None
