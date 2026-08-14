@@ -195,7 +195,8 @@ class SkylosAdapter:
         ------
         AdapterError
             If stdout is not a JSON object, an entry is malformed, or an
-            analysis is not declared.
+            analysis is not declared. Failed output must also contain a
+            recognized result bucket.
         """
         selected: set[str] = set()
         for name in analyses:
@@ -211,8 +212,14 @@ class SkylosAdapter:
         if not isinstance(document, dict):
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
+        result_keys = (*_DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected))
+        if output.returncode not in SkylosAdapter.success_exit_codes and not any(
+            key in document for key in result_keys
+        ):
+            msg = 'failed skylos output has no recognized result bucket'
+            raise AdapterError(msg)
         findings: list[Finding] = []
-        for key in (*_DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected)):
+        for key in result_keys:
             bucket = document.get(key, [])
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
