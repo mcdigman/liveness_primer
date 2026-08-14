@@ -53,8 +53,8 @@ _STDERR_SNIPPET = 500
 
 _DIGEST_CHUNK = 1_048_576
 
-# Native analyzer engines can be much larger than report artifacts; 256 MiB
-# admits ordinary binaries while keeping operator-selected hashing bounded.
+# Hashing is already chunked, so this cap bounds admission I/O and time rather
+# than peak memory. 256 MiB leaves room for ordinary native analyzer engines.
 _MAX_NATIVE_TOOL_BYTES = 268_435_456
 
 
@@ -63,7 +63,7 @@ class RunnerError(LivenessPrimerError):
 
 
 def _executable_digest(path: Path) -> str:
-    """Hash one bounded executable while guarding against path replacement.
+    """Hash one bounded executable after verifying its opened-file identity.
 
     Parameters
     ----------
@@ -78,11 +78,11 @@ def _executable_digest(path: Path) -> str:
     Raises
     ------
     OSError
-        If the path changes during admission, is not a regular file, or
-        exceeds the native-tool size limit.
+        If the resolved path is not a regular file, the opened file differs
+        from the one inspected, or the read exceeds the native-tool size
+        limit.
     """
-    resolved = path.resolve(strict=True)
-    path_stat = resolved.lstat()
+    path_stat = path.lstat()
     if not stat.S_ISREG(path_stat.st_mode):
         msg = 'native tool is not a regular non-symlink file'
         raise OSError(msg)
@@ -90,7 +90,7 @@ def _executable_digest(path: Path) -> str:
         msg = f'native tool exceeds {_MAX_NATIVE_TOOL_BYTES} bytes'
         raise OSError(msg)
 
-    with resolved.open('rb') as stream:
+    with path.open('rb') as stream:
         opened_stat = os.fstat(stream.fileno())
         if not stat.S_ISREG(opened_stat.st_mode) or (
             opened_stat.st_dev,
@@ -185,7 +185,7 @@ def resolve_native_tools(adapter: DetectorAdapter, environ: Mapping[str, str]) -
                 raise RunnerError(msg)
             digest = _executable_digest(resolved)
         except (OSError, RuntimeError) as error:
-            msg = f'{variable} does not name a usable executable: {value}'
+            msg = f'{variable} does not name a usable executable: {value} ({error})'
             raise RunnerError(msg) from error
         admitted.append(AdmittedNativeTool(variable=variable, path=str(resolved), sha256=digest))
     return tuple(admitted)

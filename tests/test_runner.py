@@ -915,23 +915,27 @@ def test_native_tool_record_withholds_the_host_path(tmp_path: Path) -> None:
     assert admitted.path not in str(payload)
 
 
-def test_resolve_native_tools_rejects_an_unresolved_final_symlink(
+def test_resolve_native_tools_rejects_a_symlink_swap_after_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = write_fake_native_engine(tmp_path / 'skylos-go')
-    link = tmp_path / 'link-to-engine'
-    link.symlink_to(engine)
-    real_resolve = Path.resolve
+    saved_engine = tmp_path / 'original-skylos-go'
+    replacement = write_fake_native_engine(tmp_path / 'replacement-skylos-go')
+    real_is_file = Path.is_file
 
-    def leave_final_link(path: Path, *, strict: bool = False) -> Path:
-        if path == link:
-            return path.absolute()
-        return real_resolve(path, strict=strict)
+    def swap_after_check(self: Path) -> bool:
+        is_file = real_is_file(self)
+        if self == engine:
+            self.replace(saved_engine)
+            self.symlink_to(replacement)
+        return is_file
 
-    monkeypatch.setattr(Path, 'resolve', leave_final_link)
-    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
-        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(link)})
+    # The hook deterministically schedules a real symlink replacement in the
+    # otherwise nondeterministic resolve-to-admission race window.
+    monkeypatch.setattr(Path, 'is_file', swap_after_check)
+    with pytest.raises(RunnerError, match='native tool is not a regular non-symlink file'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
 
 
 def test_resolve_native_tools_rejects_an_oversized_executable(
@@ -939,8 +943,11 @@ def test_resolve_native_tools_rejects_an_oversized_executable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = write_fake_native_engine(tmp_path / 'skylos-go')
-    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', engine.stat().st_size - 1)
-    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
+    limit = engine.stat().st_size - 1
+    # Lowering the production cap avoids constructing a 256 MiB test artifact;
+    # the same size comparison and operator-facing error path are exercised.
+    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', limit)
+    with pytest.raises(RunnerError, match=rf'native tool exceeds {limit} bytes'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
 
 
@@ -956,8 +963,11 @@ def test_executable_digest_rejects_a_changed_file(
         values[stat.ST_INO] += 1
         return os.stat_result(values)
 
+    # A real lstat-to-open replacement race is nondeterministic. Altering only
+    # the opened inode pins the identity-mismatch branch; it is not end-to-end
+    # evidence that the later subprocess executes the recorded digest.
     monkeypatch.setattr(os, 'fstat', changed_fstat)
-    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
+    with pytest.raises(RunnerError, match='native tool changed while it was being admitted'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
 
 
@@ -970,10 +980,13 @@ def test_executable_digest_stops_if_the_file_grows_while_reading(
     bounded_values = list(actual_stat)
     bounded_values[stat.ST_SIZE] = actual_stat.st_size - 1
     bounded_stat = os.stat_result(bounded_values)
+    # A concurrent grow during this short read would be flaky to schedule.
+    # Fixed stat results keep the admission checks below the lowered cap while
+    # the real stream crosses it, pinning only the post-open growth guard.
     monkeypatch.setattr(Path, 'lstat', lambda _path: bounded_stat)
     monkeypatch.setattr(os, 'fstat', lambda _descriptor: bounded_stat)
     monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', actual_stat.st_size - 1)
-    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
+    with pytest.raises(RunnerError, match='native tool exceeds'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
 
 
