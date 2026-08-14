@@ -28,9 +28,10 @@ Use it to:
 - catch parser, packaging, dependency, timeout, and execution failures that
   only appear on some projects;
 - compare releases and review changes to locations, messages, confidence, or
-  rule attribution; and
+  rule attribution;
 - publish a human-readable PR summary and a complete machine-readable report
-  from CI.
+  from CI; and
+- feed the JSON report into deterministic automation or LLM-assisted triage.
 
 The comparison uses byte-identical, commit-pinned target projects for both
 detector revisions. Managed runs resolve the requested detector refs, prepare
@@ -108,6 +109,8 @@ the browser rather than uploaded to an application server. The explorer can:
 - select or hide findings while reviewing a large change;
 - preserve review state in a versioned JSON record; and
 - export a focused Markdown or JSON handoff.
+
+[![Static report explorer showing filters, finding diffs, source context, and export controls](design/report_explorer_demo.png)](https://mcdigman.github.io/liveness_primer/)
 
 To build and serve the explorer locally:
 
@@ -188,6 +191,35 @@ repeatable:
 For a new feature, leaving finding-diff gates off makes CI an evidence-producing
 review job. For a semantics-preserving refactor, `--fail-on any` turns the same
 workflow into a strict regression gate.
+
+Instead of or in addition to the step summary, a workflow can post a compact
+digest as a pull-request comment and link reviewers to the complete report and
+JSON artifact:
+
+![Example GitHub Actions comment summarizing a liveness_primer comparison](design/liveness_primer_ci_application.png)
+
+### LLM-assisted triage
+
+The complete JSON report is also suitable as input to an LLM-assisted review
+step. A downstream job can group changes by project or rule, highlight large or
+surprising clusters, call out detector failures, suggest which changes need
+human attention, and post an advisory digest as a pull-request comment.
+
+Keep the versioned JSON artifact as the source of truth and link every digest
+back to it. Finding messages and source excerpts originate in detector output
+and analyzed repositories, so treat them as untrusted content: run the model
+step without release credentials or unnecessary write permissions, and do not
+let generated prose replace deterministic gates or human review.
+
+<details>
+<summary>Example simulated LLM-assisted triage digest</summary>
+<br>
+<img
+  src="design/llm_review_example.png"
+  alt="Simulated LLM pull-request review clustering new findings, identifying likely false positives, and recommending follow-up validation"
+  width="900"
+>
+</details>
 
 ## Pre-built detector commands
 
