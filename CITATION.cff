@@ -5,9 +5,8 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata from this file."
 type: software
 title: "liveness_primer"
-version: 0.0.1
-# date-released is omitted until the first release is cut; add it (and bump
-# version above) in the release commit.
+version: 0.1.0
+date-released: 2026-08-14
 abstract: "Differential testing harness for Python dead-code detectors and static linters: run a detector at two revisions across a corpus and diff the findings"
 authors:
   - family-names: "Digman"
