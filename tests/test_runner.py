@@ -840,16 +840,29 @@ def test_resolve_native_tools_ignores_unset_and_undeclared_variables(tmp_path: P
     assert resolve_native_tools(get_adapter('vulture'), {'SKYLOS_GO_BIN': str(engine)}) == ()
 
 
-def test_resolve_native_tools_records_resolved_path_and_digest(tmp_path: Path) -> None:
-    # The digest is the provenance: it names which binary ran, and the
-    # recorded path is the symlink-resolved one that produced it.
+def test_resolve_native_tools_resolves_path_and_digest(tmp_path: Path) -> None:
+    # The detector is handed the symlink-resolved path, and the digest is
+    # taken from the file that path names.
     engine = write_fake_native_engine(tmp_path / 'skylos-go')
     link = tmp_path / 'link-to-engine'
     link.symlink_to(engine)
-    (record,) = resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(link)})
-    assert record.variable == 'SKYLOS_GO_BIN'
-    assert record.path == str(engine.resolve())
-    assert record.sha256 == hashlib.sha256(engine.read_bytes()).hexdigest()
+    (admitted,) = resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(link)})
+    assert admitted.variable == 'SKYLOS_GO_BIN'
+    assert admitted.path == str(engine.resolve())
+    assert admitted.sha256 == hashlib.sha256(engine.read_bytes()).hexdigest()
+
+
+def test_native_tool_record_withholds_the_host_path(tmp_path: Path) -> None:
+    # A report is publishable, so the serialized record carries the digest
+    # that identifies the binary but never where it sits on the run host.
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    (admitted,) = resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+    payload = admitted.record().model_dump(mode='json')
+    assert payload == {
+        'variable': 'SKYLOS_GO_BIN',
+        'sha256': hashlib.sha256(engine.read_bytes()).hexdigest(),
+    }
+    assert admitted.path not in str(payload)
 
 
 @pytest.mark.parametrize('name', ['absent-engine', 'plain-file', 'a-directory'])
@@ -915,4 +928,4 @@ def test_runner_reads_the_process_environment_by_default(tmp_path: Path, monkeyp
     )
     manifest = runner.run_escape_hatch([], base_cmd=('true',), head_cmd=('true',)).manifest
     (record,) = manifest.native_tools
-    assert record.path == str(engine.resolve())
+    assert record.sha256 == hashlib.sha256(engine.read_bytes()).hexdigest()

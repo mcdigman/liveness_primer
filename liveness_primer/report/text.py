@@ -130,26 +130,6 @@ def _plain_line(text: str, role: str = 'plain', link: str | None = None) -> Line
     return (Segment(text=text, role=role, link=link),)
 
 
-def _native_tool_lines(manifest: RunManifest) -> list[Line]:
-    """Render the operator-supplied native helpers a run admitted (contract §3).
-
-    Parameters
-    ----------
-    manifest : RunManifest
-        The run manifest.
-
-    Returns
-    -------
-    list[Line]
-        One line per admitted executable. Both sides shared it, so the
-        digest — not the path — is what makes the run reproducible.
-    """
-    return [
-        _plain_line(f'native tool: {sanitize_inline(f"{tool.variable}={tool.path}")} (sha256 {tool.sha256[:12]})')
-        for tool in manifest.native_tools
-    ]
-
-
 def _manifest_lines(manifest: RunManifest) -> list[Line]:
     """Render the manifest header.
 
@@ -188,7 +168,6 @@ def _manifest_lines(manifest: RunManifest) -> list[Line]:
         lines.append(_plain_line('isolation: NOT ENFORCED - build/analysis ran without a network sandbox', 'warning'))
     if manifest.installer is not None:
         lines.append(_plain_line(f'installer: {manifest.installer}'))
-    lines.extend(_native_tool_lines(manifest))
     if manifest.environment_delta:
         lines.append(_plain_line('environment delta - non-detector dependencies differ between the sides:'))
         for delta in manifest.environment_delta:

@@ -77,7 +77,41 @@ def _executable_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def resolve_native_tools(adapter: DetectorAdapter, environ: Mapping[str, str]) -> tuple[NativeToolRecord, ...]:
+@dataclass(frozen=True, slots=True)
+class AdmittedNativeTool:
+    """One validated operator-supplied executable admitted into a run.
+
+    The resolved host path lives here and nowhere else: it is needed to
+    build the invocation environment, and stays out of the serialized
+    record so a publishable report never carries the operator's filesystem
+    layout (contract §3).
+
+    Attributes
+    ----------
+    variable : str
+        Adapter-declared environment variable carrying the executable.
+    path : str
+        Resolved host path, passed to the detector at invocation time.
+    sha256 : str
+        Digest of the executable's bytes.
+    """
+
+    variable: str
+    path: str
+    sha256: str
+
+    def record(self) -> NativeToolRecord:
+        """Reduce this tool to its publishable manifest record.
+
+        Returns
+        -------
+        NativeToolRecord
+            The variable and digest, without the host path.
+        """
+        return NativeToolRecord(variable=self.variable, sha256=self.sha256)
+
+
+def resolve_native_tools(adapter: DetectorAdapter, environ: Mapping[str, str]) -> tuple[AdmittedNativeTool, ...]:
     """Admit the adapter's declared native helper executables (contract §3).
 
     The scrubbed analysis environment drops every unlisted variable, so an
@@ -96,8 +130,8 @@ def resolve_native_tools(adapter: DetectorAdapter, environ: Mapping[str, str]) -
 
     Returns
     -------
-    tuple[NativeToolRecord, ...]
-        One record per declared variable the operator set, in declaration
+    tuple[AdmittedNativeTool, ...]
+        One entry per declared variable the operator set, in declaration
         order; empty when none were set.
 
     Raises
@@ -106,7 +140,7 @@ def resolve_native_tools(adapter: DetectorAdapter, environ: Mapping[str, str]) -
         If a declared variable names anything but a readable, executable
         regular file.
     """
-    records: list[NativeToolRecord] = []
+    admitted: list[AdmittedNativeTool] = []
     for variable in adapter.passthrough_env:
         value = environ.get(variable, '').strip()
         if not value:
@@ -120,8 +154,8 @@ def resolve_native_tools(adapter: DetectorAdapter, environ: Mapping[str, str]) -
         except (OSError, RuntimeError) as error:
             msg = f'{variable} does not name a usable executable: {value}'
             raise RunnerError(msg) from error
-        records.append(NativeToolRecord(variable=variable, path=str(resolved), sha256=digest))
-    return tuple(records)
+        admitted.append(AdmittedNativeTool(variable=variable, path=str(resolved), sha256=digest))
+    return tuple(admitted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,8 +389,9 @@ class PrimerRunner:
         # Resolved once, before any fetching or building, so an unusable
         # helper path fails the run immediately; both sides then receive
         # the identical binary.
-        self._native_tools = resolve_native_tools(adapter, os.environ if environ is None else environ)
-        self._passthrough_env = {record.variable: record.path for record in self._native_tools}
+        admitted = resolve_native_tools(adapter, os.environ if environ is None else environ)
+        self._passthrough_env = {tool.variable: tool.path for tool in admitted}
+        self._native_tools = tuple(tool.record() for tool in admitted)
         self._adapter = adapter
         self._store = store
         self._checkout_root = store.checkout_root

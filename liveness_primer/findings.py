@@ -698,19 +698,21 @@ class EnvironmentRecord(_FrozenModel):
 class NativeToolRecord(_FrozenModel):
     """One operator-supplied native executable admitted into a run (contract §3).
 
+    The executable's location on the run host is deliberately absent: a
+    report is a publishable artifact, and an absolute path describes the
+    operator's filesystem rather than the comparison. The digest is the
+    reproducible identity — it names which binary ran without disclosing
+    where it lives.
+
     Attributes
     ----------
     variable : str
         Adapter-declared environment variable carrying the executable.
-    path : str
-        Absolute path of the executable, with symlinks resolved.
     sha256 : str
-        Digest of the executable's bytes, so the run names exactly which
-        binary the detector called.
+        Digest of the executable's bytes.
     """
 
     variable: str
-    path: str
     sha256: str
 
 

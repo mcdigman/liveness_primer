@@ -518,12 +518,8 @@
     },
     "NativeToolRecord": {
       "additionalProperties": false,
-      "description": "One operator-supplied native executable admitted into a run (contract \u00a73).\n\nAttributes\n----------\nvariable : str\n    Adapter-declared environment variable carrying the executable.\npath : str\n    Absolute path of the executable, with symlinks resolved.\nsha256 : str\n    Digest of the executable's bytes, so the run names exactly which\n    binary the detector called.",
+      "description": "One operator-supplied native executable admitted into a run (contract \u00a73).\n\nThe executable's location on the run host is deliberately absent: a\nreport is a publishable artifact, and an absolute path describes the\noperator's filesystem rather than the comparison. The digest is the\nreproducible identity \u2014 it names which binary ran without disclosing\nwhere it lives.\n\nAttributes\n----------\nvariable : str\n    Adapter-declared environment variable carrying the executable.\nsha256 : str\n    Digest of the executable's bytes.",
       "properties": {
-        "path": {
-          "title": "Path",
-          "type": "string"
-        },
         "sha256": {
           "title": "Sha256",
           "type": "string"
@@ -535,7 +531,6 @@
       },
       "required": [
         "variable",
-        "path",
         "sha256"
       ],
       "title": "NativeToolRecord",
