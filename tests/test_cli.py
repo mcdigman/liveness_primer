@@ -6,8 +6,10 @@ import os
 import shlex
 import shutil
 import sys
+from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -19,7 +21,9 @@ from liveness_primer.findings import SCHEMA_VERSION, Report
 from liveness_primer.isolation import UNENFORCED, Isolation, IsolationError
 from liveness_primer.license_check import LicenseCheckResult
 from liveness_primer.report import render_json
+from liveness_primer.runner import PrimerRunner
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
+from tests.test_report import build_report
 from tests.test_runner import ScriptedEnvInstaller, fake_detector_repo
 
 __all__ = ['fake_detector_repo']
@@ -171,6 +175,53 @@ def test_run_failure_exit_code(tmp_path: Path, project_url: str, capsys: pytest.
     captured = capsys.readouterr()
     assert code == EXIT_FAILURE
     assert 'run failure' in captured.err
+
+
+@pytest.mark.parametrize(('output', 'stdout_mode'), [('github', 'empty'), ('text', 'empty'), ('json', 'json')])
+@pytest.mark.usefixtures('_isolated_cache')
+def test_run_failure_omits_only_partial_human_report(
+    tmp_path: Path,
+    project_url: str,
+    output: str,
+    stdout_mode: Literal['empty', 'json'],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def partial_report(
+        _runner: PrimerRunner,
+        _projects: Sequence[CorpusProject],
+        *,
+        base_cmd: Sequence[str],
+        head_cmd: Sequence[str],
+    ) -> Report:
+        assert base_cmd
+        assert head_cmd
+        return build_report()
+
+    monkeypatch.setattr(PrimerRunner, 'run_escape_hatch', partial_report)
+    json_out = tmp_path / f'{output}.json'
+    code = main(
+        escape_argv(
+            tmp_path,
+            project_url,
+            [],
+            [],
+            '--output',
+            output,
+            '--json-out',
+            str(json_out),
+        )
+    )
+    captured = capsys.readouterr()
+    assert code == EXIT_FAILURE
+    if stdout_mode == 'empty':
+        assert not captured.out
+    else:
+        emitted = Report.model_validate_json(captured.out)
+        assert emitted.projects[1].diffs
+    assert 'run failure' in captured.err
+    archived = Report.model_validate_json(read_small_text(json_out))
+    assert archived.projects[1].diffs
 
 
 @pytest.mark.usefixtures('_isolated_cache')

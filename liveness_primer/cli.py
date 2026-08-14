@@ -595,6 +595,8 @@ def _command_run(args: argparse.Namespace) -> int:
         )
     if args.json_out is not None:
         _write_json_report(report, args.json_out)
+    if report_has_failures(report) and args.output != 'json':
+        return _exit_code_for(report, options.fail_on)
     sys.stdout.write(_render_report(report, args))
     return _exit_code_for(report, options.fail_on)
 
