@@ -28,7 +28,9 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 # total (reporting contract §3.1, §3.6).
 # 2.1.0 adds the additive per-project record of the corpus-selected opt-in
 # analyses (contract §5).
-SCHEMA_VERSION = '2.1.0'
+# 2.2.0 adds the additive manifest record of operator-supplied native helper
+# executables admitted into detector invocations (contract §3).
+SCHEMA_VERSION = '2.2.0'
 
 
 def _validated_schema_version(value: str) -> str:
@@ -693,6 +695,35 @@ class EnvironmentRecord(_FrozenModel):
     rebuilt: bool
 
 
+class NativeToolRecord(_FrozenModel):
+    """One operator-supplied native executable admitted into a run (contract §3).
+
+    The executable's location on the run host is deliberately absent: a
+    report is a publishable artifact, and an absolute path describes the
+    operator's filesystem rather than the comparison. The digest identifies
+    the binary without disclosing where it lives.
+
+    These records cover only what the runner itself admitted. A detector
+    may resolve a native helper on its own — from its own installed
+    package, or by searching ``PATH``, which survives the §3 scrub — and
+    such a helper is neither validated nor recorded here. An empty
+    ``native_tools`` therefore means the runner admitted nothing, not that
+    no native helper ran.
+
+    Attributes
+    ----------
+    variable : str
+        Adapter-declared environment variable carrying the executable.
+    sha256 : str
+        Digest of the executable's bytes, taken once at run start rather
+        than at each invocation: it is the identity of what the operator
+        supplied, not proof of the bytes a given side executed.
+    """
+
+    variable: str
+    sha256: str
+
+
 class DependencyDelta(_FrozenModel):
     """One surviving non-detector dependency difference between environments.
 
@@ -793,6 +824,10 @@ class RunManifest(_FrozenModel):
         Python version running the detectors.
     installer : str | None
         Installer name and version used to build environments.
+    native_tools : tuple[NativeToolRecord, ...]
+        Operator-supplied native executables admitted into both sides'
+        invocations; empty when the runner admitted none, which is not the
+        same as none having run (contract §3).
     fetches : tuple[FetchRecord, ...]
         Every fetch performed during the fetch step.
     corpus_pins : tuple[CorpusPinRecord, ...]
@@ -815,6 +850,7 @@ class RunManifest(_FrozenModel):
     platform: str
     python_version: str
     installer: str | None
+    native_tools: tuple[NativeToolRecord, ...] = ()
     fetches: tuple[FetchRecord, ...]
     corpus_pins: tuple[CorpusPinRecord, ...]
     settings: RunSettings

@@ -9,12 +9,14 @@ timeouts; analysis-step subprocesses run under the §11 network isolation.
 """
 
 import asyncio
+import hashlib
 import inspect
+import os
 import platform
 import shutil
 import sysconfig
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +33,7 @@ from liveness_primer.findings import (
     DiffTotals,
     FetchRecord,
     Finding,
+    NativeToolRecord,
     ProjectReport,
     Report,
     RunManifest,
@@ -47,9 +50,112 @@ GATE_CHOICES = ('new', 'dropped', 'changed', 'any', 'corpus-integrity')
 
 _STDERR_SNIPPET = 500
 
+_DIGEST_CHUNK = 1_048_576
+
 
 class RunnerError(LivenessPrimerError):
     """Raised when a run is misconfigured."""
+
+
+def _executable_digest(path: Path) -> str:
+    """Hash one executable's bytes for the manifest record.
+
+    Parameters
+    ----------
+    path : Path
+        Resolved executable path.
+
+    Returns
+    -------
+    str
+        SHA-256 hex digest.
+    """
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(_DIGEST_CHUNK), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class AdmittedNativeTool:
+    """One validated operator-supplied executable admitted into a run.
+
+    The resolved host path lives here and nowhere else: it is needed to
+    build the invocation environment, and stays out of the serialized
+    record so a publishable report never carries the operator's filesystem
+    layout (contract §3).
+
+    Attributes
+    ----------
+    variable : str
+        Adapter-declared environment variable carrying the executable.
+    path : str
+        Resolved host path, passed to the detector at invocation time.
+    sha256 : str
+        Digest of the executable's bytes.
+    """
+
+    variable: str
+    path: str
+    sha256: str
+
+    def record(self) -> NativeToolRecord:
+        """Reduce this tool to its publishable manifest record.
+
+        Returns
+        -------
+        NativeToolRecord
+            The variable and digest, without the host path.
+        """
+        return NativeToolRecord(variable=self.variable, sha256=self.sha256)
+
+
+def resolve_native_tools(adapter: DetectorAdapter, environ: Mapping[str, str]) -> tuple[AdmittedNativeTool, ...]:
+    """Admit the adapter's declared native helper executables (contract §3).
+
+    The scrubbed analysis environment drops every unlisted variable, so an
+    adapter declaration is the only channel by which an operator hands the
+    detector a native helper (e.g. skylos's Go engine). Each supplied path
+    is resolved, required to be an executable regular file, and hashed, so
+    a missing or wrong binary fails the run here rather than silently
+    degrading both sides' analysis.
+
+    Parameters
+    ----------
+    adapter : DetectorAdapter
+        Adapter of the tool under test.
+    environ : Mapping[str, str]
+        Operator environment supplying the declared variables.
+
+    Returns
+    -------
+    tuple[AdmittedNativeTool, ...]
+        One entry per declared variable the operator set, in declaration
+        order; empty when none were set.
+
+    Raises
+    ------
+    RunnerError
+        If a declared variable names anything but a readable, executable
+        regular file.
+    """
+    admitted: list[AdmittedNativeTool] = []
+    for variable in adapter.passthrough_env:
+        value = environ.get(variable, '').strip()
+        if not value:
+            continue
+        try:
+            resolved = Path(value).expanduser().resolve(strict=True)
+            if not resolved.is_file() or not os.access(resolved, os.X_OK):
+                msg = f'{variable} does not name an executable file: {value}'
+                raise RunnerError(msg)
+            digest = _executable_digest(resolved)
+        except (OSError, RuntimeError) as error:
+            msg = f'{variable} does not name a usable executable: {value}'
+            raise RunnerError(msg) from error
+        admitted.append(AdmittedNativeTool(variable=variable, path=str(resolved), sha256=digest))
+    return tuple(admitted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,11 +360,15 @@ class PrimerRunner:
         Effective run options.
     async_launcher : AsyncLauncher
         Audited launcher for detector invocations (contract §11).
+    environ : Mapping[str, str] | None
+        Operator environment supplying the adapter's declared native
+        helper executables; ``os.environ`` when ``None``.
 
     Raises
     ------
     RunnerError
-        If ``async_launcher`` is not an asynchronous callable.
+        If ``async_launcher`` is not an asynchronous callable, or a
+        declared native helper variable names no usable executable.
     """
 
     def __init__(
@@ -269,12 +379,19 @@ class PrimerRunner:
         isolation: Isolation,
         options: RunOptions,
         async_launcher: AsyncLauncher = run_async,
+        environ: Mapping[str, str] | None = None,
     ) -> None:
         if not inspect.iscoroutinefunction(async_launcher) and not inspect.iscoroutinefunction(
             type(async_launcher).__call__
         ):
             msg = 'async_launcher must be an asynchronous callable'
             raise RunnerError(msg)
+        # Resolved once, before any fetching or building, so an unusable
+        # helper path fails the run immediately; both sides then receive
+        # the identical binary.
+        admitted = resolve_native_tools(adapter, os.environ if environ is None else environ)
+        self._passthrough_env = {tool.variable: tool.path for tool in admitted}
+        self._native_tools = tuple(tool.record() for tool in admitted)
         self._adapter = adapter
         self._store = store
         self._checkout_root = store.checkout_root
@@ -440,6 +557,7 @@ class PrimerRunner:
             try:
                 environment = scrubbed_environment(home=workspace.home)
                 environment.update(self._adapter.invocation_env)
+                environment.update(self._passthrough_env)
                 try:
                     async with asyncio.timeout(timeout):
                         result = await self._async_launcher(
@@ -640,6 +758,7 @@ class PrimerRunner:
             platform=sysconfig.get_platform(),
             python_version=platform.python_version(),
             installer=pair.installer_identity if pair is not None else None,
+            native_tools=self._native_tools,
             fetches=fetches,
             corpus_pins=pins,
             settings=RunSettings(
