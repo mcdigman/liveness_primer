@@ -14,6 +14,7 @@ import inspect
 import os
 import platform
 import shutil
+import stat
 import sysconfig
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -52,13 +53,17 @@ _STDERR_SNIPPET = 500
 
 _DIGEST_CHUNK = 1_048_576
 
+# Native analyzer engines can be much larger than report artifacts; 256 MiB
+# admits ordinary binaries while keeping operator-selected hashing bounded.
+_MAX_NATIVE_TOOL_BYTES = 268_435_456
+
 
 class RunnerError(LivenessPrimerError):
     """Raised when a run is misconfigured."""
 
 
 def _executable_digest(path: Path) -> str:
-    """Hash one executable's bytes for the manifest record.
+    """Hash one bounded executable while guarding against path replacement.
 
     Parameters
     ----------
@@ -69,12 +74,40 @@ def _executable_digest(path: Path) -> str:
     -------
     str
         SHA-256 hex digest.
+
+    Raises
+    ------
+    OSError
+        If the path changes during admission, is not a regular file, or
+        exceeds the native-tool size limit.
     """
-    digest = hashlib.sha256()
-    with path.open('rb') as stream:
+    resolved = path.resolve(strict=True)
+    path_stat = resolved.lstat()
+    if not stat.S_ISREG(path_stat.st_mode):
+        msg = 'native tool is not a regular non-symlink file'
+        raise OSError(msg)
+    if path_stat.st_size > _MAX_NATIVE_TOOL_BYTES:
+        msg = f'native tool exceeds {_MAX_NATIVE_TOOL_BYTES} bytes'
+        raise OSError(msg)
+
+    with resolved.open('rb') as stream:
+        opened_stat = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened_stat.st_mode) or (
+            opened_stat.st_dev,
+            opened_stat.st_ino,
+        ) != (path_stat.st_dev, path_stat.st_ino):
+            msg = 'native tool changed while it was being admitted'
+            raise OSError(msg)
+
+        digest = hashlib.sha256()
+        bytes_read = 0
         for chunk in iter(lambda: stream.read(_DIGEST_CHUNK), b''):
+            bytes_read += len(chunk)
+            if bytes_read > _MAX_NATIVE_TOOL_BYTES:
+                msg = f'native tool exceeds {_MAX_NATIVE_TOOL_BYTES} bytes'
+                raise OSError(msg)
             digest.update(chunk)
-    return digest.hexdigest()
+        return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,7 +4,9 @@
 
 import asyncio
 import hashlib
+import os
 import re
+import stat
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -13,6 +15,7 @@ from typing import cast
 
 import pytest
 
+import liveness_primer.runner as runner_module
 from liveness_primer.config import CorpusProject, ToolSettings
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
@@ -872,7 +875,7 @@ def test_fake_skylos_analyses_selection_reaches_argv_and_report(tmp_path: Path) 
 
 
 def write_fake_native_engine(path: Path) -> Path:
-    path.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    atomic_write_text(path, '#!/bin/sh\nexit 0\n')
     path.chmod(0o755)
     return path
 
@@ -912,14 +915,76 @@ def test_native_tool_record_withholds_the_host_path(tmp_path: Path) -> None:
     assert admitted.path not in str(payload)
 
 
-@pytest.mark.parametrize('name', ['absent-engine', 'plain-file', 'a-directory'])
-def test_resolve_native_tools_rejects_unusable_paths(tmp_path: Path, name: str) -> None:
+def test_resolve_native_tools_rejects_an_unresolved_final_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    link = tmp_path / 'link-to-engine'
+    link.symlink_to(engine)
+    real_resolve = Path.resolve
+
+    def leave_final_link(path: Path, *, strict: bool = False) -> Path:
+        if path == link:
+            return path.absolute()
+        return real_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, 'resolve', leave_final_link)
+    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(link)})
+
+
+def test_resolve_native_tools_rejects_an_oversized_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', engine.stat().st_size - 1)
+    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+
+
+def test_executable_digest_rejects_a_changed_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    real_fstat = os.fstat
+
+    def changed_fstat(descriptor: int) -> os.stat_result:
+        values = list(real_fstat(descriptor))
+        values[stat.ST_INO] += 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(os, 'fstat', changed_fstat)
+    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+
+
+def test_executable_digest_stops_if_the_file_grows_while_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    actual_stat = engine.stat()
+    bounded_values = list(actual_stat)
+    bounded_values[stat.ST_SIZE] = actual_stat.st_size - 1
+    bounded_stat = os.stat_result(bounded_values)
+    monkeypatch.setattr(Path, 'lstat', lambda _path: bounded_stat)
+    monkeypatch.setattr(os, 'fstat', lambda _descriptor: bounded_stat)
+    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', actual_stat.st_size - 1)
+    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name a usable executable'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+
+
+@pytest.mark.parametrize('kind', ['absent', 'plain-file', 'directory'])
+def test_resolve_native_tools_rejects_unusable_paths(tmp_path: Path, kind: str) -> None:
     # A wrong path must stop the run here: silently falling through would
     # leave both sides analyzing Go sources incompletely.
-    target = tmp_path / name
-    if name == 'plain-file':
-        target.write_text('not executable\n', encoding='utf-8')
-    elif name == 'a-directory':
+    target = tmp_path / 'unusable-native-tool'
+    if kind == 'plain-file':
+        atomic_write_text(target, 'not executable\n')
+    elif kind == 'directory':
         target.mkdir()
     with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(target)})
