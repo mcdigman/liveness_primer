@@ -329,6 +329,15 @@ def test_adapters_declare_invocation_environments() -> None:
     assert dict(VultureAdapter.invocation_env) == {}
 
 
+def test_adapters_declare_native_helper_variables() -> None:
+    # Skylos needs its prebuilt Go engine to analyze Go sources — including
+    # its own — and the scrubbed environment admits it only by declaration.
+    assert SkylosAdapter.passthrough_env == ('SKYLOS_GO_BIN',)
+    # A declared variable must not collide with the pinned static ones.
+    assert not set(SkylosAdapter.passthrough_env) & set(SkylosAdapter.invocation_env)
+    assert VultureAdapter.passthrough_env == ()
+
+
 def test_skylos_parse_rejects_undeclared_analyses() -> None:
     with pytest.raises(AdapterError, match="skylos does not provide analysis 'sca'"):
         SkylosAdapter.parse(raw('{}'), project='demo', root=ROOT, analyses=('sca',))

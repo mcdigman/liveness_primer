@@ -44,6 +44,8 @@ class VultureAdapter:
         Empty: vulture offers no opt-in analyses.
     invocation_env : Mapping[str, str]
         Empty: vulture needs no invocation environment.
+    passthrough_env : tuple[str, ...]
+        Empty: vulture is pure Python and needs no native helper.
     success_exit_codes : frozenset[int]
         0 (clean) and 3 (findings).
     capabilities : AdapterCapabilities
@@ -58,6 +60,7 @@ class VultureAdapter:
     default_args: tuple[str, ...] = ()
     analyses: Mapping[str, tuple[str, ...]] = MappingProxyType({})
     invocation_env: Mapping[str, str] = MappingProxyType({})
+    passthrough_env: tuple[str, ...] = ()
     success_exit_codes: frozenset[int] = frozenset({0, 3})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,

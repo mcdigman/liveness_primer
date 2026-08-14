@@ -136,6 +136,14 @@ class DetectorAdapter(Protocol):
         Static, side-identical environment variables layered over the
         scrubbed environment of every detector invocation (e.g. pinning a
         detector's config discovery, contract §3, §11).
+    passthrough_env : tuple[str, ...]
+        Environment variables naming an operator-supplied native helper
+        executable the detector needs. The §3 scrub drops everything
+        unlisted, so a declared variable is the only way an operator sets
+        one for the analysis invocation (the build step does not receive
+        them); the runner validates and hashes each value and records it in
+        the manifest. A detector may still locate a helper by its own
+        means — bundled in its install, or on the surviving ``PATH``.
     success_exit_codes : frozenset[int]
         Exit codes that mean the run completed (findings or clean).
     capabilities : AdapterCapabilities
@@ -150,6 +158,7 @@ class DetectorAdapter(Protocol):
     default_args: tuple[str, ...]
     analyses: Mapping[str, tuple[str, ...]]
     invocation_env: Mapping[str, str]
+    passthrough_env: tuple[str, ...]
     success_exit_codes: frozenset[int]
     capabilities: AdapterCapabilities
     build_recipe: BuildRecipe

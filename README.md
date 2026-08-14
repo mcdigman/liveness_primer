@@ -49,6 +49,12 @@ pip install liveness_primer
 The built-in adapters support [Vulture](https://github.com/jendrikseipp/vulture)
 and [Skylos](https://github.com/duriantaco/skylos).
 
+Skylos analyzes Go sources with a prebuilt native engine. Export
+`SKYLOS_GO_BIN` with its absolute path when any analyzed project contains Go
+— including Skylos itself — or the detector exits nonzero on both sides. Both
+revisions receive the same binary, so the engine remains constant across the
+comparison rather than becoming part of the diff.
+
 License verification (`corpus license-check`) requires the `[license]` extra.
 
 ## Quick start

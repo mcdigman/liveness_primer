@@ -34,6 +34,7 @@ from liveness_primer.findings import (
     FetchRecord,
     FindingDiff,
     FindingOccurrence,
+    NativeToolRecord,
     ProjectReport,
     Report,
     RunManifest,
@@ -611,6 +612,18 @@ def test_escape_hatch_manifest_renders_commands() -> None:
     markdown = render_github(report.model_copy(update={'manifest': manifest}))
     assert "**base command**: `/private/var/folders/zz/old-vulture --flag 'a b'`" in markdown
     assert '**isolation**: enforced' in markdown
+
+
+def test_native_tool_provenance_stays_out_of_rendered_reports() -> None:
+    # Admitted native helpers are manifest-only provenance: the JSON report
+    # carries the digest, and neither rendered header mentions the tool.
+    report = build_report()
+    engine = NativeToolRecord(variable='SKYLOS_GO_BIN', sha256='ab12cd34ef56' + '0' * 52)
+    manifest = report.manifest.model_copy(update={'native_tools': (engine,)})
+    rendered = report.model_copy(update={'manifest': manifest})
+    assert 'SKYLOS_GO_BIN' not in render_text(rendered, WIDE)
+    assert 'SKYLOS_GO_BIN' not in render_github(rendered)
+    assert 'ab12cd34ef56' in render_json(rendered)
 
 
 def test_text_report_shows_required_finding_columns() -> None:

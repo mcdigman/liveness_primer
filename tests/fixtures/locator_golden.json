@@ -164,9 +164,10 @@
       ],
       "installer": null,
       "isolation_enforced": true,
+      "native_tools": [],
       "platform": "linux-x86_64",
       "python_version": "3.14.0",
-      "schema_version": "2.1.0",
+      "schema_version": "2.2.0",
       "settings": {
         "excerpt_lines": 2,
         "fail_on": [],
@@ -192,7 +193,7 @@
               "message": "m",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 5
@@ -210,7 +211,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "dup",
             "tool": "faketool"
           },
@@ -221,7 +222,7 @@
               "message": "m",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 5
@@ -239,7 +240,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "dup",
             "tool": "faketool"
           },
@@ -253,7 +254,7 @@
               "message": "ee",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 7
@@ -268,7 +269,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "triple",
             "tool": "faketool"
           },
@@ -279,7 +280,7 @@
               "message": "aa",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 7
@@ -294,7 +295,7 @@
               "message": "cc",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 7
@@ -309,7 +310,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "triple",
             "tool": "faketool"
           },
@@ -320,7 +321,7 @@
               "message": "bb",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 7
@@ -335,7 +336,7 @@
               "message": "dd",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 7
@@ -350,7 +351,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "triple",
             "tool": "faketool"
           },
@@ -361,7 +362,7 @@
               "message": "zz",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 8
@@ -379,7 +380,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "mixed",
             "tool": "faketool"
           },
@@ -390,7 +391,7 @@
               "message": "aa",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 8
@@ -405,7 +406,7 @@
               "message": "aa2",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 8
@@ -420,7 +421,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "mixed",
             "tool": "faketool"
           },
@@ -431,7 +432,7 @@
               "message": "bb",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 8
@@ -446,7 +447,7 @@
               "message": "bb2",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 8
@@ -461,7 +462,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "mixed",
             "tool": "faketool"
           },
@@ -472,7 +473,7 @@
               "message": "yy",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 8
@@ -487,7 +488,7 @@
               "message": "yy2",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 8
@@ -502,7 +503,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "mixed",
             "tool": "faketool"
           },
@@ -513,7 +514,7 @@
               "message": "same",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 9
@@ -531,7 +532,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "ghost-a",
             "tool": "faketool"
           },
@@ -545,7 +546,7 @@
               "message": "same",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 9
@@ -560,7 +561,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "ghost-b",
             "tool": "faketool"
           },
@@ -571,7 +572,7 @@
               "message": "m",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 10
@@ -589,7 +590,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "mover",
             "tool": "faketool"
           },
@@ -600,7 +601,7 @@
               "message": "z",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 12
@@ -615,7 +616,7 @@
               "message": "z",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 12
@@ -630,7 +631,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "zero",
             "tool": "faketool"
           },
@@ -644,7 +645,7 @@
               "message": "zn",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 13
@@ -659,7 +660,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "zeronew",
             "tool": "faketool"
           },
@@ -670,7 +671,7 @@
               "message": "r",
               "raw_excerpt": null,
               "rule_id": "SKY-U001",
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 15
@@ -688,7 +689,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "ruled",
             "tool": "faketool"
           },
@@ -702,7 +703,7 @@
               "message": "r",
               "raw_excerpt": null,
               "rule_id": "SKY-U003",
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 15
@@ -717,7 +718,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "ruled",
             "tool": "faketool"
           },
@@ -731,7 +732,7 @@
               "message": "q",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 16
@@ -746,7 +747,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "ruleless",
             "tool": "faketool"
           },
@@ -757,7 +758,7 @@
               "message": "g",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 17
@@ -775,7 +776,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "gain",
             "tool": "faketool"
           },
@@ -789,7 +790,7 @@
               "message": "g",
               "raw_excerpt": null,
               "rule_id": "SKY-U002",
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 17
@@ -804,7 +805,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "gain",
             "tool": "faketool"
           },
@@ -815,7 +816,7 @@
               "message": "sv",
               "raw_excerpt": null,
               "rule_id": "SKY-D203",
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": "MEDIUM",
               "source_excerpt": null,
               "start_line": 18
@@ -830,7 +831,7 @@
               "message": "sv",
               "raw_excerpt": null,
               "rule_id": "SKY-D203",
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": "HIGH",
               "source_excerpt": null,
               "start_line": 18
@@ -845,7 +846,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "sev",
             "tool": "faketool"
           },
@@ -859,7 +860,7 @@
               "message": "m",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 20
@@ -874,7 +875,7 @@
             },
             "path": "pkg/a.py",
             "project": "alpha",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "mover",
             "tool": "faketool"
           }
@@ -953,7 +954,7 @@
               "message": "s",
               "raw_excerpt": null,
               "rule_id": null,
-              "schema_version": "2.1.0",
+              "schema_version": "2.2.0",
               "severity": null,
               "source_excerpt": null,
               "start_line": 5
@@ -968,7 +969,7 @@
             },
             "path": "lib/b.py",
             "project": "beta",
-            "schema_version": "2.1.0",
+            "schema_version": "2.2.0",
             "symbol": "solo",
             "tool": "faketool"
           }
@@ -1042,7 +1043,7 @@
         "rule_id": "SKY-D203"
       }
     ],
-    "schema_version": "2.1.0",
+    "schema_version": "2.2.0",
     "totals": {
       "changed": 7,
       "changed_confidence_only": 1,

@@ -3,6 +3,7 @@
 """Tests for the two-revision runner over the fake detector (contract §3, §15)."""
 
 import asyncio
+import hashlib
 import re
 import sys
 from collections.abc import Mapping, Sequence
@@ -21,7 +22,14 @@ from liveness_primer.isolation import UNENFORCED, Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async, run_sync
 from liveness_primer.report import render_github, render_text
 from liveness_primer.report.terminal import TextRenderOptions
-from liveness_primer.runner import PrimerRunner, RunnerError, RunOptions, evaluate_gates, report_has_failures
+from liveness_primer.runner import (
+    PrimerRunner,
+    RunnerError,
+    RunOptions,
+    evaluate_gates,
+    report_has_failures,
+    resolve_native_tools,
+)
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.tools.registry import get_adapter
 
@@ -814,3 +822,110 @@ def test_fake_skylos_analyses_selection_reaches_argv_and_report(tmp_path: Path) 
     fresh = next(diff for diff in project_report.diffs if diff.diff_class is DiffClass.NEW)
     assert fresh.kind == 'secret'
     assert fresh.symbol == 'API_KEY'
+
+
+def write_fake_native_engine(path: Path) -> Path:
+    path.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    path.chmod(0o755)
+    return path
+
+
+def test_resolve_native_tools_ignores_unset_and_undeclared_variables(tmp_path: Path) -> None:
+    # An unset or blank variable leaves the detector's own discovery alone;
+    # an adapter that declares no native helper never admits one at all.
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    skylos = get_adapter('skylos')
+    assert resolve_native_tools(skylos, {}) == ()
+    assert resolve_native_tools(skylos, {'SKYLOS_GO_BIN': '   '}) == ()
+    assert resolve_native_tools(get_adapter('vulture'), {'SKYLOS_GO_BIN': str(engine)}) == ()
+
+
+def test_resolve_native_tools_resolves_path_and_digest(tmp_path: Path) -> None:
+    # The detector is handed the symlink-resolved path, and the digest is
+    # taken from the file that path names.
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    link = tmp_path / 'link-to-engine'
+    link.symlink_to(engine)
+    (admitted,) = resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(link)})
+    assert admitted.variable == 'SKYLOS_GO_BIN'
+    assert admitted.path == str(engine.resolve())
+    assert admitted.sha256 == hashlib.sha256(engine.read_bytes()).hexdigest()
+
+
+def test_native_tool_record_withholds_the_host_path(tmp_path: Path) -> None:
+    # A report is publishable, so the serialized record carries the digest
+    # that identifies the binary but never where it sits on the run host.
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    (admitted,) = resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
+    payload = admitted.record().model_dump(mode='json')
+    assert payload == {
+        'variable': 'SKYLOS_GO_BIN',
+        'sha256': hashlib.sha256(engine.read_bytes()).hexdigest(),
+    }
+    assert admitted.path not in str(payload)
+
+
+@pytest.mark.parametrize('name', ['absent-engine', 'plain-file', 'a-directory'])
+def test_resolve_native_tools_rejects_unusable_paths(tmp_path: Path, name: str) -> None:
+    # A wrong path must stop the run here: silently falling through would
+    # leave both sides analyzing Go sources incompletely.
+    target = tmp_path / name
+    if name == 'plain-file':
+        target.write_text('not executable\n', encoding='utf-8')
+    elif name == 'a-directory':
+        target.mkdir()
+    with pytest.raises(RunnerError, match='SKYLOS_GO_BIN does not name'):
+        resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(target)})
+
+
+def test_declared_native_tool_reaches_both_sides_and_the_manifest(tmp_path: Path) -> None:
+    # The operator-supplied engine is layered over the scrubbed environment
+    # of both invocations — the scrub drops it otherwise — and the manifest
+    # records exactly which binary the sides shared (contract §3, §11).
+    origin = create_fake_project(tmp_path / 'origin', init_git=True)
+    assert origin.head_sha is not None
+    project = CorpusProject(name='fakeproj', repo=origin.url, pin=origin.head_sha)
+    base_cmd = write_fake_detector_script(tmp_path / 'base.json', [], output_format='skylos')
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [], output_format='skylos')
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    environs: list[dict[str, str]] = []
+
+    async def spying_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        environs.append(dict(env) if env is not None else {})
+        return await run_async(list(argv), cwd=cwd, env=env)
+
+    runner = PrimerRunner(
+        adapter=get_adapter('skylos'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+        async_launcher=spying_launcher,
+        environ={'SKYLOS_GO_BIN': str(engine)},
+    )
+    report = runner.run_escape_hatch([project], base_cmd=base_cmd, head_cmd=head_cmd)
+    assert len(environs) == 2
+    assert all(environment['SKYLOS_GO_BIN'] == str(engine.resolve()) for environment in environs)
+    (record,) = report.manifest.native_tools
+    assert record.variable == 'SKYLOS_GO_BIN'
+    assert record.sha256 == hashlib.sha256(engine.read_bytes()).hexdigest()
+
+
+def test_runner_reads_the_process_environment_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The CLI passes no explicit environment, so an operator exporting the
+    # variable before the run is what the default path must pick up.
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    monkeypatch.setenv('SKYLOS_GO_BIN', str(engine))
+    runner = PrimerRunner(
+        adapter=get_adapter('skylos'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=UNENFORCED,
+        options=DEFAULT_OPTIONS,
+    )
+    manifest = runner.run_escape_hatch([], base_cmd=('true',), head_cmd=('true',)).manifest
+    (record,) = manifest.native_tools
+    assert record.sha256 == hashlib.sha256(engine.read_bytes()).hexdigest()

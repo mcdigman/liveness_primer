@@ -357,8 +357,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "2.1.0",
-          "default": "2.1.0",
+          "const": "2.2.0",
+          "default": "2.2.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -474,8 +474,8 @@
           "title": "Rule Id"
         },
         "schema_version": {
-          "const": "2.1.0",
-          "default": "2.1.0",
+          "const": "2.2.0",
+          "default": "2.2.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -514,6 +514,26 @@
         "message"
       ],
       "title": "FindingOccurrence",
+      "type": "object"
+    },
+    "NativeToolRecord": {
+      "additionalProperties": false,
+      "description": "One operator-supplied native executable admitted into a run (contract \u00a73).\n\nThe executable's location on the run host is deliberately absent: a\nreport is a publishable artifact, and an absolute path describes the\noperator's filesystem rather than the comparison. The digest identifies\nthe binary without disclosing where it lives.\n\nThese records cover only what the runner itself admitted. A detector\nmay resolve a native helper on its own \u2014 from its own installed\npackage, or by searching ``PATH``, which survives the \u00a73 scrub \u2014 and\nsuch a helper is neither validated nor recorded here. An empty\n``native_tools`` therefore means the runner admitted nothing, not that\nno native helper ran.\n\nAttributes\n----------\nvariable : str\n    Adapter-declared environment variable carrying the executable.\nsha256 : str\n    Digest of the executable's bytes, taken once at run start rather\n    than at each invocation: it is the identity of what the operator\n    supplied, not proof of the bytes a given side executed.",
+      "properties": {
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "variable": {
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "sha256"
+      ],
+      "title": "NativeToolRecord",
       "type": "object"
     },
     "ProjectReport": {
@@ -632,8 +652,8 @@
           "type": "array"
         },
         "schema_version": {
-          "const": "2.1.0",
-          "default": "2.1.0",
+          "const": "2.2.0",
+          "default": "2.2.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -657,7 +677,7 @@
     },
     "RunManifest": {
       "additionalProperties": false,
-      "description": "Record of resolved refs, versions, environments, and settings for one run.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\ncreated_at : datetime\n    UTC timestamp of manifest assembly.\ntool : str\n    Adapter name of the detector under test.\ndetector_repo : str | None\n    Detector repository URL; absent for escape-hatch runs.\nbase : EnvironmentRecord | None\n    Base-side environment; absent for escape-hatch runs.\nhead : EnvironmentRecord | None\n    Head-side environment; absent for escape-hatch runs.\nbase_cmd : tuple[str, ...] | None\n    Escape-hatch base command (``--old-cmd``), if used.\nhead_cmd : tuple[str, ...] | None\n    Escape-hatch head command (``--new-cmd``), if used.\ncomparable : bool\n    False only for unmanaged escape-hatch runs.\nenvironment_delta : tuple[DependencyDelta, ...]\n    Non-detector dependency differences surviving paired resolution.\nisolation_enforced : bool\n    Whether build/analysis sandboxing was enforced.\nplatform : str\n    Platform tag of the run host.\npython_version : str\n    Python version running the detectors.\ninstaller : str | None\n    Installer name and version used to build environments.\nfetches : tuple[FetchRecord, ...]\n    Every fetch performed during the fetch step.\ncorpus_pins : tuple[CorpusPinRecord, ...]\n    Resolved corpus pins for the run.\nsettings : RunSettings\n    Effective run settings.",
+      "description": "Record of resolved refs, versions, environments, and settings for one run.\n\nAttributes\n----------\nschema_version : SchemaVersion\n    Package-wide schema semver.\ncreated_at : datetime\n    UTC timestamp of manifest assembly.\ntool : str\n    Adapter name of the detector under test.\ndetector_repo : str | None\n    Detector repository URL; absent for escape-hatch runs.\nbase : EnvironmentRecord | None\n    Base-side environment; absent for escape-hatch runs.\nhead : EnvironmentRecord | None\n    Head-side environment; absent for escape-hatch runs.\nbase_cmd : tuple[str, ...] | None\n    Escape-hatch base command (``--old-cmd``), if used.\nhead_cmd : tuple[str, ...] | None\n    Escape-hatch head command (``--new-cmd``), if used.\ncomparable : bool\n    False only for unmanaged escape-hatch runs.\nenvironment_delta : tuple[DependencyDelta, ...]\n    Non-detector dependency differences surviving paired resolution.\nisolation_enforced : bool\n    Whether build/analysis sandboxing was enforced.\nplatform : str\n    Platform tag of the run host.\npython_version : str\n    Python version running the detectors.\ninstaller : str | None\n    Installer name and version used to build environments.\nnative_tools : tuple[NativeToolRecord, ...]\n    Operator-supplied native executables admitted into both sides'\n    invocations; empty when the runner admitted none, which is not the\n    same as none having run (contract \u00a73).\nfetches : tuple[FetchRecord, ...]\n    Every fetch performed during the fetch step.\ncorpus_pins : tuple[CorpusPinRecord, ...]\n    Resolved corpus pins for the run.\nsettings : RunSettings\n    Effective run settings.",
       "properties": {
         "base": {
           "anyOf": [
@@ -763,6 +783,14 @@
           "title": "Isolation Enforced",
           "type": "boolean"
         },
+        "native_tools": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NativeToolRecord"
+          },
+          "title": "Native Tools",
+          "type": "array"
+        },
         "platform": {
           "title": "Platform",
           "type": "string"
@@ -772,8 +800,8 @@
           "type": "string"
         },
         "schema_version": {
-          "const": "2.1.0",
-          "default": "2.1.0",
+          "const": "2.2.0",
+          "default": "2.2.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -927,8 +955,8 @@
       "$ref": "#/$defs/Report"
     },
     "schema_version": {
-      "const": "2.1.0",
-      "default": "2.1.0",
+      "const": "2.2.0",
+      "default": "2.2.0",
       "title": "Schema Version",
       "type": "string"
     }
