@@ -130,6 +130,9 @@ at once or with many lines of churn may be closed without review.
 
 ## Reporting bugs
 
+Please report bugs as a GitHub issue; non-determinism, incorrect matching of findings,
+crashes, incorrect creation or suppression of findings, or other incorrect behavior
+make the tool less useful to everyone.
 Include the version or commit, the exact command, the relevant corpus entry,
 and the actual versus expected output. For anything security-relevant, follow
 [SECURITY.md](SECURITY.md) instead of opening a public issue.

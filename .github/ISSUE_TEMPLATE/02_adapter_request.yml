@@ -1,0 +1,72 @@
+name: Detector adapter request
+description: Ask for a new detector or linter to be supported by a liveness_primer adapter.
+title: '[adapter] '
+labels: ['adapter', 'enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An adapter teaches `liveness_primer` to build one
+        detector at two revisions, invoke it, and normalize its output into
+        the shared finding model. The ones that work well are deterministic,
+        installable from a git ref, and pointable at a directory.
+
+        The answers below decide whether an adapter is feasible at all, so a
+        partly filled form is fine — say "not sure" rather than guessing.
+
+  - type: input
+    id: detector-name
+    attributes:
+      label: Detector name
+      placeholder: 'vulture'
+    validations:
+      required: true
+
+  - type: input
+    id: repo
+    attributes:
+      label: Source repository
+      description: Adapters build from a git ref, so a public repository is required.
+      placeholder: 'https://github.com/owner/project'
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-it-finds
+    attributes:
+      label: What does it detect, and why compare revisions of it?
+      description: What kinds of findings it reports, and what a blast-radius comparison would tell you that its own test suite does not.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: output-format
+    attributes:
+      label: Output format
+      description: Machine-readable output is much easier to normalize; text output is supported but needs a stable, parseable shape.
+      options:
+        - JSON (documented and stable)
+        - JSON (present but undocumented)
+        - Text (stable line format)
+        - Text (free-form)
+        - SARIF
+        - Other / not sure
+    validations:
+      required: false
+
+  - type: input
+    id: refs
+    attributes:
+      label: Revisions worth comparing first
+      description: Two refs a maintainer can use to smoke-test the adapter.
+      placeholder: 'v2.3.0 vs v2.4.0'
+    validations:
+      required: false
+
+  - type: textarea
+    id: targets
+    attributes:
+      label: Corpus applicability
+      description: Does it analyze the same source directories the existing corpus entries declare, or does it need different targets (installed packages, tests, a whole checkout)? Rough per-project runtime is useful too.
+    validations:
+      required: false
