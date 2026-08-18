@@ -19,8 +19,11 @@ Include what you have: the affected version or commit, the command line and
 corpus entry that triggers it, and what an attacker gains. A proof of concept
 helps but is not required to file.
 
-This is a single-maintainer hobby-scale project. Expect an acknowledgement
-within about two weeks. There is no bug bounty.
+This is currently a single maintainer project. We aim to acknowledge valid reports
+within three days and initial triage within about a a week.
+Critical issues may be handled on an accelerated timeline.
+
+There is no bug bounty.
 
 ## Scope
 

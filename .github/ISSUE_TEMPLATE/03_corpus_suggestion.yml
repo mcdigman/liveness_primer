@@ -1,0 +1,97 @@
+name: Corpus suggestion
+description: Propose a project for the pinned corpus, or a change to an existing entry.
+title: '[corpus] '
+labels: ['corpus']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Corpus entries are the targets every comparison runs
+        against, so each one must be GitHub-hosted, permissively licensed,
+        moderate in size, and pinned to a full commit SHA
+        — both detector revisions have to analyze byte-identical checkouts.
+
+        The gate on
+        [liveness_primer/data/corpus.yaml](https://github.com/mcdigman/liveness_primer/blob/main/liveness_primer/data/corpus.yaml)
+        runs `corpus validate` and a GitHub license check on every PR, so an
+        entry that fails these fields will fail CI too.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is this?
+      options:
+        - Add a new project
+        - Re-pin an existing project
+        - Additional pin for an existing project
+        - Change targets or cost for an existing project
+        - Remove a project
+    validations:
+      required: true
+
+  - type: input
+    id: name
+    attributes:
+      label: Project name
+      description: The corpus key. Short, lowercase, unique.
+      placeholder: 'pluggy'
+    validations:
+      required: true
+
+  - type: input
+    id: repo
+    attributes:
+      label: Repository URL
+      description: Must be GitHub-hosted.
+      placeholder: 'https://github.com/pytest-dev/pluggy'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: license
+    attributes:
+      label: License (SPDX)
+      description: Anything outside the allowlist needs human review.
+      options:
+        - MIT
+        - Apache-2.0
+        - BSD-2-Clause
+        - BSD-3-Clause
+        - ISC
+        - PSF-2.0
+        - Other (explain below)
+    validations:
+      required: false
+
+  - type: input
+    id: pin
+    attributes:
+      label: Proposed pin
+      description: A full 40-character commit SHA, not a tag or branch.
+      placeholder: 'f06ceaafbe5bdbdafad8a0c01a2daabb89386a42'
+    validations:
+      required: false
+
+  - type: textarea
+    id: coverage
+    attributes:
+      label: What does it cover that the current corpus does not?
+    validations:
+      required: false
+
+  - type: textarea
+    id: health
+    attributes:
+      label: Size and maintenance
+      description: Rough source size, recent commit or release activity, and how long a detector takes on it. Very large projects may be too expensive for per-PR tool runs.
+      placeholder: 'about 3k lines under src/, released last month, ~5s under skylos'
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: For a re-pin, why now. For an additional pin, why it adds additional value. For a removal, what changed. For an unusual license, the reasoning.
+    validations:
+      required: false
