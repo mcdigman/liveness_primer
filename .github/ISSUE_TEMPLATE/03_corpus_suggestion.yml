@@ -45,7 +45,7 @@ body:
       description: Must be GitHub-hosted.
       placeholder: 'https://github.com/pytest-dev/pluggy'
     validations:
-      required: false
+      required: true
 
   - type: dropdown
     id: license
