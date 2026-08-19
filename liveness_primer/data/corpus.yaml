@@ -221,3 +221,169 @@ projects:
         targets:
           - starlette
         cost: 10.0
+
+  # ---------------------------------------------------------------------
+  # Proposed entries under evaluation (GitHub issues #25, #27-#33).
+  # Costs and targets are transcribed from each issue's benchmark section;
+  # non-Python projects set include_tools because vulture is Python-only.
+  # ---------------------------------------------------------------------
+
+  # Issue #25. JavaScript monorepo: ESM exports, parser/plugin, AST, and
+  # JSDoc/type-declaration patterns. The proposal quotes "~12 seconds under
+  # skylos" without stating sides or targets, so both need benchmarking
+  # before this entry leaves the testing branch.
+  - name: remark
+    repo: https://github.com/remarkjs/remark
+    license: MIT
+    pin: 360840f0c0e4c8a274e525cc5d7fb4939d922b73
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        targets:
+          - packages
+        cost: 12.0
+
+  # Issue #27. First Go entry: exercises skylos's native Go engine, module
+  # and package handling, interfaces, embedded types, and callback-heavy
+  # command/update/view patterns. Targets the repository root.
+  - name: bubbletea
+    repo: https://github.com/charmbracelet/bubbletea
+    license: MIT
+    pin: faf4dcf54a92bab2fe3bf6f4715adf44f2fc245d
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        cost: 20.0
+
+  # Issue #28. Scientific-computing library: dense numpy/pandas integration,
+  # API re-exports, optional backends, registered accessors, overloads, and
+  # heavy typing. Root target is deliberate (tests, docs, benchmarks add
+  # scanner coverage); xarray/ is the narrower fallback if cost is too high.
+  - name: xarray
+    repo: https://github.com/pydata/xarray
+    license: Apache-2.0
+    pin: c2998a75ef32f6cf4d62cd946f2200ca953550d9
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        cost: 140.0
+
+  # Issue #29. Scoped vulture targets replay jendrikseipp/vulture#420, #387,
+  # #390, and #312; a package-wide scan pools names and masks them. The
+  # skylos side adds SKY-D211, SKY-D217, SKY-D224, and SKY-L032.
+  - name: meltano-sdk
+    repo: https://github.com/meltano/sdk
+    license: Apache-2.0
+    pin: ef3a36bb3da8ff30a5f9d935da99a747dc135cad
+    tools:
+      vulture:
+        targets:
+          - singer_sdk/metrics.py
+          - singer_sdk/sql/sink.py
+          - singer_sdk/streams/rest.py
+          - singer_sdk/testing/tap_tests.py
+          - singer_sdk/contrib/filesystem/tap.py
+          - tests/core/test_metrics.py
+          - tests/core/test_stream_state_manager.py
+        cost: 1.0
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - singer_sdk
+        cost: 40.0
+
+  # Issue #30. Large natural example for jendrikseipp/vulture#421 (annotated
+  # and augmented __all__): 659 findings drop to 400. Adds SKY-D224,
+  # SKY-L001, and SKY-P402 from numerical rather than framework code.
+  - name: fluids
+    repo: https://github.com/CalebBell/fluids
+    license: MIT
+    pin: 5fa218f9c15f62e2a7f864b97991f4837ddeefe7
+    tools:
+      vulture:
+        targets:
+          - fluids
+        cost: 2.0
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - fluids
+        cost: 60.0
+
+  # Issue #31. The module-level vulture target replays
+  # jendrikseipp/vulture#312 (bare enum class passed to list()); a
+  # package-wide scan masks it. skylos adds stdlib-sqlite SKY-D211 shapes.
+  - name: todo
+    repo: https://github.com/maltekliemann/todo
+    license: MIT
+    pin: f122c1722b673a482cb98f97680caccf99102d7a
+    tools:
+      vulture:
+        targets:
+          - src/todo/domain/status.py
+        cost: 1.0
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - src/todo
+        cost: 10.0
+
+  # Issue #32. Regression target for jendrikseipp/vulture#403, which filters
+  # dash-named files out of directory scans. The narrower skylos targets add
+  # first-party browser JavaScript; reusing the vulture targets costs ~6x.
+  - name: copyparty
+    repo: https://github.com/9001/copyparty
+    license: MIT
+    pin: 6115eb452d2c2bbdeef5d19098fac17db69ddaa8
+    tools:
+      vulture:
+        targets:
+          - copyparty
+          - bin/hooks
+        cost: 2.0
+      skylos:
+        targets:
+          - copyparty/web
+          - bin/hooks
+        cost: 10.0
+
+  # Issue #33. First Rust and TypeScript coverage: a multi-crate workspace
+  # with a PyO3 boundary plus a TypeScript SDK. The narrow targets skip the
+  # Python package, whose bundled _dist JavaScript dominated a root scan.
+  - name: headroom-rust
+    repo: https://github.com/headroomlabs-ai/headroom
+    license: Apache-2.0
+    pin: b77d61291399976985f12adcd6014aba2f0275cf
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        targets:
+          - crates
+          - sdk
+        cost: 80.0
