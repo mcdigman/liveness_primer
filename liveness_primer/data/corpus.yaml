@@ -222,16 +222,7 @@ projects:
           - starlette
         cost: 10.0
 
-  # ---------------------------------------------------------------------
-  # Proposed entries under evaluation (GitHub issues #25, #27-#33).
-  # Costs and targets are transcribed from each issue's benchmark section;
-  # non-Python projects set include_tools because vulture is Python-only.
-  # ---------------------------------------------------------------------
-
-  # Issue #25. JavaScript monorepo: ESM exports, parser/plugin, AST, and
-  # JSDoc/type-declaration patterns. The proposal quotes "~12 seconds under
-  # skylos" without stating sides or targets, so both need benchmarking
-  # before this entry leaves the testing branch.
+  # javascript coverage
   - name: remark
     repo: https://github.com/remarkjs/remark
     license: MIT
@@ -244,9 +235,7 @@ projects:
           - packages
         cost: 12.0
 
-  # Issue #27. First Go entry: exercises skylos's native Go engine, module
-  # and package handling, interfaces, embedded types, and callback-heavy
-  # command/update/view patterns. Targets the repository root.
+  # go coverage
   - name: bubbletea
     repo: https://github.com/charmbracelet/bubbletea
     license: MIT
@@ -262,17 +251,14 @@ projects:
           - ai-defects
         cost: 20.0
 
-  # Issue #28. Scientific-computing library: dense numpy/pandas integration,
-  # API re-exports, optional backends, registered accessors, overloads, and
-  # heavy typing. Root target is deliberate (tests, docs, benchmarks add
-  # scanner coverage); xarray/ is the narrower fallback if cost is too high.
+  # numerical and scientific python
   - name: xarray
     repo: https://github.com/pydata/xarray
     license: Apache-2.0
     pin: c2998a75ef32f6cf4d62cd946f2200ca953550d9
-    include_tools:
-      - skylos
     tools:
+      vulture:
+        cost: 3.0
       skylos:
         analyses:
           - danger
@@ -281,9 +267,7 @@ projects:
           - ai-defects
         cost: 140.0
 
-  # Issue #29. Scoped vulture targets replay jendrikseipp/vulture#420, #387,
-  # #390, and #312; a package-wide scan pools names and masks them. The
-  # skylos side adds SKY-D211, SKY-D217, SKY-D224, and SKY-L032.
+  # sql and mock data coverage
   - name: meltano-sdk
     repo: https://github.com/meltano/sdk
     license: Apache-2.0
@@ -291,13 +275,8 @@ projects:
     tools:
       vulture:
         targets:
-          - singer_sdk/metrics.py
-          - singer_sdk/sql/sink.py
-          - singer_sdk/streams/rest.py
-          - singer_sdk/testing/tap_tests.py
-          - singer_sdk/contrib/filesystem/tap.py
-          - tests/core/test_metrics.py
-          - tests/core/test_stream_state_manager.py
+          - singer_sdk/
+          - tests/
         cost: 1.0
       skylos:
         analyses:
@@ -309,9 +288,7 @@ projects:
           - singer_sdk
         cost: 40.0
 
-  # Issue #30. Large natural example for jendrikseipp/vulture#421 (annotated
-  # and augmented __all__): 659 findings drop to 400. Adds SKY-D224,
-  # SKY-L001, and SKY-P402 from numerical rather than framework code.
+  # numerical python
   - name: fluids
     repo: https://github.com/CalebBell/fluids
     license: MIT
@@ -331,9 +308,7 @@ projects:
           - fluids
         cost: 60.0
 
-  # Issue #31. The module-level vulture target replays
-  # jendrikseipp/vulture#312 (bare enum class passed to list()); a
-  # package-wide scan masks it. skylos adds stdlib-sqlite SKY-D211 shapes.
+  # sql injection coverage
   - name: todo
     repo: https://github.com/maltekliemann/todo
     license: MIT
@@ -353,9 +328,7 @@ projects:
           - src/todo
         cost: 10.0
 
-  # Issue #32. Regression target for jendrikseipp/vulture#403, which filters
-  # dash-named files out of directory scans. The narrower skylos targets add
-  # first-party browser JavaScript; reusing the vulture targets costs ~6x.
+  # javascript and python coverage
   - name: copyparty
     repo: https://github.com/9001/copyparty
     license: MIT
@@ -372,9 +345,7 @@ projects:
           - bin/hooks
         cost: 10.0
 
-  # Issue #33. First Rust and TypeScript coverage: a multi-crate workspace
-  # with a PyO3 boundary plus a TypeScript SDK. The narrow targets skip the
-  # Python package, whose bundled _dist JavaScript dominated a root scan.
+  # rust and typescript coverage
   - name: headroom-rust
     repo: https://github.com/headroomlabs-ai/headroom
     license: Apache-2.0
@@ -386,4 +357,115 @@ projects:
         targets:
           - crates
           - sdk
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         cost: 80.0
+
+  # java servlet coverage
+  - name: verademo
+    repo: https://github.com/veracode/verademo
+    license: MIT
+    pin: d2d1a34119a6eba955a24ab2b7935fe94c1c7286
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - app/src/main/java
+        cost: 5.0
+
+  # dart coverage
+  - name: shelf
+    repo: https://github.com/dart-lang/shelf
+    license: BSD-3-Clause
+    pin: fb3f931d2c158d794e83c1b76b7be4b625db3c28
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - ai-defects
+        targets:
+          - pkgs/_shelf_compliance
+        cost: 4.0
+
+  # shell coverage
+  - name: sdkman-cli
+    repo: https://github.com/sdkman/sdkman-cli
+    license: Apache-2.0
+    pin: f02e5de113ea46a95e5e2fd795eabe6f2b7d4095
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - src/main/bash
+        cost: 2.0
+
+  # c# coverage
+  - name: fastendpoints
+    repo: https://github.com/FastEndpoints/FastEndpoints
+    license: MIT
+    pin: 7b0678f7d2e3b44898d4c602b082835567332782
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - Src/Generator.Cli
+        cost: 6.0
+
+  # kotlin coverage
+  - name: ktor-samples
+    repo: https://github.com/ktorio/ktor-samples
+    license: Apache-2.0
+    pin: 69dcff3fa81daa85f936cfb7f17007761363c303
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - ai-defects
+        targets:
+          - filelisting/src
+          - httpbin/src
+        cost: 4.0
+
+  # php coverage
+  - name: slim
+    repo: https://github.com/slimphp/Slim
+    license: MIT
+    pin: 80900fb39cafce3ae53b18a2c4f642a122f03095
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - ai-defects
+        targets:
+          - Slim
+        cost: 4.0
