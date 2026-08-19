@@ -222,6 +222,46 @@ projects:
           - starlette
         cost: 10.0
 
+  # ---------------------------------------------------------------------
+  # Proposed entries under evaluation (GitHub issues #25, #27-#33).
+  # Costs and targets are transcribed from each issue's benchmark section;
+  # non-Python projects set include_tools because vulture is Python-only.
+  # ---------------------------------------------------------------------
+
+  # Issue #25. JavaScript monorepo: ESM exports, parser/plugin, AST, and
+  # JSDoc/type-declaration patterns. The proposal quotes "~12 seconds under
+  # skylos" without stating sides or targets, so both need benchmarking
+  # before this entry leaves the testing branch.
+  - name: remark
+    repo: https://github.com/remarkjs/remark
+    license: MIT
+    pin: 360840f0c0e4c8a274e525cc5d7fb4939d922b73
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        targets:
+          - packages
+        cost: 12.0
+
+  # Issue #27. First Go entry: exercises skylos's native Go engine, module
+  # and package handling, interfaces, embedded types, and callback-heavy
+  # command/update/view patterns. Targets the repository root.
+  - name: bubbletea
+    repo: https://github.com/charmbracelet/bubbletea
+    license: MIT
+    pin: faf4dcf54a92bab2fe3bf6f4715adf44f2fc245d
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        cost: 20.0
+
   # numerical and scientific python
   - name: xarray
     repo: https://github.com/pydata/xarray
@@ -286,6 +326,22 @@ projects:
           - copyparty
           - bin/hooks
         cost: 2.0
+
+  # Issue #33. First Rust and TypeScript coverage: a multi-crate workspace
+  # with a PyO3 boundary plus a TypeScript SDK. The narrow targets skip the
+  # Python package, whose bundled _dist JavaScript dominated a root scan.
+  - name: headroom-rust
+    repo: https://github.com/headroomlabs-ai/headroom
+    license: Apache-2.0
+    pin: b77d61291399976985f12adcd6014aba2f0275cf
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        targets:
+          - crates
+          - sdk
+        cost: 80.0
 
   # pydantic consumer, real secrets and danger
   - name: elementary
