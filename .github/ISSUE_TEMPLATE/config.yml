@@ -1,13 +1,7 @@
-# Issue-form chooser configuration.
+# Issue template chooser configuration.
 blank_issues_enabled: true
 
 contact_links:
-  - name: Questions and help
-    url: https://github.com/mcdigman/liveness_primer/discussions
-    about: Ask usage questions and get help from the community.
   - name: Security vulnerability
     url: https://github.com/mcdigman/liveness_primer/blob/main/SECURITY.md
     about: Do not open a public issue. Follow the private disclosure process in SECURITY.md.
-  - name: Documentation
-    url: https://liveness-primer.readthedocs.io/
-    about: Usage, CI integration, and the report explorer.
