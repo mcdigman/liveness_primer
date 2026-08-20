@@ -1,4 +1,4 @@
 interface:
   display_name: "Liveness PR Review"
   short_description: "Review liveness_primer PR blast radius"
-  default_prompt: "Use $review-liveness-pr to review this PR using its existing liveness_primer JSON artifact."
+  default_prompt: "Use $review-liveness-pr from the trusted reviewer checkout to review this PR's exact liveness_primer JSON artifact."

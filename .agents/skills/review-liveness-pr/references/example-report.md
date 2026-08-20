@@ -6,7 +6,7 @@ report.
 
 ## Liveness primer review
 
-**Conclusion:** Finding changes are only partially consistent with the PR body
+**Conclusion:** Finding changes are only partially consistent with the stated intent
 (`mixed_or_partially_explained`)<br>
 **Confidence:** medium · **Review priority:** medium
 
@@ -46,15 +46,22 @@ use the complete report rollups.
 
 ```json
 {
-  "schema_version": "1.0",
-  "report": {
+  "document_kind": "liveness-primer-review",
+  "verdict_schema_version": "1.0",
+  "source_report": {
+    "artifact_name": "liveness-primer-report.json",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "schema_version": "2.2.0",
     "tool": "example-detector",
     "base_sha": "1111111111111111111111111111111111111111",
     "head_sha": "2222222222222222222222222222222222222222",
     "totals": {
       "new": 0,
       "dropped": 21,
-      "changed": 0
+      "changed": 0,
+      "changed_confidence_only": 0,
+      "changed_message_only": 0,
+      "changed_severity_only": 0
     }
   },
   "intent": {
@@ -64,7 +71,7 @@ use the complete report rollups.
   },
   "conclusion": {
     "id": "mixed_or_partially_explained",
-    "label": "Finding changes are only partially consistent with the PR body",
+    "label": "Finding changes are only partially consistent with the stated intent",
     "confidence": "medium",
     "review_priority": "medium",
     "summary": "Eighteen dropped findings match the documented correction, while three dropped ordinary functions are not explained.",
