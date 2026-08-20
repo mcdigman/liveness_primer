@@ -1,0 +1,40 @@
+version: 1
+
+evidence:
+  max_examples_per_verdict: 3
+  max_total_examples: 12
+  inspect_pr_diff: true
+  inspect_relevant_source: true
+  inspect_workflow_logs: on_demand
+  inspect_same_commit_artifacts: on_demand
+
+intent:
+  use_pr_body: true
+  use_pr_title_when_needed: true
+  use_linked_issues_when_needed: true
+  use_pr_comments: false
+  label_inferred_intent: true
+
+blast_radius:
+  # Crossing a threshold prompts consideration of the flag. It does not
+  # override contextual judgment.
+  thresholds:
+    total_diffs: 100
+    affected_projects: 4
+    affected_rules_or_kinds: 5
+    distinct_change_patterns: 4
+    possible_new_false_positive_findings: 20
+    possible_recall_loss_findings: 10
+
+  # Relative emphasis when assigning review priority. These are not
+  # multipliers over raw new or dropped counts.
+  emphasis:
+    precision: 1.0
+    recall: 1.0
+    semantic_correctness: 1.0
+    analysis_reliability: 1.0
+
+output:
+  include_machine_readable_json: true
+  include_limitations: true
+  include_no_flags_line: true
