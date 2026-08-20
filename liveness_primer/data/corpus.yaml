@@ -222,67 +222,250 @@ projects:
           - starlette
         cost: 10.0
 
+  # javascript coverage
+  - name: remark
+    repo: https://github.com/remarkjs/remark
+    license: MIT
+    pin: 360840f0c0e4c8a274e525cc5d7fb4939d922b73
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        targets:
+          - packages
+        cost: 12.0
+
+  # go coverage
+  - name: bubbletea
+    repo: https://github.com/charmbracelet/bubbletea
+    license: MIT
+    pin: faf4dcf54a92bab2fe3bf6f4715adf44f2fc245d
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        cost: 20.0
+
   # numerical and scientific python
   - name: xarray
     repo: https://github.com/pydata/xarray
     license: Apache-2.0
     pin: c2998a75ef32f6cf4d62cd946f2200ca953550d9
-    include_tools:
-      - vulture
     tools:
       vulture:
         cost: 3.0
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        cost: 140.0
 
   # sql and mock data coverage
   - name: meltano-sdk
     repo: https://github.com/meltano/sdk
     license: Apache-2.0
     pin: ef3a36bb3da8ff30a5f9d935da99a747dc135cad
-    include_tools:
-      - vulture
     tools:
       vulture:
         targets:
           - singer_sdk/
           - tests/
         cost: 1.0
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - singer_sdk
+        cost: 40.0
 
   # numerical python
   - name: fluids
     repo: https://github.com/CalebBell/fluids
     license: MIT
     pin: 5fa218f9c15f62e2a7f864b97991f4837ddeefe7
-    include_tools:
-      - vulture
     tools:
       vulture:
         targets:
           - fluids
         cost: 2.0
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - fluids
+        cost: 60.0
 
   # sql injection coverage
   - name: todo
     repo: https://github.com/maltekliemann/todo
     license: MIT
     pin: f122c1722b673a482cb98f97680caccf99102d7a
-    include_tools:
-      - vulture
     tools:
       vulture:
         targets:
           - src/todo/domain/status.py
         cost: 1.0
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - src/todo
+        cost: 10.0
 
   # javascript and python coverage
   - name: copyparty
     repo: https://github.com/9001/copyparty
     license: MIT
     pin: 6115eb452d2c2bbdeef5d19098fac17db69ddaa8
-    include_tools:
-      - vulture
     tools:
       vulture:
         targets:
           - copyparty
           - bin/hooks
         cost: 2.0
+      skylos:
+        targets:
+          - copyparty/web
+          - bin/hooks
+        cost: 10.0
+
+  # rust and typescript coverage
+  - name: headroom-rust
+    repo: https://github.com/headroomlabs-ai/headroom
+    license: Apache-2.0
+    pin: b77d61291399976985f12adcd6014aba2f0275cf
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        targets:
+          - crates
+          - sdk
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        cost: 80.0
+
+  # java servlet coverage
+  - name: verademo
+    repo: https://github.com/veracode/verademo
+    license: MIT
+    pin: d2d1a34119a6eba955a24ab2b7935fe94c1c7286
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - app/src/main/java
+        cost: 5.0
+
+  # dart coverage
+  - name: shelf
+    repo: https://github.com/dart-lang/shelf
+    license: BSD-3-Clause
+    pin: fb3f931d2c158d794e83c1b76b7be4b625db3c28
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - ai-defects
+        targets:
+          - pkgs/_shelf_compliance
+        cost: 4.0
+
+  # shell coverage
+  - name: sdkman-cli
+    repo: https://github.com/sdkman/sdkman-cli
+    license: Apache-2.0
+    pin: f02e5de113ea46a95e5e2fd795eabe6f2b7d4095
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - src/main/bash
+        cost: 2.0
+
+  # c# coverage
+  - name: fastendpoints
+    repo: https://github.com/FastEndpoints/FastEndpoints
+    license: MIT
+    pin: 7b0678f7d2e3b44898d4c602b082835567332782
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
+        targets:
+          - Src/Generator.Cli
+        cost: 6.0
+
+  # kotlin coverage
+  - name: ktor-samples
+    repo: https://github.com/ktorio/ktor-samples
+    license: Apache-2.0
+    pin: 69dcff3fa81daa85f936cfb7f17007761363c303
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - ai-defects
+        targets:
+          - filelisting/src
+          - httpbin/src
+        cost: 4.0
+
+  # php coverage
+  - name: slim
+    repo: https://github.com/slimphp/Slim
+    license: MIT
+    pin: 80900fb39cafce3ae53b18a2c4f642a122f03095
+    include_tools:
+      - skylos
+    tools:
+      skylos:
+        analyses:
+          - danger
+          - secrets
+          - ai-defects
+        targets:
+          - Slim
+        cost: 4.0
