@@ -10,3 +10,11 @@ Write very briefy, numpy style docstrings, which checked by the `pydoclint` CI w
 A `skylos` CI workflow is used for dead code detection.
 Unit tests are `pytest` style. Unit tests should aim for full branch and line coverage with non-vacuous tests.
 A ``coverage.py` CI workflow enforces thorough testing coverage.
+
+## Skill activation
+
+- Treat `review-liveness-pr` as opt-in only. Do not invoke it unless the user
+  explicitly writes `$review-liveness-pr` or the caller is the designated
+  liveness_primer CI workflow.
+- A request to review a pull request is a normal review request, even when a
+  liveness_primer artifact is available.
