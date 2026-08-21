@@ -22,6 +22,20 @@ independently of the package version; `liveness-primer --version` prints both.
 - **Corpus selection** — `-k` now selects a matching project even when the
   project's `include_tools` omits the tool being run. `exclude_tools` remains a
   hard exclusion under every selector.
+### Fixed
+
+- The Skylos adapter now ingests `unused_files` (`SKY-E002` and `SKY-E003`)
+  findings instead of silently omitting file-level dead-code changes from
+  comparisons. The bucket is multi-rule and every supported Skylos revision
+  stamps each entry's rule ID explicitly, so the adapter requires the
+  explicit `rule_id` rather than defaulting one rule's code onto the
+  other's entries.
+- A finding in the normalized unused-file shape — kind `file`, no symbol,
+  a point span at line 1 — on a file with zero source lines (e.g.
+  `SKY-E002`) is intentionally source-less: it no longer spends the
+  bounded source-warning budget on the expected emptiness, keeping the
+  budget for genuine source anomalies. Any other occurrence claiming
+  source in an empty file still warns.
 
 ## [0.1.0] - 2026-08-14
 

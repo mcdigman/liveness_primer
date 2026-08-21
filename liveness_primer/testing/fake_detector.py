@@ -20,9 +20,13 @@ from pathlib import Path
 from typing import Literal
 
 from liveness_primer.filesystem import atomic_write_text
-from liveness_primer.tools.skylos import BUCKET_RULE_IDS, DIAGNOSTIC_KINDS
+from liveness_primer.tools.skylos import DEAD_CODE_KEYS, DIAGNOSTIC_KINDS
 
 FakeFormat = Literal['vulture', 'skylos']
+
+# Severity every supported skylos revision stamps on an unused-file entry;
+# a scripted label overrides it.
+_UNUSED_FILE_SEVERITY = 'LOW'
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,14 +46,20 @@ class FakeFinding:
     confidence : int
         Confidence percentage.
     bucket : str
-        Skylos array the finding lands in (skylos format only); the
-        diagnostic buckets emit the diagnostic entry shape.
+        Skylos array the finding lands in (skylos format only); diagnostic
+        buckets and ``unused_files`` emit their respective entry shapes.
     rule_id : str | None
-        Explicit detector rule ID (skylos format only).
+        Explicit detector rule ID (skylos format only). Required for
+        ``unused_files``: the bucket is multi-rule and each of its rules
+        names a condition the fake cannot observe (SKY-E002 emptiness,
+        SKY-E003 import reachability), so the script states the rule rather
+        than the fake guessing one from the path.
     severity : str | None
-        Severity label (skylos diagnostic buckets only).
+        Severity label (skylos diagnostic or unused-file buckets only).
+        Unscripted ``unused_files`` entries carry the ``LOW`` every
+        supported skylos revision stamps on them.
     message : str | None
-        Message override (skylos diagnostic buckets only).
+        Message override (skylos diagnostic or unused-file buckets only).
     """
 
     path: str
@@ -78,10 +88,33 @@ class FakeFinding:
         Returns
         -------
         dict[str, object]
-            The dead-code entry shape, or the diagnostic shape for the
-            diagnostic buckets; optional fields are present only when
-            scripted.
+            The symbol-level dead-code entry shape, or the dedicated shape
+            for diagnostic and unused-file buckets; optional fields are
+            present only when scripted.
+
+        Raises
+        ------
+        ValueError
+            If an ``unused_files`` finding carries no explicit rule ID.
         """
+        if self.bucket == 'unused_files':
+            # Every supported skylos revision stamps the rule ID explicitly
+            # on unused-file entries and the adapter rejects an entry
+            # without one, so the fake never emits a rule-less entry. The
+            # rule is not derivable from the path either: real skylos picks
+            # SKY-E002 or SKY-E003 by a file's emptiness and import
+            # reachability, which a scripted fake cannot observe. The entry
+            # shape carries no symbol, kind, or confidence.
+            if self.rule_id is None:
+                msg = f'scripted unused_files finding for {self.path!r} needs an explicit rule_id'
+                raise ValueError(msg)
+            return {
+                'rule_id': self.rule_id,
+                'message': self.message if self.message is not None else f"Unused file '{self.path}'",
+                'file': self.path,
+                'line': self.line,
+                'severity': self.severity if self.severity is not None else _UNUSED_FILE_SEVERITY,
+            }
         if self.bucket in DIAGNOSTIC_KINDS:
             diagnostic: dict[str, object] = {
                 'message': self.message if self.message is not None else f"dangerous use of '{self.symbol}'",
@@ -266,7 +299,7 @@ def _emit_skylos(findings: Sequence[FakeFinding]) -> int:
     int
         The default skylos exit code: 0.
     """
-    document: dict[str, list[dict[str, object]]] = {key: [] for key in BUCKET_RULE_IDS}
+    document: dict[str, list[dict[str, object]]] = {key: [] for key in DEAD_CODE_KEYS}
     for finding in findings:
         document.setdefault(finding.bucket, []).append(finding.skylos_entry())
     sys.stdout.write(json.dumps(document, indent=2) + '\n')

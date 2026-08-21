@@ -758,6 +758,56 @@ def test_fake_skylos_rule_change_splits_into_dropped_plus_new(tmp_path: Path, co
     assert report.rollups == project_report.rollups
 
 
+def test_fake_skylos_unused_file_end_to_end(tmp_path: Path) -> None:
+    # A realistic SKY-E002 target: the pinned corpus checkout contains an
+    # actually zero-byte file. The file-level finding flows through as one
+    # `new` diff that is intentionally source-less — no excerpt, and no
+    # source warning spent on the expected emptiness (reporting §3.3).
+    origin = create_fake_project(
+        tmp_path / 'origin',
+        files={'pkg/mod.py': 'used = 1\n', 'pkg/empty.py': ''},
+        init_git=True,
+    )
+    assert origin.head_sha is not None
+    project = CorpusProject(name='fakeproj', repo=origin.url, pin=origin.head_sha)
+    head_cmd = write_fake_detector_script(
+        tmp_path / 'sky-head.json',
+        [
+            FakeFinding(
+                path='pkg/empty.py',
+                line=1,
+                symbol='pkg/empty.py',
+                bucket='unused_files',
+                rule_id='SKY-E002',
+                severity='LOW',
+                message='Empty Python file (no code, or docstring-only)',
+            )
+        ],
+        output_format='skylos',
+    )
+    base_cmd = write_fake_detector_script(tmp_path / 'sky-base.json', [], output_format='skylos')
+
+    report = skylos_runner(tmp_path).run_escape_hatch(
+        [project],
+        base_cmd=base_cmd,
+        head_cmd=head_cmd,
+    )
+
+    (project_report,) = report.projects
+    assert project_report.errors == ()
+    assert project_report.source_warnings == ()
+    assert project_report.totals == DiffTotals(new=1)
+    (diff,) = project_report.diffs
+    assert diff.path == 'pkg/empty.py'
+    assert diff.symbol is None
+    assert diff.kind == 'file'
+    assert diff.head_occurrence is not None
+    assert diff.head_occurrence.message == 'Empty Python file (no code, or docstring-only)'
+    assert diff.head_occurrence.rule_id == 'SKY-E002'
+    assert diff.head_occurrence.severity == 'LOW'
+    assert diff.head_occurrence.source_excerpt is None
+
+
 def test_fake_skylos_danger_severity_change_end_to_end(tmp_path: Path, corpus_project: CorpusProject) -> None:
     # Reporting acceptance 32, end to end through the skylos adapter's
     # danger ingestion: a severity change pairs as one `changed` diff, and

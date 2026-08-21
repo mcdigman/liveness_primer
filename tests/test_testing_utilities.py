@@ -3,6 +3,7 @@
 """Tests for the shipped fake detector and fake project factory (contract §15)."""
 
 import json
+import re
 import stat
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ from liveness_primer.launcher import LauncherError, SyncLauncher, run_async, run
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.testing.fake_detector import main
 from liveness_primer.testing.fake_project import DEFAULT_FILES, FakeProjectError
-from liveness_primer.tools.skylos import BUCKET_RULE_IDS
+from liveness_primer.tools.skylos import DEAD_CODE_KEYS
 
 
 def test_fake_finding_report_line_matches_vulture_format() -> None:
@@ -254,6 +255,22 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
         [
             FakeFinding(path='a.py', line=1, symbol='x', kind='function', rule_id='SKY-U777'),
             FakeFinding(path='a.py', line=2, symbol='y', kind='variable', bucket='unused_variables'),
+            FakeFinding(
+                path='orphan.ts',
+                line=3,
+                symbol='orphan.ts',
+                bucket='unused_files',
+                rule_id='SKY-E003',
+                severity='LOW',
+                message='Unused TypeScript/JavaScript file',
+            ),
+            FakeFinding(
+                path='empty.py',
+                line=1,
+                symbol='empty.py',
+                bucket='unused_files',
+                rule_id='SKY-E002',
+            ),
         ],
         output_format='skylos',
     )
@@ -267,12 +284,43 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
     (variable_entry,) = document['unused_variables']
     assert 'rule_id' not in variable_entry
     assert variable_entry['name'] == 'y'
+    unused_file_entry, defaulted_entry = document['unused_files']
+    assert unused_file_entry == {
+        'rule_id': 'SKY-E003',
+        'message': 'Unused TypeScript/JavaScript file',
+        'file': 'orphan.ts',
+        'line': 3,
+        'severity': 'LOW',
+    }
+    # Only the message defaults; the rule ID is always scripted, and the
+    # severity every supported skylos revision stamps on an unused-file
+    # entry is emitted rather than omitted.
+    assert defaulted_entry == {
+        'rule_id': 'SKY-E002',
+        'message': "Unused file 'empty.py'",
+        'file': 'empty.py',
+        'line': 1,
+        'severity': 'LOW',
+    }
+
+
+def test_fake_skylos_unused_file_requires_an_explicit_rule_id() -> None:
+    """Reject a scripted unused-file finding carrying no rule ID."""
+    # The bucket is multi-rule and its rules turn on conditions the fake
+    # cannot observe, so the rule is scripted rather than guessed from the
+    # path; the adapter rejects a rule-less entry in any case.
+    finding = FakeFinding(path='dead.ts', line=1, symbol='dead.ts', bucket='unused_files')
+    message = re.escape("unused_files finding for 'dead.ts' needs an explicit rule_id")
+    with pytest.raises(ValueError, match=message):
+        finding.skylos_entry()
 
 
 def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     command = write_fake_detector_script(tmp_path / 'script.json', [], output_format='skylos')
     assert main(command[3:]) == 0
-    assert json.loads(capsys.readouterr().out) == {key: [] for key in BUCKET_RULE_IDS}
+    # The clean document carries every always-ingested dead-code bucket —
+    # including the multi-rule `unused_files` — like a real skylos run.
+    assert json.loads(capsys.readouterr().out) == {key: [] for key in DEAD_CODE_KEYS}
 
 
 def test_main_emits_skylos_danger_diagnostics(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

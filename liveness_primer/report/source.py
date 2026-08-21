@@ -8,7 +8,9 @@ from the detector's ``raw_excerpt``. Extraction goes through the bounded,
 containment-enforcing filesystem helpers so corpus-controlled symlinks,
 special files, oversized files, and undecodable bytes cannot bypass the
 report trust boundary. Missing or out-of-range source produces no excerpt
-and a bounded report warning rather than fabricated text.
+and a bounded report warning rather than fabricated text; a symbol-less
+file-level finding pointing at line 1 of a file with zero source lines is
+intentionally source-less and produces neither.
 """
 
 import re
@@ -239,6 +241,17 @@ def collect_source_evidence(
             lines = cache.lines(diff.path)
             if isinstance(lines, str):
                 warnings[f'{diff.path}: {lines}'] = None
+                continue
+            # A file-level finding on a file with zero source lines (e.g.
+            # skylos SKY-E002) reports the emptiness itself: the file is
+            # intentionally source-less, not anomalous, so there is no
+            # excerpt and no warning (reporting contract §3.3). Only the
+            # normalized unused-file shape qualifies — no symbol and a
+            # point span at line 1; anything else claiming source in an
+            # empty file remains a warned anomaly.
+            file_level = diff.kind == 'file' and diff.symbol is None
+            point_at_start = occurrence.start_line == occurrence.end_line == 1
+            if file_level and point_at_start and not lines:
                 continue
             excerpt, reason = extract_excerpt(
                 lines,
