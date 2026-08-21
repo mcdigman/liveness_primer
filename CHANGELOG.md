@@ -10,6 +10,18 @@ independently of the package version; `liveness-primer --version` prints both.
 
 ## [Unreleased]
 
+### Added
+
+- **Corpus selection** — `--ignore-include-tools` lets `--all` and `--max-cost`
+  consider projects their `include_tools` omits, so a one-off comparison needs no
+  corpus edit. `--max-cost` still selects a project only if it declares a cost for
+  the tool being run.
+
+### Changed
+
+- **Corpus selection** — `-k` now selects a matching project even when the
+  project's `include_tools` omits the tool being run. `exclude_tools` remains a
+  hard exclusion under every selector.
 ### Fixed
 
 - The Skylos adapter now ingests `unused_files` (`SKY-E002` and `SKY-E003`)

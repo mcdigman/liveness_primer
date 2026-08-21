@@ -393,6 +393,30 @@ def test_select_all_filters_tool_support() -> None:
     assert names == ['cheap', 'mid', 'pricey', 'uncosted']
 
 
+def test_select_all_and_max_cost_can_ignore_include_tools() -> None:
+    corpus = Corpus(
+        projects=(
+            project('enabled', tools={'vulture': {'cost': 5.0}}),
+            project('disabled-cheap', include_tools=('skylos',), tools={'vulture': {'cost': 2.0}}),
+            project('disabled-pricey', include_tools=('skylos',), tools={'vulture': {'cost': 10.0}}),
+            project(
+                'excluded',
+                include_tools=('skylos',),
+                exclude_tools=('vulture',),
+                tools={'vulture': {'cost': 1.0}},
+            ),
+        )
+    )
+    all_names = [
+        entry.name for entry in select_projects(corpus, tool='vulture', select_all=True, ignore_include_tools=True)
+    ]
+    budgeted_names = [
+        entry.name for entry in select_projects(corpus, tool='vulture', max_cost=2.0, ignore_include_tools=True)
+    ]
+    assert all_names == ['enabled', 'disabled-cheap', 'disabled-pricey']
+    assert budgeted_names == ['disabled-cheap']
+
+
 def test_select_by_keyword_substring_union() -> None:
     names = [entry.name for entry in select_projects(corpus_for_selection(), tool='vulture', keywords=('chea', 'cost'))]
     assert names == ['cheap', 'uncosted']
@@ -407,6 +431,17 @@ def test_select_by_keyword_overrides_include_tools_but_not_exclude_tools() -> No
     )
     names = [entry.name for entry in select_projects(corpus, tool='vulture', keywords=('ed',))]
     assert names == ['included']
+
+
+def test_ignore_include_tools_is_accepted_and_inert_for_keyword_selection() -> None:
+    corpus = Corpus(
+        projects=(
+            project('included', include_tools=('skylos',)),
+            project('excluded', include_tools=('skylos',), exclude_tools=('vulture',)),
+        )
+    )
+    selected = select_projects(corpus, tool='vulture', keywords=('ed',), ignore_include_tools=True)
+    assert [entry.name for entry in selected] == ['included']
 
 
 def test_select_by_keyword_no_match_raises() -> None:

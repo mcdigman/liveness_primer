@@ -126,7 +126,9 @@ point*: pre-triage, triage, or post-triage (§10).
   selections for every selected project otherwise. The reserved name `none` (alone)
   selects no analyses; empty names are rejected.
 - Selection: by name (`-k`), `--all`, or `--max-cost SECONDS` (greedy under declared cost
-  for the chosen tool).
+  for the chosen tool). `--all` and `--max-cost` select only projects whose include/exclude
+  tool lists admit the chosen tool, unless `--ignore-include-tools` is given; `-k` always
+  ignores `include_tools`. `exclude_tools` is absolute under every selector.
 - The initial corpus list is deferred to a Phase 1 task (~5–10 permissively licensed,
   actively maintained, moderate-size projects).
 
@@ -253,7 +255,8 @@ point*: pre-triage, triage, or post-triage (§10).
 printing the package version and `SCHEMA_VERSION`. Commands:
 
 - `run --tool T --repo URL --old REF --new REF [-k SEL | --all | --max-cost S]
-  [--max-results N] [--excerpt-lines N] [--output text|json|github] [--fail-on ...]
+  [--ignore-include-tools] [--max-results N] [--excerpt-lines N]
+  [--output text|json|github] [--fail-on ...]
   [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]
   [--analyses NAME[,NAME...]]`
 - `corpus validate` — parse and validate the corpus YAML.

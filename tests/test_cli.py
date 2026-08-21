@@ -227,8 +227,13 @@ def test_run_mode_flag_matrix_errors(tmp_path: Path, capsys: pytest.CaptureFixtu
     del tmp_path
 
 
-def test_run_rejects_ad_hoc_with_selectors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    argv = escape_argv(tmp_path, 'https://example.invalid/x', [], [], '--all')
+@pytest.mark.parametrize('corpus_option', ['--all', '--ignore-include-tools'])
+def test_run_rejects_ad_hoc_with_corpus_options(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    corpus_option: str,
+) -> None:
+    argv = escape_argv(tmp_path, 'https://example.invalid/x', [], [], corpus_option)
     assert main(argv) == EXIT_FAILURE
     assert 'ad-hoc mode' in capsys.readouterr().err
 

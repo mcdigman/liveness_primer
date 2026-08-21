@@ -202,9 +202,10 @@ class CorpusProject(_ConfigModel):
     tools : dict[str, ToolSettings]
         Per-tool tables keyed by adapter name.
     include_tools : tuple[str, ...] | None
-        When set, only these tools run against the project.
+        When set, only these tools select the project by default; ``-k`` and
+        ``--ignore-include-tools`` select past it.
     exclude_tools : tuple[str, ...]
-        Tools that never run against the project.
+        Tools that never run against the project, under every selector.
     """
 
     name: str = Field(pattern=r'^[A-Za-z0-9._-]+$')
@@ -236,7 +237,10 @@ class CorpusProject(_ConfigModel):
         return self
 
     def supports_tool(self, tool: str) -> bool:
-        """Report whether a tool participates for this project (contract §5).
+        """Report whether a tool participates by default for this project (contract §5).
+
+        Blanket selectors honor this predicate unless ``--ignore-include-tools``
+        is given; ``-k`` honors only ``exclude_tools``.
 
         Parameters
         ----------
@@ -550,6 +554,7 @@ def select_projects(
     keywords: Sequence[str] = (),
     select_all: bool = False,
     max_cost: float | None = None,
+    ignore_include_tools: bool = False,
 ) -> tuple[CorpusProject, ...]:
     """Select corpus projects for a run (contract §5).
 
@@ -571,6 +576,10 @@ def select_projects(
         Select every applicable project (``--all``).
     max_cost : float | None
         Cost budget in CPU-seconds (``--max-cost``).
+    ignore_include_tools : bool
+        Also consider projects omitted by ``include_tools`` with ``--all`` or
+        ``--max-cost``; no effect with ``-k``, which already ignores the list.
+        ``exclude_tools`` remains effective.
 
     Returns
     -------
@@ -586,15 +595,12 @@ def select_projects(
     if active != 1:
         msg = 'exactly one of -k, --all, or --max-cost must be given'
         raise CorpusConfigError(msg)
-    applicable = [project for project in corpus.projects if project.supports_tool(tool)]
+    eligible = [project for project in corpus.projects if tool not in project.exclude_tools]
+    applicable = eligible if ignore_include_tools else [project for project in eligible if project.supports_tool(tool)]
     if select_all:
         selected = applicable
     elif keywords:
-        selected = [
-            project
-            for project in corpus.projects
-            if tool not in project.exclude_tools and any(keyword in project.name for keyword in keywords)
-        ]
+        selected = [project for project in eligible if any(keyword in project.name for keyword in keywords)]
     else:
         selected = _select_by_cost(applicable, tool=tool, max_cost=max_cost if max_cost is not None else 0.0)
     if not selected:
