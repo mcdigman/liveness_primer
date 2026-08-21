@@ -202,9 +202,10 @@ class CorpusProject(_ConfigModel):
     tools : dict[str, ToolSettings]
         Per-tool tables keyed by adapter name.
     include_tools : tuple[str, ...] | None
-        When set, only these tools run against the project.
+        When set, only these tools select the project by default; ``-k`` and
+        ``--ignore-include-tools`` select past it.
     exclude_tools : tuple[str, ...]
-        Tools that never run against the project.
+        Tools that never run against the project, under every selector.
     """
 
     name: str = Field(pattern=r'^[A-Za-z0-9._-]+$')
@@ -236,7 +237,10 @@ class CorpusProject(_ConfigModel):
         return self
 
     def supports_tool(self, tool: str) -> bool:
-        """Report whether a tool participates for this project (contract §5).
+        """Report whether a tool participates by default for this project (contract §5).
+
+        Blanket selectors honor this predicate unless ``--ignore-include-tools``
+        is given; ``-k`` honors only ``exclude_tools``.
 
         Parameters
         ----------
@@ -573,8 +577,9 @@ def select_projects(
     max_cost : float | None
         Cost budget in CPU-seconds (``--max-cost``).
     ignore_include_tools : bool
-        Include projects omitted by ``include_tools`` with ``--all`` or
-        ``--max-cost``; ``exclude_tools`` remains effective.
+        Also consider projects omitted by ``include_tools`` with ``--all`` or
+        ``--max-cost``; no effect with ``-k``, which already ignores the list.
+        ``exclude_tools`` remains effective.
 
     Returns
     -------
@@ -589,9 +594,6 @@ def select_projects(
     active = sum((bool(keywords), select_all, max_cost is not None))
     if active != 1:
         msg = 'exactly one of -k, --all, or --max-cost must be given'
-        raise CorpusConfigError(msg)
-    if ignore_include_tools and keywords:
-        msg = '--ignore-include-tools does not apply to -k, which already ignores include_tools'
         raise CorpusConfigError(msg)
     eligible = [project for project in corpus.projects if tool not in project.exclude_tools]
     applicable = eligible if ignore_include_tools else [project for project in eligible if project.supports_tool(tool)]

@@ -433,14 +433,15 @@ def test_select_by_keyword_overrides_include_tools_but_not_exclude_tools() -> No
     assert names == ['included']
 
 
-def test_ignore_include_tools_rejects_keyword_selection() -> None:
-    with pytest.raises(CorpusConfigError, match='does not apply'):
-        select_projects(
-            corpus_for_selection(),
-            tool='vulture',
-            keywords=('cheap',),
-            ignore_include_tools=True,
+def test_ignore_include_tools_is_accepted_and_inert_for_keyword_selection() -> None:
+    corpus = Corpus(
+        projects=(
+            project('included', include_tools=('skylos',)),
+            project('excluded', include_tools=('skylos',), exclude_tools=('vulture',)),
         )
+    )
+    selected = select_projects(corpus, tool='vulture', keywords=('ed',), ignore_include_tools=True)
+    assert [entry.name for entry in selected] == ['included']
 
 
 def test_select_by_keyword_no_match_raises() -> None:

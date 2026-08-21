@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Report and manifest payloads carry their own `schema_version`, versioned
 independently of the package version; `liveness-primer --version` prints both.
 
+## [Unreleased]
+
+### Added
+
+- **Corpus selection** — `--ignore-include-tools` lets `--all` and `--max-cost`
+  consider projects their `include_tools` omits, so a one-off comparison needs no
+  corpus edit. `--max-cost` still selects a project only if it declares a cost for
+  the tool being run.
+
+### Changed
+
+- **Corpus selection** — `-k` now selects a matching project even when the
+  project's `include_tools` omits the tool being run. `exclude_tools` remains a
+  hard exclusion under every selector.
+
 ## [0.1.0] - 2026-08-14
 
 This is the first release version of `liveness_primer`, so everything is new.

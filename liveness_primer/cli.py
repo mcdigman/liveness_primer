@@ -433,7 +433,7 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
     analyses = _resolve_analyses(args)
     if args.project_url is not None:
         if args.keywords or args.select_all or args.max_cost is not None or args.ignore_include_tools:
-            msg = '--project (ad-hoc mode) does not take corpus selection options'
+            msg = '--project (ad-hoc mode) does not take -k/--all/--max-cost/--ignore-include-tools'
             raise RunnerError(msg)
         return (ad_hoc_project(args.project_url, tool=args.tool, analyses=analyses if analyses is not None else ()),)
     corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
