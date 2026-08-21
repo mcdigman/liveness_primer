@@ -2,27 +2,1196 @@
   "analysis_errors": [],
   "analysis_summary": {
     "analysis_error_count": 0,
-    "excluded_folders": [],
-    "languages": [
-      "python"
+    "by_directory": [
+      {
+        "dead_code": 8,
+        "files": 5,
+        "path": "pkg",
+        "rules": {
+          "SKY-E002": 1,
+          "SKY-E003": 1,
+          "unused-classes": 1,
+          "unused-functions": 2,
+          "unused-imports": 1,
+          "unused-parameters": 1,
+          "unused-variables": 1
+        },
+        "severities": {
+          "LOW": 8
+        },
+        "total": 8
+      }
     ],
-    "total_files": 3
+    "comparison_scope": {
+      "changed_files_only": false,
+      "complete_repository": false,
+      "excluded_folders": [
+        ".coverage",
+        "venv",
+        "vendor",
+        ".hg",
+        ".tox",
+        "htmlcov",
+        ".git",
+        "__pycache__",
+        ".svn",
+        "*.egg-info",
+        ".pytest_cache",
+        ".mypy_cache",
+        "node_modules",
+        ".idea",
+        ".next",
+        ".nuxt",
+        ".venv",
+        ".turbo",
+        "build",
+        ".vscode",
+        "dist"
+      ],
+      "kind": "repository_root_with_exclusions",
+      "repository_root": ".",
+      "scan_path": "."
+    },
+    "dead_code_evidence": {
+      "candidate_decisions": {
+        "abstained": 0,
+        "reported": 6,
+        "rescued": 0
+      },
+      "classification_policy": "dead-code-evidence-v3",
+      "classifications": {
+        "alive": 7,
+        "likely_dead": 4
+      },
+      "symbol_count": 11
+    },
+    "dead_code_liveness": {
+      "rescued": [],
+      "rescued_count": 0
+    },
+    "excluded_folders": [
+      ".coverage",
+      "venv",
+      "vendor",
+      ".hg",
+      ".tox",
+      "htmlcov",
+      ".git",
+      "__pycache__",
+      ".svn",
+      "*.egg-info",
+      ".pytest_cache",
+      ".mypy_cache",
+      "node_modules",
+      ".idea",
+      ".next",
+      ".nuxt",
+      ".venv",
+      ".turbo",
+      "build",
+      ".vscode",
+      "dist"
+    ],
+    "grade_categories": [
+      "dead_code"
+    ],
+    "grep_verify": {
+      "enabled": true,
+      "project_cache_enabled": true,
+      "rescued_count": 1
+    },
+    "languages": {
+      "Python": 5,
+      "TypeScript": 1
+    },
+    "monorepo_detected": false,
+    "total_files": 6,
+    "total_loc": 32,
+    "unused_files_count": 2,
+    "workspace_count": 0,
+    "workspace_diagnostic_count": 0,
+    "workspace_total_packages": 0
   },
   "dead_code_abstentions": [],
-  "dead_code_evidence": [],
+  "dead_code_evidence": {
+    "classification_policy": "dead-code-evidence-v3",
+    "symbols": [
+      {
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "confidence": 100,
+          "dead_evidence_count": 0,
+          "live_evidence_count": 1,
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            },
+            "kind": "static_reference",
+            "reason": "referenced by static analysis",
+            "role": "supports_live",
+            "source": "analyzer"
+          }
+        ],
+        "file": "pkg/consts.py",
+        "kind": "variable",
+        "line": 3,
+        "qualified_name": "pkg.consts.ACTIVE_LIMIT"
+      },
+      {
+        "classification": "likely_dead",
+        "decision": {
+          "classification": "likely_dead",
+          "confidence": 60,
+          "dead_evidence_count": 4,
+          "live_evidence_count": 0,
+          "primary_reason": "No static references; Not exported; No entrypoint evidence",
+          "reason_tags": [
+            "no_refs",
+            "not_exported",
+            "no_entrypoint",
+            "confidence_ge_threshold"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 0
+            },
+            "kind": "no_static_references",
+            "reason": "no static references were found",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "not_exported",
+            "reason": "symbol is not exported as public API",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "no_entrypoint",
+            "reason": "no package, framework, test, or root entrypoint evidence",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 0.6,
+            "details": {
+              "confidence": 60,
+              "threshold": 60
+            },
+            "kind": "confidence_gate",
+            "reason": "confidence meets the configured reporting threshold",
+            "role": "supports_dead",
+            "source": "confidence"
+          }
+        ],
+        "file": "pkg/consts.py",
+        "kind": "variable",
+        "line": 5,
+        "qualified_name": "pkg.consts.LEGACY_LIMIT"
+      },
+      {
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "confidence": 100,
+          "dead_evidence_count": 0,
+          "live_evidence_count": 1,
+          "primary_reason": "Called during module import",
+          "reason_tags": [
+            "top_level_execution"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "top_level_execution",
+            "reason": "called during module top-level execution",
+            "role": "supports_live",
+            "source": "python_ast"
+          }
+        ],
+        "file": "pkg/mod.py",
+        "kind": "class",
+        "line": 17,
+        "qualified_name": "pkg.mod.Greeter"
+      },
+      {
+        "classification": "likely_dead",
+        "decision": {
+          "classification": "likely_dead",
+          "confidence": 100,
+          "dead_evidence_count": 4,
+          "live_evidence_count": 0,
+          "primary_reason": "No static references; Not exported; No entrypoint evidence",
+          "reason_tags": [
+            "no_refs",
+            "not_exported",
+            "no_entrypoint",
+            "confidence_ge_threshold"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 0
+            },
+            "kind": "no_static_references",
+            "reason": "no static references were found",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "not_exported",
+            "reason": "symbol is not exported as public API",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "no_entrypoint",
+            "reason": "no package, framework, test, or root entrypoint evidence",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {
+              "confidence": 100,
+              "threshold": 60
+            },
+            "kind": "confidence_gate",
+            "reason": "confidence meets the configured reporting threshold",
+            "role": "supports_dead",
+            "source": "confidence"
+          }
+        ],
+        "file": "pkg/mod.py",
+        "kind": "method",
+        "line": 24,
+        "qualified_name": "pkg.mod.Greeter.farewell"
+      },
+      {
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "confidence": 100,
+          "dead_evidence_count": 0,
+          "live_evidence_count": 1,
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 0.3,
+            "details": {
+              "bucket": "same_pkg_attr"
+            },
+            "kind": "attribute_name_match",
+            "reason": "unverified same_pkg_attr match",
+            "role": "context",
+            "source": "attribute_reference"
+          },
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            },
+            "kind": "static_reference",
+            "reason": "referenced by static analysis",
+            "role": "supports_live",
+            "source": "analyzer"
+          }
+        ],
+        "file": "pkg/mod.py",
+        "kind": "method",
+        "line": 20,
+        "qualified_name": "pkg.mod.Greeter.greet"
+      },
+      {
+        "classification": "likely_dead",
+        "decision": {
+          "classification": "likely_dead",
+          "confidence": 100,
+          "dead_evidence_count": 4,
+          "live_evidence_count": 0,
+          "primary_reason": "No static references; Not exported; No entrypoint evidence",
+          "reason_tags": [
+            "no_refs",
+            "not_exported",
+            "no_entrypoint",
+            "confidence_ge_threshold"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 0
+            },
+            "kind": "no_static_references",
+            "reason": "no static references were found",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "not_exported",
+            "reason": "symbol is not exported as public API",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "no_entrypoint",
+            "reason": "no package, framework, test, or root entrypoint evidence",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {
+              "confidence": 100,
+              "threshold": 60
+            },
+            "kind": "confidence_gate",
+            "reason": "confidence meets the configured reporting threshold",
+            "role": "supports_dead",
+            "source": "confidence"
+          }
+        ],
+        "file": "pkg/mod.py",
+        "kind": "function",
+        "line": 7,
+        "qualified_name": "pkg.mod.orphan"
+      },
+      {
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "confidence": 100,
+          "dead_evidence_count": 0,
+          "live_evidence_count": 1,
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            },
+            "kind": "static_reference",
+            "reason": "referenced by static analysis",
+            "role": "supports_live",
+            "source": "analyzer"
+          }
+        ],
+        "file": "pkg/mod.py",
+        "kind": "function",
+        "line": 12,
+        "qualified_name": "pkg.mod.used"
+      },
+      {
+        "classification": "likely_dead",
+        "decision": {
+          "classification": "likely_dead",
+          "confidence": 100,
+          "dead_evidence_count": 4,
+          "live_evidence_count": 0,
+          "primary_reason": "No static references; Not exported; No entrypoint evidence",
+          "reason_tags": [
+            "no_refs",
+            "not_exported",
+            "no_entrypoint",
+            "confidence_ge_threshold"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 0
+            },
+            "kind": "no_static_references",
+            "reason": "no static references were found",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "not_exported",
+            "reason": "symbol is not exported as public API",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "no_entrypoint",
+            "reason": "no package, framework, test, or root entrypoint evidence",
+            "role": "supports_dead",
+            "source": "analyzer"
+          },
+          {
+            "confidence": 1.0,
+            "details": {
+              "confidence": 100,
+              "threshold": 60
+            },
+            "kind": "confidence_gate",
+            "reason": "confidence meets the configured reporting threshold",
+            "role": "supports_dead",
+            "source": "confidence"
+          }
+        ],
+        "file": "pkg/shapes.py",
+        "kind": "class",
+        "line": 12,
+        "qualified_name": "pkg.shapes.Hexagon"
+      },
+      {
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "confidence": 100,
+          "dead_evidence_count": 0,
+          "live_evidence_count": 1,
+          "primary_reason": "Grep verification found usage",
+          "reason_tags": [
+            "grep_rescue"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 0.3,
+            "details": {
+              "bucket": "same_pkg_attr"
+            },
+            "kind": "attribute_name_match",
+            "reason": "unverified same_pkg_attr match",
+            "role": "context",
+            "source": "attribute_reference"
+          },
+          {
+            "confidence": 1.0,
+            "details": {},
+            "kind": "grep_rescue",
+            "reason": "grep verification found a usage",
+            "role": "supports_live",
+            "source": "grep_verify"
+          }
+        ],
+        "file": "pkg/shapes.py",
+        "kind": "method",
+        "line": 15,
+        "qualified_name": "pkg.shapes.Hexagon.area"
+      },
+      {
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "confidence": 100,
+          "dead_evidence_count": 0,
+          "live_evidence_count": 1,
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 2
+            },
+            "kind": "static_reference",
+            "reason": "referenced by static analysis",
+            "role": "supports_live",
+            "source": "analyzer"
+          }
+        ],
+        "file": "pkg/shapes.py",
+        "kind": "class",
+        "line": 4,
+        "qualified_name": "pkg.shapes.Square"
+      },
+      {
+        "classification": "alive",
+        "decision": {
+          "classification": "alive",
+          "confidence": 100,
+          "dead_evidence_count": 0,
+          "live_evidence_count": 1,
+          "primary_reason": "Static references found",
+          "reason_tags": [
+            "static_reference"
+          ],
+          "threshold": 60,
+          "uncertainty_count": 0
+        },
+        "evidence": [
+          {
+            "confidence": 0.3,
+            "details": {
+              "bucket": "same_pkg_attr"
+            },
+            "kind": "attribute_name_match",
+            "reason": "unverified same_pkg_attr match",
+            "role": "context",
+            "source": "attribute_reference"
+          },
+          {
+            "confidence": 1.0,
+            "details": {
+              "references": 1
+            },
+            "kind": "static_reference",
+            "reason": "referenced by static analysis",
+            "role": "supports_live",
+            "source": "analyzer"
+          }
+        ],
+        "file": "pkg/shapes.py",
+        "kind": "method",
+        "line": 7,
+        "qualified_name": "pkg.shapes.Square.area"
+      }
+    ]
+  },
   "dead_code_rescues": [],
   "definitions": {
+    "pkg.mod.Greeter": {
+      "called_by": [],
+      "calls": [],
+      "complexity": 1,
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_decision": {
+        "classification": "alive",
+        "confidence": 100,
+        "dead_evidence_count": 0,
+        "live_evidence_count": 1,
+        "primary_reason": "Called during module import",
+        "reason_tags": [
+          "top_level_execution"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "top_level_execution",
+          "reason": "called during module top-level execution",
+          "role": "supports_live",
+          "source": "python_ast"
+        }
+      ],
+      "dead_code_reason": "Called during module import",
+      "dead_code_reason_tags": [
+        "top_level_execution"
+      ],
+      "file": "pkg/mod.py",
+      "line": 17,
+      "loc": 10,
+      "name": "pkg.mod.Greeter",
+      "type": "class"
+    },
+    "pkg.mod.Greeter.farewell": {
+      "called_by": [],
+      "calls": [
+        "pkg.mod.used"
+      ],
+      "complexity": 1,
+      "dead": true,
+      "dead_code_classification": "likely_dead",
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "confidence": 100,
+        "dead_evidence_count": 4,
+        "live_evidence_count": 0,
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 0
+          },
+          "kind": "no_static_references",
+          "reason": "no static references were found",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "not_exported",
+          "reason": "symbol is not exported as public API",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "no_entrypoint",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "confidence": 100,
+            "threshold": 60
+          },
+          "kind": "confidence_gate",
+          "reason": "confidence meets the configured reporting threshold",
+          "role": "supports_dead",
+          "source": "confidence"
+        }
+      ],
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
+      "file": "pkg/mod.py",
+      "line": 24,
+      "loc": 3,
+      "name": "pkg.mod.Greeter.farewell",
+      "type": "method"
+    },
+    "pkg.mod.Greeter.greet": {
+      "called_by": [],
+      "calls": [
+        "pkg.mod.used"
+      ],
+      "complexity": 1,
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_decision": {
+        "classification": "alive",
+        "confidence": 100,
+        "dead_evidence_count": 0,
+        "live_evidence_count": 1,
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 0.3,
+          "details": {
+            "bucket": "same_pkg_attr"
+          },
+          "kind": "attribute_name_match",
+          "reason": "unverified same_pkg_attr match",
+          "role": "context",
+          "source": "attribute_reference"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 1
+          },
+          "kind": "static_reference",
+          "reason": "referenced by static analysis",
+          "role": "supports_live",
+          "source": "analyzer"
+        }
+      ],
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ],
+      "file": "pkg/mod.py",
+      "line": 20,
+      "loc": 3,
+      "name": "pkg.mod.Greeter.greet",
+      "type": "method"
+    },
+    "pkg.mod.orphan": {
+      "called_by": [],
+      "calls": [
+        "pkg.consts.ACTIVE_LIMIT"
+      ],
+      "complexity": 1,
+      "dead": true,
+      "dead_code_classification": "likely_dead",
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "confidence": 100,
+        "dead_evidence_count": 4,
+        "live_evidence_count": 0,
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 0
+          },
+          "kind": "no_static_references",
+          "reason": "no static references were found",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "not_exported",
+          "reason": "symbol is not exported as public API",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "no_entrypoint",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "confidence": 100,
+            "threshold": 60
+          },
+          "kind": "confidence_gate",
+          "reason": "confidence meets the configured reporting threshold",
+          "role": "supports_dead",
+          "source": "confidence"
+        }
+      ],
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
+      "file": "pkg/mod.py",
+      "line": 7,
+      "loc": 3,
+      "name": "pkg.mod.orphan",
+      "type": "function"
+    },
     "pkg.mod.used": {
-      "references": 4
+      "called_by": [
+        "pkg.mod.Greeter.farewell",
+        "pkg.mod.Greeter.greet"
+      ],
+      "calls": [
+        "pkg.shapes.Square",
+        "pkg.shapes.Square.area"
+      ],
+      "complexity": 1,
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_decision": {
+        "classification": "alive",
+        "confidence": 100,
+        "dead_evidence_count": 0,
+        "live_evidence_count": 1,
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 2
+          },
+          "kind": "static_reference",
+          "reason": "referenced by static analysis",
+          "role": "supports_live",
+          "source": "analyzer"
+        }
+      ],
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ],
+      "file": "pkg/mod.py",
+      "line": 12,
+      "loc": 3,
+      "name": "pkg.mod.used",
+      "type": "function"
+    },
+    "pkg.shapes.Hexagon": {
+      "called_by": [],
+      "calls": [],
+      "complexity": 1,
+      "dead": true,
+      "dead_code_classification": "likely_dead",
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "confidence": 100,
+        "dead_evidence_count": 4,
+        "live_evidence_count": 0,
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 0
+          },
+          "kind": "no_static_references",
+          "reason": "no static references were found",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "not_exported",
+          "reason": "symbol is not exported as public API",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "no_entrypoint",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "confidence": 100,
+            "threshold": 60
+          },
+          "kind": "confidence_gate",
+          "reason": "confidence meets the configured reporting threshold",
+          "role": "supports_dead",
+          "source": "confidence"
+        }
+      ],
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
+      "file": "pkg/shapes.py",
+      "line": 12,
+      "loc": 6,
+      "name": "pkg.shapes.Hexagon",
+      "type": "class"
+    },
+    "pkg.shapes.Hexagon.area": {
+      "called_by": [],
+      "calls": [],
+      "complexity": 1,
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_decision": {
+        "classification": "alive",
+        "confidence": 100,
+        "dead_evidence_count": 0,
+        "live_evidence_count": 1,
+        "primary_reason": "Grep verification found usage",
+        "reason_tags": [
+          "grep_rescue"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 0.3,
+          "details": {
+            "bucket": "same_pkg_attr"
+          },
+          "kind": "attribute_name_match",
+          "reason": "unverified same_pkg_attr match",
+          "role": "context",
+          "source": "attribute_reference"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "grep_rescue",
+          "reason": "grep verification found a usage",
+          "role": "supports_live",
+          "source": "grep_verify"
+        }
+      ],
+      "dead_code_reason": "Grep verification found usage",
+      "dead_code_reason_tags": [
+        "grep_rescue"
+      ],
+      "file": "pkg/shapes.py",
+      "line": 15,
+      "loc": 3,
+      "name": "pkg.shapes.Hexagon.area",
+      "type": "method"
+    },
+    "pkg.shapes.Square": {
+      "called_by": [],
+      "calls": [],
+      "complexity": 1,
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_decision": {
+        "classification": "alive",
+        "confidence": 100,
+        "dead_evidence_count": 0,
+        "live_evidence_count": 1,
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 2
+          },
+          "kind": "static_reference",
+          "reason": "referenced by static analysis",
+          "role": "supports_live",
+          "source": "analyzer"
+        }
+      ],
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ],
+      "file": "pkg/shapes.py",
+      "line": 4,
+      "loc": 6,
+      "name": "pkg.shapes.Square",
+      "type": "class"
+    },
+    "pkg.shapes.Square.area": {
+      "called_by": [],
+      "calls": [],
+      "complexity": 1,
+      "dead": false,
+      "dead_code_classification": "alive",
+      "dead_code_decision": {
+        "classification": "alive",
+        "confidence": 100,
+        "dead_evidence_count": 0,
+        "live_evidence_count": 1,
+        "primary_reason": "Static references found",
+        "reason_tags": [
+          "static_reference"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
+      "dead_code_evidence": [
+        {
+          "confidence": 0.3,
+          "details": {
+            "bucket": "same_pkg_attr"
+          },
+          "kind": "attribute_name_match",
+          "reason": "unverified same_pkg_attr match",
+          "role": "context",
+          "source": "attribute_reference"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 1
+          },
+          "kind": "static_reference",
+          "reason": "referenced by static analysis",
+          "role": "supports_live",
+          "source": "analyzer"
+        }
+      ],
+      "dead_code_reason": "Static references found",
+      "dead_code_reason_tags": [
+        "static_reference"
+      ],
+      "file": "pkg/shapes.py",
+      "line": 7,
+      "loc": 3,
+      "name": "pkg.shapes.Square.area",
+      "type": "method"
     }
+  },
+  "grade": {
+    "categories": {
+      "dead_code": {
+        "base_weight": 0.15,
+        "key_issue": "6 dead symbols (187.5/1K LOC)",
+        "letter": "F",
+        "score": 0,
+        "weight": 1.0
+      }
+    },
+    "overall": {
+      "letter": "F",
+      "score": 0
+    },
+    "scanned_categories": [
+      "dead_code"
+    ],
+    "total_loc": 32
   },
   "suppressed": [],
   "unused_classes": [
     {
       "basename": "shapes.py",
-      "confidence": 86,
+      "confidence": 100,
       "dead_code_classification": "likely_dead",
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "confidence": 100,
+        "dead_evidence_count": 4,
+        "live_evidence_count": 0,
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
       "dead_code_disposition": "reported",
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 0
+          },
+          "kind": "no_static_references",
+          "reason": "no static references were found",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "not_exported",
+          "reason": "symbol is not exported as public API",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "no_entrypoint",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "confidence": 100,
+            "threshold": 60
+          },
+          "kind": "confidence_gate",
+          "reason": "confidence meets the configured reporting threshold",
+          "role": "supports_dead",
+          "source": "confidence"
+        }
+      ],
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
       "file": "pkg/shapes.py",
       "full_name": "pkg.shapes.Hexagon",
       "line": 12,
@@ -53,12 +1222,76 @@
   "unused_functions": [
     {
       "basename": "mod.py",
+      "calls": [
+        "pkg.consts.ACTIVE_LIMIT"
+      ],
       "confidence": 100,
-      "dead_code_classification": "dead",
+      "dead_code_classification": "likely_dead",
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "confidence": 100,
+        "dead_evidence_count": 4,
+        "live_evidence_count": 0,
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
       "dead_code_disposition": "reported",
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 0
+          },
+          "kind": "no_static_references",
+          "reason": "no static references were found",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "not_exported",
+          "reason": "symbol is not exported as public API",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "no_entrypoint",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "confidence": 100,
+            "threshold": 60
+          },
+          "kind": "confidence_gate",
+          "reason": "confidence meets the configured reporting threshold",
+          "role": "supports_dead",
+          "source": "confidence"
+        }
+      ],
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
       "file": "pkg/mod.py",
       "full_name": "pkg.mod.orphan",
-      "line": 4,
+      "line": 7,
       "name": "orphan",
       "references": 0,
       "simple_name": "orphan",
@@ -66,14 +1299,76 @@
     },
     {
       "basename": "mod.py",
-      "calls": [],
-      "confidence": 74,
+      "calls": [
+        "pkg.mod.used"
+      ],
+      "confidence": 100,
       "dead_code_classification": "likely_dead",
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "confidence": 100,
+        "dead_evidence_count": 4,
+        "live_evidence_count": 0,
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
       "dead_code_disposition": "reported",
-      "decorators": [],
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 0
+          },
+          "kind": "no_static_references",
+          "reason": "no static references were found",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "not_exported",
+          "reason": "symbol is not exported as public API",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "no_entrypoint",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {
+            "confidence": 100,
+            "threshold": 60
+          },
+          "kind": "confidence_gate",
+          "reason": "confidence meets the configured reporting threshold",
+          "role": "supports_dead",
+          "source": "confidence"
+        }
+      ],
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
       "file": "pkg/mod.py",
       "full_name": "pkg.mod.Greeter.farewell",
-      "line": 21,
+      "line": 24,
       "name": "Greeter.farewell",
       "references": 0,
       "simple_name": "farewell",
@@ -83,12 +1378,10 @@
   "unused_imports": [
     {
       "basename": "mod.py",
-      "conditional_import": false,
-      "confidence": 95,
-      "dead_code_classification": "dead",
+      "confidence": 100,
       "dead_code_disposition": "reported",
       "file": "pkg/mod.py",
-      "full_name": "pkg.mod.os",
+      "full_name": "os",
       "line": 1,
       "name": "os",
       "references": 0,
@@ -99,12 +1392,11 @@
   "unused_parameters": [
     {
       "basename": "mod.py",
-      "confidence": 61,
-      "dead_code_classification": "uncertain_reported",
+      "confidence": 100,
       "dead_code_disposition": "reported",
       "file": "pkg/mod.py",
       "full_name": "pkg.mod.orphan.flag",
-      "line": 4,
+      "line": 7,
       "name": "flag",
       "references": 0,
       "simple_name": "flag",
@@ -114,17 +1406,89 @@
   "unused_variables": [
     {
       "basename": "consts.py",
-      "confidence": 68,
+      "confidence": 60,
       "dead_code_classification": "likely_dead",
+      "dead_code_decision": {
+        "classification": "likely_dead",
+        "confidence": 60,
+        "dead_evidence_count": 4,
+        "live_evidence_count": 0,
+        "primary_reason": "No static references; Not exported; No entrypoint evidence",
+        "reason_tags": [
+          "no_refs",
+          "not_exported",
+          "no_entrypoint",
+          "confidence_ge_threshold"
+        ],
+        "threshold": 60,
+        "uncertainty_count": 0
+      },
       "dead_code_disposition": "reported",
+      "dead_code_evidence": [
+        {
+          "confidence": 1.0,
+          "details": {
+            "references": 0
+          },
+          "kind": "no_static_references",
+          "reason": "no static references were found",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "not_exported",
+          "reason": "symbol is not exported as public API",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 1.0,
+          "details": {},
+          "kind": "no_entrypoint",
+          "reason": "no package, framework, test, or root entrypoint evidence",
+          "role": "supports_dead",
+          "source": "analyzer"
+        },
+        {
+          "confidence": 0.6,
+          "details": {
+            "confidence": 60,
+            "threshold": 60
+          },
+          "kind": "confidence_gate",
+          "reason": "confidence meets the configured reporting threshold",
+          "role": "supports_dead",
+          "source": "confidence"
+        }
+      ],
+      "dead_code_reason": "No static references; Not exported; No entrypoint evidence",
+      "dead_code_reason_tags": [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+        "confidence_ge_threshold"
+      ],
       "file": "pkg/consts.py",
       "full_name": "pkg.consts.LEGACY_LIMIT",
-      "line": 7,
+      "line": 5,
       "name": "LEGACY_LIMIT",
       "references": 0,
       "simple_name": "LEGACY_LIMIT",
-      "type": "constant"
+      "type": "variable"
     }
   ],
-  "whitelisted": []
+  "whitelisted": [],
+  "workspaces": {
+    "declared_patterns": [],
+    "diagnostic_count": 0,
+    "diagnostics": [],
+    "is_monorepo": false,
+    "package_count": 0,
+    "packages": [],
+    "root_package": null,
+    "total_packages": 0,
+    "tsconfig_references": []
+  }
 }

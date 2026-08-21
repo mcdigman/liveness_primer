@@ -196,6 +196,41 @@ def test_collect_file_level_finding_on_nonempty_file_gets_evidence(tmp_path: Pat
     )
 
 
+def test_collect_symbol_bearing_file_kind_on_zero_line_file_still_warns(tmp_path: Path) -> None:
+    # Adversarial detector output can script `type: "file"` on a
+    # symbol-bucket entry. A symbol-bearing occurrence is not the
+    # normalized unused-file shape, so the empty-file exemption does not
+    # apply and the anomaly still warns.
+    checkout = write_checkout(tmp_path)
+    atomic_write_text(checkout / 'pkg' / 'blank.py', '')
+    entry = diff(DiffClass.NEW, 'rogue', path='pkg/blank.py', kind='file', head=occurrence(1, 'm'))
+    (enriched,), warnings = collect_source_evidence((entry,), checkout=checkout, excerpt_lines=2)
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt is None
+    (warning,) = warnings
+    assert warning == 'pkg/blank.py:L1: reported line 1 is beyond the end of the file (0 line(s))'
+
+
+def test_collect_file_finding_past_line_one_on_zero_line_file_still_warns(tmp_path: Path) -> None:
+    # A file-level finding claiming source at line 40 of a zero-byte file
+    # is not reporting the emptiness: the claimed location is anomalous and
+    # must keep its warning.
+    checkout = write_checkout(tmp_path)
+    atomic_write_text(checkout / 'pkg' / 'blank.py', '')
+    entry = diff(
+        DiffClass.NEW,
+        None,
+        path='pkg/blank.py',
+        kind='file',
+        head=occurrence(40, 'Empty Python file (no code, or docstring-only)', rule_id='SKY-E002'),
+    )
+    (enriched,), warnings = collect_source_evidence((entry,), checkout=checkout, excerpt_lines=2)
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt is None
+    (warning,) = warnings
+    assert warning == 'pkg/blank.py:L40: reported line 40 is beyond the end of the file (0 line(s))'
+
+
 def test_collect_symbol_finding_on_zero_line_file_still_warns(tmp_path: Path) -> None:
     # The empty-file exemption is for file-level findings only: a symbol
     # finding pointing into a zero-line file remains a source anomaly.

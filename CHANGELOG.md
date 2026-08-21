@@ -18,10 +18,12 @@ independently of the package version; `liveness-primer --version` prints both.
   stamps each entry's rule ID explicitly, so the adapter requires the
   explicit `rule_id` rather than defaulting one rule's code onto the
   other's entries.
-- A file-level finding on a file with zero source lines (e.g. `SKY-E002`)
-  is intentionally source-less: it no longer spends the bounded
-  source-warning budget on the expected emptiness, keeping the budget for
-  genuine source anomalies.
+- A finding in the normalized unused-file shape — kind `file`, no symbol,
+  a point span at line 1 — on a file with zero source lines (e.g.
+  `SKY-E002`) is intentionally source-less: it no longer spends the
+  bounded source-warning budget on the expected emptiness, keeping the
+  budget for genuine source anomalies. Any other occurrence claiming
+  source in an empty file still warns.
 
 ## [0.1.0] - 2026-08-14
 

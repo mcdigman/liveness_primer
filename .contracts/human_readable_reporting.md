@@ -81,6 +81,12 @@ An adapter must populate `rule_id` using the following precedence:
 An adapter must not infer a rule ID from free-form message text. The human renderer displays
 an absent rule ID as `-`; it must not invent a tool-specific code.
 
+One documented exception to step 3: when a bucket is multi-rule and every supported detector
+revision stamps the rule ID explicitly on each entry (Skylos `unused_files`, below), a
+missing explicit rule ID is a malformed entry the adapter must reject, not a `None` — no
+bucket mapping exists, and accepting the entry rule-less would let the same finding surface
+under two identities across revisions.
+
 The Skylos JSON buckets currently ingested by `liveness_primer` map as follows:
 
 | Skylos bucket | Rule ID | Meaning |
@@ -216,10 +222,12 @@ occurrence:
   exist;
 - missing, unreadable, non-regular, or out-of-range source produces no excerpt and a bounded
   report warning rather than fabricated text; and
-- a file-level finding (kind `file`) on a file with zero source lines produces no excerpt and
-  no warning: the emptiness is the reported condition itself (e.g. Skylos `SKY-E002`), so the
-  occurrence is intentionally source-less and must not spend the warning budget that exists
-  to surface genuine source anomalies.
+- a finding in the normalized unused-file shape — kind `file`, no symbol, and a point span at
+  line 1 — on a file with zero source lines produces no excerpt and no warning: the emptiness
+  is the reported condition itself (e.g. Skylos `SKY-E002`), so the occurrence is
+  intentionally source-less and must not spend the warning budget that exists to surface
+  genuine source anomalies. Any other occurrence claiming source in an empty file — a symbol
+  finding, or a file finding pointing past line 1 — remains a warned anomaly.
 
 Source evidence is derived review context. It must not participate in finding identity, the
 canonical occurrence key, or changed-field classification. The corpus is identical across
@@ -362,7 +370,9 @@ sufficient evidence.
 
 For `new`, the head excerpt follows the summary row. For `dropped` and `changed`, the base
 excerpt follows it; both sides of a `changed` pair share their identity-pinned span, so one
-excerpt always suffices. If the excerpt cannot be collected, the bounded warning records it.
+excerpt always suffices. If the excerpt cannot be collected, the bounded warning records it —
+except for an intentionally source-less occurrence (§3.3's normalized unused-file shape on a
+zero-line file), which has no excerpt and no warning by design.
 
 A finding and its evidence must read as one visually coherent block. The continuation region
 is indented two cells from the left margin — not aligned under the location column, which

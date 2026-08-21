@@ -190,19 +190,19 @@ def test_skylos_parses_recorded_fixture() -> None:
     assert by_symbol['pkg.mod.orphan'].confidence == 100
     assert by_symbol['pkg.mod.orphan'].message == "unused function 'orphan'"
     assert by_symbol['pkg.mod.Greeter.farewell'].kind == 'method'
-    assert by_symbol['pkg.mod.os'].kind == 'import'
+    assert by_symbol['os'].kind == 'import'
     assert by_symbol['pkg.shapes.Hexagon'].kind == 'class'
-    assert by_symbol['pkg.consts.LEGACY_LIMIT'].kind == 'constant'
+    assert by_symbol['pkg.consts.LEGACY_LIMIT'].kind == 'variable'
     assert by_symbol['pkg.mod.orphan.flag'].kind == 'parameter'
-    assert by_symbol['pkg.mod.orphan.flag'].start_line == 4
+    assert by_symbol['pkg.mod.orphan.flag'].start_line == 7
     excerpt = by_symbol['pkg.mod.orphan'].raw_excerpt
     assert excerpt is not None
     assert json.loads(excerpt)['name'] == 'orphan'
     # Reporting contract §3.1: the documented bucket mapping supplies the
-    # canonical rule ID for every ingested category.
+    # canonical rule ID for every ingested symbol category.
     assert by_symbol['pkg.mod.orphan'].rule_id == 'SKY-U001'
     assert by_symbol['pkg.mod.Greeter.farewell'].rule_id == 'SKY-U001'
-    assert by_symbol['pkg.mod.os'].rule_id == 'SKY-U002'
+    assert by_symbol['os'].rule_id == 'SKY-U002'
     assert by_symbol['pkg.consts.LEGACY_LIMIT'].rule_id == 'SKY-U003'
     assert by_symbol['pkg.shapes.Hexagon'].rule_id == 'SKY-U004'
     assert by_symbol['pkg.mod.orphan.flag'].rule_id == 'SKY-U006'

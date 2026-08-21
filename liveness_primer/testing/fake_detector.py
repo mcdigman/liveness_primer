@@ -20,9 +20,13 @@ from pathlib import Path
 from typing import Literal
 
 from liveness_primer.filesystem import atomic_write_text
-from liveness_primer.tools.skylos import BUCKET_RULE_IDS, DIAGNOSTIC_KINDS
+from liveness_primer.tools.skylos import DEAD_CODE_KEYS, DIAGNOSTIC_KINDS
 
 FakeFormat = Literal['vulture', 'skylos']
+
+# File suffixes real skylos reports as SKY-E003 (unused TypeScript or
+# JavaScript file); every other unused-file path is an empty-file SKY-E002.
+_TYPESCRIPT_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx')
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +49,10 @@ class FakeFinding:
         Skylos array the finding lands in (skylos format only); diagnostic
         buckets and ``unused_files`` emit their respective entry shapes.
     rule_id : str | None
-        Explicit detector rule ID (skylos format only).
+        Explicit detector rule ID (skylos format only). ``unused_files``
+        entries always carry one: when unscripted it is inferred from the
+        path suffix (SKY-E003 for TypeScript/JavaScript, SKY-E002
+        otherwise), because the adapter rejects a rule-less entry.
     severity : str | None
         Severity label (skylos diagnostic or unused-file buckets only).
     message : str | None
@@ -83,13 +90,18 @@ class FakeFinding:
             present only when scripted.
         """
         if self.bucket == 'unused_files':
+            # Every supported skylos revision stamps the rule ID explicitly
+            # on unused-file entries (the adapter rejects an entry without
+            # one), so an unscripted ID is inferred the way real skylos
+            # assigns the rules: SKY-E003 for a TypeScript/JavaScript file,
+            # SKY-E002 for an empty file otherwise.
+            inferred = 'SKY-E003' if self.path.endswith(_TYPESCRIPT_SUFFIXES) else 'SKY-E002'
             unused_file: dict[str, object] = {
+                'rule_id': self.rule_id if self.rule_id is not None else inferred,
                 'message': self.message if self.message is not None else f"Unused file '{self.path}'",
                 'file': self.path,
                 'line': self.line,
             }
-            if self.rule_id is not None:
-                unused_file['rule_id'] = self.rule_id
             if self.severity is not None:
                 unused_file['severity'] = self.severity
             return unused_file
@@ -277,7 +289,7 @@ def _emit_skylos(findings: Sequence[FakeFinding]) -> int:
     int
         The default skylos exit code: 0.
     """
-    document: dict[str, list[dict[str, object]]] = {key: [] for key in BUCKET_RULE_IDS}
+    document: dict[str, list[dict[str, object]]] = {key: [] for key in DEAD_CODE_KEYS}
     for finding in findings:
         document.setdefault(finding.bucket, []).append(finding.skylos_entry())
     sys.stdout.write(json.dumps(document, indent=2) + '\n')

@@ -24,8 +24,10 @@ from liveness_primer.tools.base import (
     normalize_finding_path,
 )
 
-# Dead-code finding arrays in the skylos JSON document
-_DEAD_CODE_KEYS = (
+# Dead-code finding arrays in the skylos JSON document; the complete
+# always-ingested bucket list, public so the fake detector emits the same
+# document shape as a real skylos run.
+DEAD_CODE_KEYS = (
     'unused_functions',
     'unused_imports',
     'unused_classes',
@@ -67,12 +69,15 @@ _NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
 # the pass cannot on its own starve the rest of the run.
 _GREP_BUDGET_SECONDS = '150'
 
-# Documented, versioned mapping from each ingested skylos structured output
-# bucket to its canonical rule ID (reporting contract §3.1). A rule ID
-# explicitly present on the detector finding takes precedence; a rule ID is
-# never inferred from free-form message text. If a supported skylos revision
-# changes the documented mapping, this table must be updated rather than
-# silently retaining a stale code.
+# Documented, versioned mapping from each ingested single-rule skylos
+# symbol bucket to its canonical rule ID (reporting contract §3.1). A rule
+# ID explicitly present on the detector finding takes precedence; a rule ID
+# is never inferred from free-form message text. The multi-rule
+# ``unused_files`` bucket is deliberately absent: it has no canonical
+# bucket-level code, so its entries must carry their explicit rule IDs
+# (see ``_SkylosUnusedFileEntry``). If a supported skylos revision changes
+# the documented mapping, this table must be updated rather than silently
+# retaining a stale code.
 BUCKET_RULE_IDS = {
     'unused_functions': 'SKY-U001',
     'unused_imports': 'SKY-U002',
@@ -239,7 +244,7 @@ class SkylosAdapter:
         if not isinstance(document, dict):
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
-        result_keys = (*_DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected))
+        result_keys = (*DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected))
         findings: list[Finding] = []
         for key in result_keys:
             bucket = document.get(key, [])
