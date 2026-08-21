@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Report and manifest payloads carry their own `schema_version`, versioned
 independently of the package version; `liveness-primer --version` prints both.
 
-## [Unreleased]
+## [0.1.1] - 2026-08-21
 
 ### Added
 
@@ -16,8 +16,8 @@ independently of the package version; `liveness-primer --version` prints both.
   consider projects their `include_tools` omits, so a one-off comparison needs no
   corpus edit. `--max-cost` still selects a project only if it declares a cost for
   the tool being run.
-- **Corpus Entires** - For vulture target, added xarray, meltano-sdk, fluids, todo,
-  copyparty, elementary, beartype, strawberry, scrapy, and bokeh.
+- **Vulture corpus** — Add xarray, meltano-sdk, fluids, todo, copyparty,
+  elementary, beartype, strawberry, scrapy, and bokeh.
 
 ### Changed
 
