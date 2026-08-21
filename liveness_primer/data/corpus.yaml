@@ -286,3 +286,58 @@ projects:
           - copyparty
           - bin/hooks
         cost: 2.0
+
+  # pydantic consumer, real secrets and danger
+  - name: elementary
+    repo: https://github.com/elementary-data/elementary
+    license: Apache-2.0
+    pin: a2000b045a3a9aed385cb27c0d7a1c71d667702b
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        cost: 1.0
+
+  # runtime-generated decorator wrappers
+  - name: beartype
+    repo: https://github.com/beartype/beartype
+    license: MIT
+    pin: d6c056225f2e5632ea72006b43ffb066bd9a2c6b
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        cost: 1.0
+
+  # Decorator and annotation-defined GraphQL schemas
+  - name: strawberry
+    repo: https://github.com/strawberry-graphql/strawberry
+    license: MIT
+    pin: 53008d932ecb2b13d0fb8d8e55395b61e3fcd284
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        cost: 2.0
+
+  # settings-discovered components, signal handlers, middleware
+  - name: scrapy
+    repo: https://github.com/scrapy/scrapy
+    license: BSD-3-Clause
+    pin: da7c2fc59e286e796d0f8cfe01d4363d6fa3729f
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        cost: 2.0
+
+  # Paired Python model code and Typescript implementation
+  - name: bokeh
+    repo: https://github.com/bokeh/bokeh
+    license: BSD-3-Clause
+    pin: 033fed0b7b1b85a544099400648c68ead33c9f17
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        cost: 3.0
