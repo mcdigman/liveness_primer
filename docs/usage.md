@@ -50,7 +50,10 @@ Every run requires exactly one target-selection mode:
 
 Repeated `-k` options are combined into one selection. Do not combine that
 mode with `--all` or `--max-cost`, and do not combine `--project` with any
-corpus selector.
+corpus selector. With `--all` or `--max-cost`, add `--ignore-include-tools`
+to also consider projects omitted by `include_tools`; `exclude_tools` still
+prevents a tool from running. Budgeted selection continues to skip projects
+without a declared cost for that tool.
 
 ## Interpret the result
 

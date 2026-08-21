@@ -550,6 +550,7 @@ def select_projects(
     keywords: Sequence[str] = (),
     select_all: bool = False,
     max_cost: float | None = None,
+    ignore_include_tools: bool = False,
 ) -> tuple[CorpusProject, ...]:
     """Select corpus projects for a run (contract §5).
 
@@ -571,6 +572,9 @@ def select_projects(
         Select every applicable project (``--all``).
     max_cost : float | None
         Cost budget in CPU-seconds (``--max-cost``).
+    ignore_include_tools : bool
+        Include projects omitted by ``include_tools`` with ``--all`` or
+        ``--max-cost``; ``exclude_tools`` remains effective.
 
     Returns
     -------
@@ -586,15 +590,15 @@ def select_projects(
     if active != 1:
         msg = 'exactly one of -k, --all, or --max-cost must be given'
         raise CorpusConfigError(msg)
-    applicable = [project for project in corpus.projects if project.supports_tool(tool)]
+    if ignore_include_tools and keywords:
+        msg = '--ignore-include-tools does not apply to -k, which already ignores include_tools'
+        raise CorpusConfigError(msg)
+    eligible = [project for project in corpus.projects if tool not in project.exclude_tools]
+    applicable = eligible if ignore_include_tools else [project for project in eligible if project.supports_tool(tool)]
     if select_all:
         selected = applicable
     elif keywords:
-        selected = [
-            project
-            for project in corpus.projects
-            if tool not in project.exclude_tools and any(keyword in project.name for keyword in keywords)
-        ]
+        selected = [project for project in eligible if any(keyword in project.name for keyword in keywords)]
     else:
         selected = _select_by_cost(applicable, tool=tool, max_cost=max_cost if max_cost is not None else 0.0)
     if not selected:

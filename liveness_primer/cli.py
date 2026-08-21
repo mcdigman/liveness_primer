@@ -179,6 +179,11 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     run_parser.add_argument('--all', dest='select_all', action='store_true', help='select every applicable project')
     run_parser.add_argument('--max-cost', type=_positive_float, help='greedy selection budget in CPU-seconds')
     run_parser.add_argument(
+        '--ignore-include-tools',
+        action='store_true',
+        help='consider projects omitted by include_tools with --all or --max-cost',
+    )
+    run_parser.add_argument(
         '--corpus', type=Path, default=default_corpus_path(), help='corpus YAML file (default: the packaged corpus)'
     )
     run_parser.add_argument('--project', dest='project_url', help='ad-hoc mode: single target repository URL')
@@ -427,8 +432,8 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
     """
     analyses = _resolve_analyses(args)
     if args.project_url is not None:
-        if args.keywords or args.select_all or args.max_cost is not None:
-            msg = '--project (ad-hoc mode) does not take -k/--all/--max-cost'
+        if args.keywords or args.select_all or args.max_cost is not None or args.ignore_include_tools:
+            msg = '--project (ad-hoc mode) does not take corpus selection options'
             raise RunnerError(msg)
         return (ad_hoc_project(args.project_url, tool=args.tool, analyses=analyses if analyses is not None else ()),)
     corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
@@ -438,6 +443,7 @@ def _select_run_projects(args: argparse.Namespace) -> tuple[CorpusProject, ...]:
         keywords=tuple(args.keywords),
         select_all=args.select_all,
         max_cost=args.max_cost,
+        ignore_include_tools=args.ignore_include_tools,
     )
     if analyses is None:
         return selected

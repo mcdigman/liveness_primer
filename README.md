@@ -74,6 +74,10 @@ Project selection is explicit:
 - `--project URL` compares against one ad-hoc target repository instead of the
   packaged corpus.
 
+With `--all` or `--max-cost`, `--ignore-include-tools` also considers projects
+omitted by `include_tools`. An `exclude_tools` entry still prevents the tool
+from running, and budgeted selection skips projects without a declared cost.
+
 ### Reading the result
 
 | Result | Meaning | What to investigate |
