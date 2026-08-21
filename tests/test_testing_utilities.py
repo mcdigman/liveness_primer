@@ -278,6 +278,13 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
                 kind='file',
                 bucket='unused_files',
             ),
+            FakeFinding(
+                path='dead.mjs',
+                line=1,
+                symbol='dead.mjs',
+                kind='file',
+                bucket='unused_files',
+            ),
         ],
         output_format='skylos',
     )
@@ -291,7 +298,9 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
     (variable_entry,) = document['unused_variables']
     assert 'rule_id' not in variable_entry
     assert variable_entry['name'] == 'y'
-    unused_file_entry, defaulted_python_entry, defaulted_typescript_entry = document['unused_files']
+    unused_file_entry, defaulted_python_entry, defaulted_typescript_entry, defaulted_module_entry = document[
+        'unused_files'
+    ]
     assert unused_file_entry == {
         'rule_id': 'SKY-E003',
         'message': 'Unused TypeScript/JavaScript file',
@@ -312,6 +321,14 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
         'rule_id': 'SKY-E003',
         'message': "Unused file 'dead.ts'",
         'file': 'dead.ts',
+        'line': 1,
+    }
+    # Real skylos also reports the .mts/.cts/.mjs/.cjs module variants as
+    # SKY-E003; the inference must not stamp them SKY-E002.
+    assert defaulted_module_entry == {
+        'rule_id': 'SKY-E003',
+        'message': "Unused file 'dead.mjs'",
+        'file': 'dead.mjs',
         'line': 1,
     }
 

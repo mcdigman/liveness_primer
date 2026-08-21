@@ -25,8 +25,10 @@ from liveness_primer.tools.skylos import DEAD_CODE_KEYS, DIAGNOSTIC_KINDS
 FakeFormat = Literal['vulture', 'skylos']
 
 # File suffixes real skylos reports as SKY-E003 (unused TypeScript or
-# JavaScript file); every other unused-file path is an empty-file SKY-E002.
-_TYPESCRIPT_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx')
+# JavaScript file), matching its own TS/JS extension list including the
+# .mts/.cts/.mjs/.cjs module variants; every other unused-file path is an
+# empty-file SKY-E002.
+_TYPESCRIPT_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs')
 
 
 @dataclass(frozen=True, slots=True)
