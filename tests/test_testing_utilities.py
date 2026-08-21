@@ -278,13 +278,6 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
                 kind='file',
                 bucket='unused_files',
             ),
-            FakeFinding(
-                path='dead.mjs',
-                line=1,
-                symbol='dead.mjs',
-                kind='file',
-                bucket='unused_files',
-            ),
         ],
         output_format='skylos',
     )
@@ -298,9 +291,7 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
     (variable_entry,) = document['unused_variables']
     assert 'rule_id' not in variable_entry
     assert variable_entry['name'] == 'y'
-    unused_file_entry, defaulted_python_entry, defaulted_typescript_entry, defaulted_module_entry = document[
-        'unused_files'
-    ]
+    unused_file_entry, defaulted_python_entry, defaulted_typescript_entry = document['unused_files']
     assert unused_file_entry == {
         'rule_id': 'SKY-E003',
         'message': 'Unused TypeScript/JavaScript file',
@@ -323,14 +314,14 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
         'file': 'dead.ts',
         'line': 1,
     }
-    # Real skylos also reports the .mts/.cts/.mjs/.cjs module variants as
-    # SKY-E003; the inference must not stamp them SKY-E002.
-    assert defaulted_module_entry == {
-        'rule_id': 'SKY-E003',
-        'message': "Unused file 'dead.mjs'",
-        'file': 'dead.mjs',
-        'line': 1,
-    }
+
+
+@pytest.mark.parametrize('suffix', ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'])
+def test_fake_skylos_infers_e003_for_every_typescript_javascript_suffix(suffix: str) -> None:
+    """Infer the real Skylos unused-file rule for every TS/JS suffix."""
+    path = f'dead{suffix}'
+    entry = FakeFinding(path=path, line=1, symbol=path, kind='file', bucket='unused_files').skylos_entry()
+    assert entry['rule_id'] == 'SKY-E003'
 
 
 def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
