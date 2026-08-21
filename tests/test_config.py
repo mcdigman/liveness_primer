@@ -398,6 +398,17 @@ def test_select_by_keyword_substring_union() -> None:
     assert names == ['cheap', 'uncosted']
 
 
+def test_select_by_keyword_overrides_include_tools_but_not_exclude_tools() -> None:
+    corpus = Corpus(
+        projects=(
+            project('included', include_tools=('skylos',)),
+            project('excluded', include_tools=('skylos',), exclude_tools=('vulture',)),
+        )
+    )
+    names = [entry.name for entry in select_projects(corpus, tool='vulture', keywords=('ed',))]
+    assert names == ['included']
+
+
 def test_select_by_keyword_no_match_raises() -> None:
     with pytest.raises(CorpusConfigError, match='no corpus project matches'):
         select_projects(corpus_for_selection(), tool='vulture', keywords=('nomatch',))

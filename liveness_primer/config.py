@@ -563,7 +563,8 @@ def select_projects(
     corpus : Corpus
         The validated corpus.
     tool : str
-        Adapter name the run targets; projects not supporting it are skipped.
+        Adapter name the run targets; ``-k`` may select a project omitted by
+        ``include_tools``, but never one that excludes the tool.
     keywords : Sequence[str]
         Substring selectors (``-k``), unioned.
     select_all : bool
@@ -589,7 +590,11 @@ def select_projects(
     if select_all:
         selected = applicable
     elif keywords:
-        selected = [project for project in applicable if any(keyword in project.name for keyword in keywords)]
+        selected = [
+            project
+            for project in corpus.projects
+            if tool not in project.exclude_tools and any(keyword in project.name for keyword in keywords)
+        ]
     else:
         selected = _select_by_cost(applicable, tool=tool, max_cost=max_cost if max_cost is not None else 0.0)
     if not selected:
