@@ -42,14 +42,14 @@ class FakeFinding:
     confidence : int
         Confidence percentage.
     bucket : str
-        Skylos array the finding lands in (skylos format only); the
-        diagnostic buckets emit the diagnostic entry shape.
+        Skylos array the finding lands in (skylos format only); diagnostic
+        buckets and ``unused_files`` emit their respective entry shapes.
     rule_id : str | None
         Explicit detector rule ID (skylos format only).
     severity : str | None
-        Severity label (skylos diagnostic buckets only).
+        Severity label (skylos diagnostic or unused-file buckets only).
     message : str | None
-        Message override (skylos diagnostic buckets only).
+        Message override (skylos diagnostic or unused-file buckets only).
     """
 
     path: str
@@ -78,10 +78,21 @@ class FakeFinding:
         Returns
         -------
         dict[str, object]
-            The dead-code entry shape, or the diagnostic shape for the
-            diagnostic buckets; optional fields are present only when
-            scripted.
+            The symbol-level dead-code entry shape, or the dedicated shape
+            for diagnostic and unused-file buckets; optional fields are
+            present only when scripted.
         """
+        if self.bucket == 'unused_files':
+            unused_file: dict[str, object] = {
+                'message': self.message if self.message is not None else f"Unused file '{self.path}'",
+                'file': self.path,
+                'line': self.line,
+            }
+            if self.rule_id is not None:
+                unused_file['rule_id'] = self.rule_id
+            if self.severity is not None:
+                unused_file['severity'] = self.severity
+            return unused_file
         if self.bucket in DIAGNOSTIC_KINDS:
             diagnostic: dict[str, object] = {
                 'message': self.message if self.message is not None else f"dangerous use of '{self.symbol}'",

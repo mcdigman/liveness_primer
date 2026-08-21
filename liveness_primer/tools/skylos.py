@@ -25,7 +25,14 @@ from liveness_primer.tools.base import (
 )
 
 # Dead-code finding arrays in the skylos JSON document
-_DEAD_CODE_KEYS = ('unused_functions', 'unused_imports', 'unused_classes', 'unused_variables', 'unused_parameters')
+_DEAD_CODE_KEYS = (
+    'unused_functions',
+    'unused_imports',
+    'unused_classes',
+    'unused_variables',
+    'unused_parameters',
+    'unused_files',
+)
 
 # Diagnostic arrays, each emitted only under its opt-in analysis flag,
 # mapped to the normalized kind stamped onto its findings. Entries carry a
@@ -72,6 +79,7 @@ BUCKET_RULE_IDS = {
     'unused_variables': 'SKY-U003',
     'unused_classes': 'SKY-U004',
     'unused_parameters': 'SKY-U006',
+    'unused_files': 'SKY-E002',
 }
 
 
@@ -105,6 +113,18 @@ class _SkylosDiagnosticEntry(BaseModel):
     line: int
     symbol: str | None = None
     name: str | None = None
+
+
+class _SkylosUnusedFileEntry(BaseModel):
+    """One unused-file entry from a skylos JSON array (untrusted input)."""
+
+    model_config = ConfigDict(frozen=True, extra='ignore')
+
+    rule_id: str | None = None
+    severity: str | None = None
+    message: str
+    file: str
+    line: int
 
 
 class SkylosAdapter:
@@ -219,7 +239,12 @@ class SkylosAdapter:
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
                 raise AdapterError(msg)
-            parse_entry = _parse_diagnostic_entry if key in DIAGNOSTIC_KINDS else _parse_entry
+            if key == 'unused_files':
+                parse_entry = _parse_unused_file_entry
+            elif key in DIAGNOSTIC_KINDS:
+                parse_entry = _parse_diagnostic_entry
+            else:
+                parse_entry = _parse_entry
             findings.extend(parse_entry(raw, key=key, project=project, root=root) for raw in bucket)
         if output.returncode not in SkylosAdapter.success_exit_codes and not findings:
             msg = 'failed skylos output has no findings in recognized result buckets'
@@ -269,6 +294,51 @@ def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
         confidence=entry.confidence,
         # An explicit detector rule ID wins; the documented bucket mapping
         # is the fallback (reporting contract §3.1).
+        rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS.get(key),
+        raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
+    )
+
+
+def _parse_unused_file_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
+    """Convert one unused-file entry into a finding.
+
+    Parameters
+    ----------
+    raw : object
+        Untrusted JSON entry.
+    key : str
+        Array name the entry came from, for error context.
+    project : str
+        Corpus project name to stamp onto the finding.
+    root : Path
+        Checkout directory skylos analyzed.
+
+    Returns
+    -------
+    Finding
+        The normalized file-level finding.
+
+    Raises
+    ------
+    AdapterError
+        If the entry does not carry the guaranteed skylos fields.
+    """
+    try:
+        entry = _SkylosUnusedFileEntry.model_validate(raw)
+    except ValidationError as exc:
+        msg = f'malformed skylos entry in {key!r}: {exc}'
+        raise AdapterError(msg) from exc
+    line = max(entry.line, 1)
+    return Finding(
+        tool=SkylosAdapter.name,
+        project=project,
+        path=normalize_finding_path(entry.file, root),
+        symbol=None,
+        kind='file',
+        message=entry.message,
+        start_line=line,
+        end_line=line,
+        severity=entry.severity,
         rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS.get(key),
         raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
     )

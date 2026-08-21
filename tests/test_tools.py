@@ -222,6 +222,51 @@ def test_skylos_explicit_rule_id_takes_precedence_over_bucket_mapping() -> None:
     assert mapped.rule_id == 'SKY-U001'
 
 
+def test_skylos_ingests_unused_files() -> None:
+    document = {
+        'unused_files': [
+            {
+                'rule_id': 'SKY-E003',
+                'message': 'Unused TypeScript/JavaScript file (not imported by any other file)',
+                'file': '/checkout/pkg/orphan.ts',
+                'line': 1,
+                'severity': 'low',
+                'category': 'DEAD_CODE',
+            },
+            {
+                'message': 'Empty Python file',
+                'file': 'pkg/zero.py',
+                'line': 0,
+            },
+        ]
+    }
+
+    findings = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+
+    assert len(findings) == 2
+    explicit, mapped = findings
+    assert explicit.path == 'pkg/orphan.ts'
+    assert explicit.symbol is None
+    assert explicit.kind == 'file'
+    assert explicit.message == 'Unused TypeScript/JavaScript file (not imported by any other file)'
+    assert explicit.start_line == explicit.end_line == 1
+    assert explicit.confidence is None
+    assert explicit.severity == 'LOW'
+    assert explicit.rule_id == 'SKY-E003'
+    assert explicit.raw_excerpt is not None
+    assert 'category' not in json.loads(explicit.raw_excerpt)
+    assert mapped.path == 'pkg/zero.py'
+    assert mapped.start_line == mapped.end_line == 1
+    assert mapped.severity is None
+    assert mapped.rule_id == 'SKY-E002'
+
+
+def test_skylos_rejects_malformed_unused_file_entries() -> None:
+    document = {'unused_files': [{'file': 'empty.py', 'line': 1}]}
+    with pytest.raises(AdapterError, match="malformed skylos entry in 'unused_files'"):
+        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+
+
 @pytest.mark.parametrize(
     'document',
     [

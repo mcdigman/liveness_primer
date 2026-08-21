@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Report and manifest payloads carry their own `schema_version`, versioned
 independently of the package version; `liveness-primer --version` prints both.
 
+## [Unreleased]
+
+### Fixed
+
+- The Skylos adapter now ingests `unused_files` (`SKY-E002` and `SKY-E003`)
+  findings instead of silently omitting file-level dead-code changes from
+  comparisons.
+
 ## [0.1.0] - 2026-08-14
 
 This is the first release version of `liveness_primer`, so everything is new.

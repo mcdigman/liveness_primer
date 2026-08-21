@@ -254,6 +254,23 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
         [
             FakeFinding(path='a.py', line=1, symbol='x', kind='function', rule_id='SKY-U777'),
             FakeFinding(path='a.py', line=2, symbol='y', kind='variable', bucket='unused_variables'),
+            FakeFinding(
+                path='orphan.ts',
+                line=3,
+                symbol='orphan.ts',
+                kind='file',
+                bucket='unused_files',
+                rule_id='SKY-E003',
+                severity='LOW',
+                message='Unused TypeScript/JavaScript file',
+            ),
+            FakeFinding(
+                path='empty.py',
+                line=1,
+                symbol='empty.py',
+                kind='file',
+                bucket='unused_files',
+            ),
         ],
         output_format='skylos',
     )
@@ -267,6 +284,19 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
     (variable_entry,) = document['unused_variables']
     assert 'rule_id' not in variable_entry
     assert variable_entry['name'] == 'y'
+    unused_file_entry, defaulted_unused_file_entry = document['unused_files']
+    assert unused_file_entry == {
+        'message': 'Unused TypeScript/JavaScript file',
+        'file': 'orphan.ts',
+        'line': 3,
+        'rule_id': 'SKY-E003',
+        'severity': 'LOW',
+    }
+    assert defaulted_unused_file_entry == {
+        'message': "Unused file 'empty.py'",
+        'file': 'empty.py',
+        'line': 1,
+    }
 
 
 def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

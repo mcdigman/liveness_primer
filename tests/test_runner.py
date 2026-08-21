@@ -758,6 +758,44 @@ def test_fake_skylos_rule_change_splits_into_dropped_plus_new(tmp_path: Path, co
     assert report.rollups == project_report.rollups
 
 
+def test_fake_skylos_unused_file_end_to_end(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    head_cmd = write_fake_detector_script(
+        tmp_path / 'sky-head.json',
+        [
+            FakeFinding(
+                path='pkg/mod.py',
+                line=1,
+                symbol='pkg/mod.py',
+                kind='file',
+                bucket='unused_files',
+                rule_id='SKY-E002',
+                severity='LOW',
+                message='Empty Python file (no code, or docstring-only)',
+            )
+        ],
+        output_format='skylos',
+    )
+    base_cmd = write_fake_detector_script(tmp_path / 'sky-base.json', [], output_format='skylos')
+
+    report = skylos_runner(tmp_path).run_escape_hatch(
+        [corpus_project],
+        base_cmd=base_cmd,
+        head_cmd=head_cmd,
+    )
+
+    (project_report,) = report.projects
+    assert project_report.errors == ()
+    assert project_report.totals == DiffTotals(new=1)
+    (diff,) = project_report.diffs
+    assert diff.path == 'pkg/mod.py'
+    assert diff.symbol is None
+    assert diff.kind == 'file'
+    assert diff.head_occurrence is not None
+    assert diff.head_occurrence.message == 'Empty Python file (no code, or docstring-only)'
+    assert diff.head_occurrence.rule_id == 'SKY-E002'
+    assert diff.head_occurrence.severity == 'LOW'
+
+
 def test_fake_skylos_danger_severity_change_end_to_end(tmp_path: Path, corpus_project: CorpusProject) -> None:
     # Reporting acceptance 32, end to end through the skylos adapter's
     # danger ingestion: a severity change pairs as one `changed` diff, and
