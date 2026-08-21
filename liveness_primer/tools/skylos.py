@@ -79,7 +79,6 @@ BUCKET_RULE_IDS = {
     'unused_variables': 'SKY-U003',
     'unused_classes': 'SKY-U004',
     'unused_parameters': 'SKY-U006',
-    'unused_files': 'SKY-E002',
 }
 
 
@@ -116,11 +115,19 @@ class _SkylosDiagnosticEntry(BaseModel):
 
 
 class _SkylosUnusedFileEntry(BaseModel):
-    """One unused-file entry from a skylos JSON array (untrusted input)."""
+    """One unused-file entry from a skylos JSON array (untrusted input).
+
+    ``unused_files`` is a multi-rule bucket (``SKY-E002`` empty file,
+    ``SKY-E003`` unused TypeScript/JavaScript file) and every supported
+    skylos revision stamps the rule ID explicitly on each entry, so
+    ``rule_id`` is a guaranteed field: no bucket fallback exists, and
+    defaulting one rule's code onto the other's entries would corrupt the
+    finding identity (reporting contract §3.1).
+    """
 
     model_config = ConfigDict(frozen=True, extra='ignore')
 
-    rule_id: str | None = None
+    rule_id: str
     severity: str | None = None
     message: str
     file: str
@@ -339,7 +346,7 @@ def _parse_unused_file_entry(raw: object, *, key: str, project: str, root: Path)
         start_line=line,
         end_line=line,
         severity=entry.severity,
-        rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS.get(key),
+        rule_id=entry.rule_id,
         raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
     )
 

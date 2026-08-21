@@ -14,7 +14,14 @@ independently of the package version; `liveness-primer --version` prints both.
 
 - The Skylos adapter now ingests `unused_files` (`SKY-E002` and `SKY-E003`)
   findings instead of silently omitting file-level dead-code changes from
-  comparisons.
+  comparisons. The bucket is multi-rule and every supported Skylos revision
+  stamps each entry's rule ID explicitly, so the adapter requires the
+  explicit `rule_id` rather than defaulting one rule's code onto the
+  other's entries.
+- A file-level finding on a file with zero source lines (e.g. `SKY-E002`)
+  is intentionally source-less: it no longer spends the bounded
+  source-warning budget on the expected emptiness, keeping the budget for
+  genuine source anomalies.
 
 ## [0.1.0] - 2026-08-14
 

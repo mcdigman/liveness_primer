@@ -184,8 +184,8 @@ def test_vulture_symbols_may_contain_quotes() -> None:
 def test_skylos_parses_recorded_fixture() -> None:
     output = raw((FIXTURES / 'skylos_output.json').read_text(encoding='utf-8'))
     findings = SkylosAdapter.parse(output, project='demo', root=ROOT)
-    assert len(findings) == 6
-    by_symbol = {finding.symbol: finding for finding in findings}
+    assert len(findings) == 8
+    by_symbol = {finding.symbol: finding for finding in findings if finding.symbol is not None}
     assert by_symbol['pkg.mod.orphan'].kind == 'function'
     assert by_symbol['pkg.mod.orphan'].confidence == 100
     assert by_symbol['pkg.mod.orphan'].message == "unused function 'orphan'"
@@ -206,6 +206,15 @@ def test_skylos_parses_recorded_fixture() -> None:
     assert by_symbol['pkg.consts.LEGACY_LIMIT'].rule_id == 'SKY-U003'
     assert by_symbol['pkg.shapes.Hexagon'].rule_id == 'SKY-U004'
     assert by_symbol['pkg.mod.orphan.flag'].rule_id == 'SKY-U006'
+    # Reporting contract §3.1: `unused_files` is a multi-rule bucket whose
+    # entries carry their explicit rule IDs; there is no bucket fallback.
+    by_path = {finding.path: finding for finding in findings if finding.kind == 'file'}
+    assert by_path['pkg/blank.py'].rule_id == 'SKY-E002'
+    assert by_path['pkg/blank.py'].symbol is None
+    assert by_path['pkg/blank.py'].severity == 'LOW'
+    assert by_path['pkg/blank.py'].start_line == 1
+    assert by_path['pkg/orphan.ts'].rule_id == 'SKY-E003'
+    assert by_path['pkg/orphan.ts'].message == 'Unused TypeScript/JavaScript file (not imported by any other file)'
 
 
 def test_skylos_explicit_rule_id_takes_precedence_over_bucket_mapping() -> None:
@@ -234,7 +243,8 @@ def test_skylos_ingests_unused_files() -> None:
                 'category': 'DEAD_CODE',
             },
             {
-                'message': 'Empty Python file',
+                'rule_id': 'SKY-E002',
+                'message': 'Empty Python file (no code, or docstring-only)',
                 'file': 'pkg/zero.py',
                 'line': 0,
             },
@@ -244,25 +254,36 @@ def test_skylos_ingests_unused_files() -> None:
     findings = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
 
     assert len(findings) == 2
-    explicit, mapped = findings
-    assert explicit.path == 'pkg/orphan.ts'
-    assert explicit.symbol is None
-    assert explicit.kind == 'file'
-    assert explicit.message == 'Unused TypeScript/JavaScript file (not imported by any other file)'
-    assert explicit.start_line == explicit.end_line == 1
-    assert explicit.confidence is None
-    assert explicit.severity == 'LOW'
-    assert explicit.rule_id == 'SKY-E003'
-    assert explicit.raw_excerpt is not None
-    assert 'category' not in json.loads(explicit.raw_excerpt)
-    assert mapped.path == 'pkg/zero.py'
-    assert mapped.start_line == mapped.end_line == 1
-    assert mapped.severity is None
-    assert mapped.rule_id == 'SKY-E002'
+    typescript, python = findings
+    assert typescript.path == 'pkg/orphan.ts'
+    assert typescript.symbol is None
+    assert typescript.kind == 'file'
+    assert typescript.message == 'Unused TypeScript/JavaScript file (not imported by any other file)'
+    assert typescript.start_line == typescript.end_line == 1
+    assert typescript.confidence is None
+    assert typescript.severity == 'LOW'
+    assert typescript.rule_id == 'SKY-E003'
+    assert typescript.raw_excerpt is not None
+    assert 'category' not in json.loads(typescript.raw_excerpt)
+    assert python.path == 'pkg/zero.py'
+    assert python.start_line == python.end_line == 1
+    assert python.severity is None
+    assert python.rule_id == 'SKY-E002'
 
 
-def test_skylos_rejects_malformed_unused_file_entries() -> None:
-    document = {'unused_files': [{'file': 'empty.py', 'line': 1}]}
+@pytest.mark.parametrize(
+    'entry',
+    [
+        # Guaranteed fields missing outright.
+        {'file': 'empty.py', 'line': 1},
+        # An entry without its explicit rule ID is malformed: `unused_files`
+        # is a multi-rule bucket with no fallback (reporting contract §3.1),
+        # so a defaulted code would corrupt the finding identity.
+        {'message': 'Empty Python file (no code, or docstring-only)', 'file': 'empty.py', 'line': 1},
+    ],
+)
+def test_skylos_rejects_malformed_unused_file_entries(entry: dict[str, object]) -> None:
+    document = {'unused_files': [entry]}
     with pytest.raises(AdapterError, match="malformed skylos entry in 'unused_files'"):
         SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
 

@@ -91,6 +91,13 @@ The Skylos JSON buckets currently ingested by `liveness_primer` map as follows:
 | `unused_classes` | `SKY-U004` | unused class or type |
 | `unused_parameters` | `SKY-U006` | unused parameter |
 
+The `unused_files` bucket is also ingested but has no bucket fallback: it is a multi-rule
+bucket whose entries every supported Skylos revision stamps with an explicit `rule_id`
+(`SKY-E002` for an empty or docstring-only Python file, `SKY-E003` for a TypeScript or
+JavaScript file no other file imports). The adapter must require the explicit `rule_id` on
+each `unused_files` entry and reject an entry without one as malformed; defaulting one
+rule's code onto the other's entries would corrupt the finding identity.
+
 The mapping is adapter normalization and must be covered by recorded-output tests. If a
 supported Skylos revision changes the documented mapping, the adapter must be updated rather
 than silently retaining a stale code.
@@ -206,9 +213,13 @@ occurrence:
 - context beyond the `N`-line evidence budget was never requested and is not counted as
   omitted;
 - a point finding near end-of-file has `omitted_lines = 0` when fewer than `N` source lines
-  exist; and
+  exist;
 - missing, unreadable, non-regular, or out-of-range source produces no excerpt and a bounded
-  report warning rather than fabricated text.
+  report warning rather than fabricated text; and
+- a file-level finding (kind `file`) on a file with zero source lines produces no excerpt and
+  no warning: the emptiness is the reported condition itself (e.g. Skylos `SKY-E002`), so the
+  occurrence is intentionally source-less and must not spend the warning budget that exists
+  to surface genuine source anomalies.
 
 Source evidence is derived review context. It must not participate in finding identity, the
 canonical occurrence key, or changed-field classification. The corpus is identical across

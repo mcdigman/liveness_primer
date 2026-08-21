@@ -32,6 +32,24 @@
       "type": "class"
     }
   ],
+  "unused_files": [
+    {
+      "category": "DEAD_CODE",
+      "file": "pkg/blank.py",
+      "line": 1,
+      "message": "Empty Python file (no code, or docstring-only)",
+      "rule_id": "SKY-E002",
+      "severity": "LOW"
+    },
+    {
+      "category": "DEAD_CODE",
+      "file": "pkg/orphan.ts",
+      "line": 1,
+      "message": "Unused TypeScript/JavaScript file (not imported by any other file)",
+      "rule_id": "SKY-E003",
+      "severity": "LOW"
+    }
+  ],
   "unused_functions": [
     {
       "basename": "mod.py",

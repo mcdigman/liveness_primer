@@ -149,6 +149,66 @@ def test_collect_out_of_range_line_warns_per_location(tmp_path: Path) -> None:
     assert warning == 'pkg/mod.py:L99: reported line 99 is beyond the end of the file (20 line(s))'
 
 
+def test_collect_file_level_finding_on_zero_line_file_is_source_less(tmp_path: Path) -> None:
+    # Reporting §3.3: a file-level finding on a file with zero source lines
+    # (e.g. skylos SKY-E002) reports the emptiness itself. It is
+    # intentionally source-less, so it neither fabricates an excerpt nor
+    # spends the warning budget that exists for genuine source anomalies.
+    checkout = write_checkout(tmp_path)
+    atomic_write_text(checkout / 'pkg' / 'blank.py', '')
+    empty = diff(
+        DiffClass.NEW,
+        None,
+        path='pkg/blank.py',
+        kind='file',
+        head=occurrence(1, 'Empty Python file (no code, or docstring-only)', rule_id='SKY-E002'),
+    )
+    missing = diff(DiffClass.NEW, 'a', path='pkg/gone.py', head=occurrence(1, 'm'))
+    (enriched_empty, enriched_missing), warnings = collect_source_evidence(
+        (empty, missing), checkout=checkout, excerpt_lines=2
+    )
+    assert enriched_empty.head_occurrence is not None
+    assert enriched_empty.head_occurrence.source_excerpt is None
+    # The budget still surfaces the unrelated anomaly.
+    (warning,) = warnings
+    assert warning.startswith('pkg/gone.py: ')
+    assert enriched_missing.head_occurrence is not None
+    assert enriched_missing.head_occurrence.source_excerpt is None
+
+
+def test_collect_file_level_finding_on_nonempty_file_gets_evidence(tmp_path: Path) -> None:
+    # A docstring-only file also triggers SKY-E002 but has source lines:
+    # ordinary excerpt extraction applies.
+    checkout = write_checkout(tmp_path)
+    atomic_write_text(checkout / 'pkg' / 'doc.py', '"""Docstring only."""\n')
+    entry = diff(
+        DiffClass.NEW,
+        None,
+        path='pkg/doc.py',
+        kind='file',
+        head=occurrence(1, 'Empty Python file (no code, or docstring-only)', rule_id='SKY-E002'),
+    )
+    (enriched,), warnings = collect_source_evidence((entry,), checkout=checkout, excerpt_lines=2)
+    assert warnings == ()
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt == SourceExcerpt(
+        start_line=1, lines=('"""Docstring only."""',), omitted_lines=0
+    )
+
+
+def test_collect_symbol_finding_on_zero_line_file_still_warns(tmp_path: Path) -> None:
+    # The empty-file exemption is for file-level findings only: a symbol
+    # finding pointing into a zero-line file remains a source anomaly.
+    checkout = write_checkout(tmp_path)
+    atomic_write_text(checkout / 'pkg' / 'blank.py', '')
+    entry = diff(DiffClass.NEW, 'a', path='pkg/blank.py', head=occurrence(1, 'm'))
+    (enriched,), warnings = collect_source_evidence((entry,), checkout=checkout, excerpt_lines=2)
+    assert enriched.head_occurrence is not None
+    assert enriched.head_occurrence.source_excerpt is None
+    (warning,) = warnings
+    assert warning == 'pkg/blank.py:L1: reported line 1 is beyond the end of the file (0 line(s))'
+
+
 def test_collect_rejects_symlinks_special_and_undecodable_files(tmp_path: Path) -> None:
     checkout = write_checkout(tmp_path)
     (checkout / 'pkg' / 'link.py').symlink_to(checkout / 'pkg' / 'mod.py')
