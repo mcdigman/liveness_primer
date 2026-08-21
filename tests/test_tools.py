@@ -22,7 +22,7 @@ from liveness_primer.tools.base import (
     build_invocation,
     normalize_finding_path,
 )
-from liveness_primer.tools.skylos import SkylosAdapter
+from liveness_primer.tools.skylos import DEAD_CODE_KEYS, SkylosAdapter
 from liveness_primer.tools.vulture import VultureAdapter
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -182,9 +182,21 @@ def test_vulture_symbols_may_contain_quotes() -> None:
 
 
 def test_skylos_parses_recorded_fixture() -> None:
-    output = raw((FIXTURES / 'skylos_output.json').read_text(encoding='utf-8'))
+    document = (FIXTURES / 'skylos_output.json').read_text(encoding='utf-8')
+    recorded = json.loads(document)
+    # Recorded Skylos 4.33.2 result buckets use absolute paths, while its
+    # nested evidence retains relative paths. Preserve that mixed raw shape.
+    assert all(Path(entry['file']).is_absolute() for key in DEAD_CODE_KEYS for entry in recorded[key])
+    evidence = recorded['dead_code_evidence']['symbols']
+    assert evidence
+    assert all(not Path(entry['file']).is_absolute() for entry in evidence)
+    scope = recorded['analysis_summary']['comparison_scope']
+    assert scope['repository_root'] == ROOT.as_posix()
+    assert scope['scan_path'] == ROOT.as_posix()
+    output = raw(document)
     findings = SkylosAdapter.parse(output, project='demo', root=ROOT)
     assert len(findings) == 8
+    assert all(not finding.path.startswith('/') for finding in findings)
     by_symbol = {finding.symbol: finding for finding in findings if finding.symbol is not None}
     assert by_symbol['pkg.mod.orphan'].kind == 'function'
     assert by_symbol['pkg.mod.orphan'].confidence == 100

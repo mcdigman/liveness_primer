@@ -24,11 +24,9 @@ from liveness_primer.tools.skylos import DEAD_CODE_KEYS, DIAGNOSTIC_KINDS
 
 FakeFormat = Literal['vulture', 'skylos']
 
-# File suffixes real skylos reports as SKY-E003 (unused TypeScript or
-# JavaScript file), matching its own TS/JS extension list including the
-# .mts/.cts/.mjs/.cjs module variants; every other unused-file path is an
-# empty-file SKY-E002.
-_TYPESCRIPT_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs')
+# Severity every supported skylos revision stamps on an unused-file entry;
+# a scripted label overrides it.
+_UNUSED_FILE_SEVERITY = 'LOW'
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,12 +49,15 @@ class FakeFinding:
         Skylos array the finding lands in (skylos format only); diagnostic
         buckets and ``unused_files`` emit their respective entry shapes.
     rule_id : str | None
-        Explicit detector rule ID (skylos format only). ``unused_files``
-        entries always carry one: when unscripted it is inferred from the
-        path suffix (SKY-E003 for TypeScript/JavaScript, SKY-E002
-        otherwise), because the adapter rejects a rule-less entry.
+        Explicit detector rule ID (skylos format only). Required for
+        ``unused_files``: the bucket is multi-rule and each of its rules
+        names a condition the fake cannot observe (SKY-E002 emptiness,
+        SKY-E003 import reachability), so the script states the rule rather
+        than the fake guessing one from the path.
     severity : str | None
         Severity label (skylos diagnostic or unused-file buckets only).
+        Unscripted ``unused_files`` entries carry the ``LOW`` every
+        supported skylos revision stamps on them.
     message : str | None
         Message override (skylos diagnostic or unused-file buckets only).
     """
@@ -90,23 +91,30 @@ class FakeFinding:
             The symbol-level dead-code entry shape, or the dedicated shape
             for diagnostic and unused-file buckets; optional fields are
             present only when scripted.
+
+        Raises
+        ------
+        ValueError
+            If an ``unused_files`` finding carries no explicit rule ID.
         """
         if self.bucket == 'unused_files':
             # Every supported skylos revision stamps the rule ID explicitly
-            # on unused-file entries (the adapter rejects an entry without
-            # one), so an unscripted ID is inferred the way real skylos
-            # assigns the rules: SKY-E003 for a TypeScript/JavaScript file,
-            # SKY-E002 for an empty file otherwise.
-            inferred = 'SKY-E003' if self.path.endswith(_TYPESCRIPT_SUFFIXES) else 'SKY-E002'
-            unused_file: dict[str, object] = {
-                'rule_id': self.rule_id if self.rule_id is not None else inferred,
+            # on unused-file entries and the adapter rejects an entry
+            # without one, so the fake never emits a rule-less entry. The
+            # rule is not derivable from the path either: real skylos picks
+            # SKY-E002 or SKY-E003 by a file's emptiness and import
+            # reachability, which a scripted fake cannot observe. The entry
+            # shape carries no symbol, kind, or confidence.
+            if self.rule_id is None:
+                msg = f'scripted unused_files finding for {self.path!r} needs an explicit rule_id'
+                raise ValueError(msg)
+            return {
+                'rule_id': self.rule_id,
                 'message': self.message if self.message is not None else f"Unused file '{self.path}'",
                 'file': self.path,
                 'line': self.line,
+                'severity': self.severity if self.severity is not None else _UNUSED_FILE_SEVERITY,
             }
-            if self.severity is not None:
-                unused_file['severity'] = self.severity
-            return unused_file
         if self.bucket in DIAGNOSTIC_KINDS:
             diagnostic: dict[str, object] = {
                 'message': self.message if self.message is not None else f"dangerous use of '{self.symbol}'",

@@ -26,31 +26,31 @@
       "changed_files_only": false,
       "complete_repository": false,
       "excluded_folders": [
-        ".coverage",
-        "venv",
-        "vendor",
         ".hg",
+        "dist",
         ".tox",
-        "htmlcov",
         ".git",
-        "__pycache__",
-        ".svn",
-        "*.egg-info",
-        ".pytest_cache",
-        ".mypy_cache",
-        "node_modules",
-        ".idea",
-        ".next",
-        ".nuxt",
-        ".venv",
-        ".turbo",
-        "build",
         ".vscode",
-        "dist"
+        ".pytest_cache",
+        ".turbo",
+        ".coverage",
+        ".next",
+        ".idea",
+        ".nuxt",
+        "venv",
+        "__pycache__",
+        "htmlcov",
+        "build",
+        ".svn",
+        "node_modules",
+        "*.egg-info",
+        ".venv",
+        "vendor",
+        ".mypy_cache"
       ],
       "kind": "repository_root_with_exclusions",
-      "repository_root": ".",
-      "scan_path": "."
+      "repository_root": "/checkout",
+      "scan_path": "/checkout"
     },
     "dead_code_evidence": {
       "candidate_decisions": {
@@ -70,27 +70,27 @@
       "rescued_count": 0
     },
     "excluded_folders": [
-      ".coverage",
-      "venv",
-      "vendor",
       ".hg",
+      "dist",
       ".tox",
-      "htmlcov",
       ".git",
-      "__pycache__",
-      ".svn",
-      "*.egg-info",
-      ".pytest_cache",
-      ".mypy_cache",
-      "node_modules",
-      ".idea",
-      ".next",
-      ".nuxt",
-      ".venv",
-      ".turbo",
-      "build",
       ".vscode",
-      "dist"
+      ".pytest_cache",
+      ".turbo",
+      ".coverage",
+      ".next",
+      ".idea",
+      ".nuxt",
+      "venv",
+      "__pycache__",
+      "htmlcov",
+      "build",
+      ".svn",
+      "node_modules",
+      "*.egg-info",
+      ".venv",
+      "vendor",
+      ".mypy_cache"
     ],
     "grade_categories": [
       "dead_code"
@@ -639,7 +639,7 @@
       "dead_code_reason_tags": [
         "top_level_execution"
       ],
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "line": 17,
       "loc": 10,
       "name": "pkg.mod.Greeter",
@@ -714,7 +714,7 @@
         "no_entrypoint",
         "confidence_ge_threshold"
       ],
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "line": 24,
       "loc": 3,
       "name": "pkg.mod.Greeter.farewell",
@@ -766,7 +766,7 @@
       "dead_code_reason_tags": [
         "static_reference"
       ],
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "line": 20,
       "loc": 3,
       "name": "pkg.mod.Greeter.greet",
@@ -841,7 +841,7 @@
         "no_entrypoint",
         "confidence_ge_threshold"
       ],
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "line": 7,
       "loc": 3,
       "name": "pkg.mod.orphan",
@@ -887,7 +887,7 @@
       "dead_code_reason_tags": [
         "static_reference"
       ],
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "line": 12,
       "loc": 3,
       "name": "pkg.mod.used",
@@ -960,7 +960,7 @@
         "no_entrypoint",
         "confidence_ge_threshold"
       ],
-      "file": "pkg/shapes.py",
+      "file": "/checkout/pkg/shapes.py",
       "line": 12,
       "loc": 6,
       "name": "pkg.shapes.Hexagon",
@@ -1008,7 +1008,7 @@
       "dead_code_reason_tags": [
         "grep_rescue"
       ],
-      "file": "pkg/shapes.py",
+      "file": "/checkout/pkg/shapes.py",
       "line": 15,
       "loc": 3,
       "name": "pkg.shapes.Hexagon.area",
@@ -1048,7 +1048,7 @@
       "dead_code_reason_tags": [
         "static_reference"
       ],
-      "file": "pkg/shapes.py",
+      "file": "/checkout/pkg/shapes.py",
       "line": 4,
       "loc": 6,
       "name": "pkg.shapes.Square",
@@ -1098,7 +1098,7 @@
       "dead_code_reason_tags": [
         "static_reference"
       ],
-      "file": "pkg/shapes.py",
+      "file": "/checkout/pkg/shapes.py",
       "line": 7,
       "loc": 3,
       "name": "pkg.shapes.Square.area",
@@ -1192,7 +1192,7 @@
         "no_entrypoint",
         "confidence_ge_threshold"
       ],
-      "file": "pkg/shapes.py",
+      "file": "/checkout/pkg/shapes.py",
       "full_name": "pkg.shapes.Hexagon",
       "line": 12,
       "name": "Hexagon",
@@ -1204,7 +1204,7 @@
   "unused_files": [
     {
       "category": "DEAD_CODE",
-      "file": "pkg/blank.py",
+      "file": "/checkout/pkg/blank.py",
       "line": 1,
       "message": "Empty Python file (no code, or docstring-only)",
       "rule_id": "SKY-E002",
@@ -1212,7 +1212,7 @@
     },
     {
       "category": "DEAD_CODE",
-      "file": "pkg/orphan.ts",
+      "file": "/checkout/pkg/orphan.ts",
       "line": 1,
       "message": "Unused TypeScript/JavaScript file (not imported by any other file)",
       "rule_id": "SKY-E003",
@@ -1289,7 +1289,7 @@
         "no_entrypoint",
         "confidence_ge_threshold"
       ],
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "full_name": "pkg.mod.orphan",
       "line": 7,
       "name": "orphan",
@@ -1366,7 +1366,7 @@
         "no_entrypoint",
         "confidence_ge_threshold"
       ],
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "full_name": "pkg.mod.Greeter.farewell",
       "line": 24,
       "name": "Greeter.farewell",
@@ -1380,7 +1380,7 @@
       "basename": "mod.py",
       "confidence": 100,
       "dead_code_disposition": "reported",
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "full_name": "os",
       "line": 1,
       "name": "os",
@@ -1394,7 +1394,7 @@
       "basename": "mod.py",
       "confidence": 100,
       "dead_code_disposition": "reported",
-      "file": "pkg/mod.py",
+      "file": "/checkout/pkg/mod.py",
       "full_name": "pkg.mod.orphan.flag",
       "line": 7,
       "name": "flag",
@@ -1470,7 +1470,7 @@
         "no_entrypoint",
         "confidence_ge_threshold"
       ],
-      "file": "pkg/consts.py",
+      "file": "/checkout/pkg/consts.py",
       "full_name": "pkg.consts.LEGACY_LIMIT",
       "line": 5,
       "name": "LEGACY_LIMIT",

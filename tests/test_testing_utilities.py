@@ -3,6 +3,7 @@
 """Tests for the shipped fake detector and fake project factory (contract §15)."""
 
 import json
+import re
 import stat
 import time
 from pathlib import Path
@@ -258,7 +259,6 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
                 path='orphan.ts',
                 line=3,
                 symbol='orphan.ts',
-                kind='file',
                 bucket='unused_files',
                 rule_id='SKY-E003',
                 severity='LOW',
@@ -268,15 +268,8 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
                 path='empty.py',
                 line=1,
                 symbol='empty.py',
-                kind='file',
                 bucket='unused_files',
-            ),
-            FakeFinding(
-                path='dead.ts',
-                line=1,
-                symbol='dead.ts',
-                kind='file',
-                bucket='unused_files',
+                rule_id='SKY-E002',
             ),
         ],
         output_format='skylos',
@@ -291,7 +284,7 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
     (variable_entry,) = document['unused_variables']
     assert 'rule_id' not in variable_entry
     assert variable_entry['name'] == 'y'
-    unused_file_entry, defaulted_python_entry, defaulted_typescript_entry = document['unused_files']
+    unused_file_entry, defaulted_entry = document['unused_files']
     assert unused_file_entry == {
         'rule_id': 'SKY-E003',
         'message': 'Unused TypeScript/JavaScript file',
@@ -299,29 +292,27 @@ def test_main_emits_skylos_format_with_explicit_rule_ids(tmp_path: Path, capsys:
         'line': 3,
         'severity': 'LOW',
     }
-    # An unscripted rule ID is inferred from the path suffix, mirroring how
-    # real skylos assigns the unused-file rules: the adapter rejects a
-    # rule-less entry, so the fake never emits one.
-    assert defaulted_python_entry == {
+    # Only the message defaults; the rule ID is always scripted, and the
+    # severity every supported skylos revision stamps on an unused-file
+    # entry is emitted rather than omitted.
+    assert defaulted_entry == {
         'rule_id': 'SKY-E002',
         'message': "Unused file 'empty.py'",
         'file': 'empty.py',
         'line': 1,
-    }
-    assert defaulted_typescript_entry == {
-        'rule_id': 'SKY-E003',
-        'message': "Unused file 'dead.ts'",
-        'file': 'dead.ts',
-        'line': 1,
+        'severity': 'LOW',
     }
 
 
-@pytest.mark.parametrize('suffix', ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'])
-def test_fake_skylos_infers_e003_for_every_typescript_javascript_suffix(suffix: str) -> None:
-    """Infer the real Skylos unused-file rule for every TS/JS suffix."""
-    path = f'dead{suffix}'
-    entry = FakeFinding(path=path, line=1, symbol=path, kind='file', bucket='unused_files').skylos_entry()
-    assert entry['rule_id'] == 'SKY-E003'
+def test_fake_skylos_unused_file_requires_an_explicit_rule_id() -> None:
+    """Reject a scripted unused-file finding carrying no rule ID."""
+    # The bucket is multi-rule and its rules turn on conditions the fake
+    # cannot observe, so the rule is scripted rather than guessed from the
+    # path; the adapter rejects a rule-less entry in any case.
+    finding = FakeFinding(path='dead.ts', line=1, symbol='dead.ts', bucket='unused_files')
+    message = re.escape("unused_files finding for 'dead.ts' needs an explicit rule_id")
+    with pytest.raises(ValueError, match=message):
+        finding.skylos_entry()
 
 
 def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

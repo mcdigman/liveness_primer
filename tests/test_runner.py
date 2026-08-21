@@ -777,7 +777,6 @@ def test_fake_skylos_unused_file_end_to_end(tmp_path: Path) -> None:
                 path='pkg/empty.py',
                 line=1,
                 symbol='pkg/empty.py',
-                kind='file',
                 bucket='unused_files',
                 rule_id='SKY-E002',
                 severity='LOW',
