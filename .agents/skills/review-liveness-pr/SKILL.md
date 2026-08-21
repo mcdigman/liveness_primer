@@ -1,16 +1,9 @@
 ---
 name: review-liveness-pr
-description: CI or manual invocation only. Use only when the user explicitly invokes $review-liveness-pr or a designated liveness_primer CI workflow invokes it. Never auto-select this skill for a general pull-request review, even when a liveness_primer artifact is available.
+description: Review an existing liveness_primer JSON artifact against a pull request's stated intent and produce a concise advisory report with one conclusion, optional verdict flags, confidence, review priority, and specific finding evidence. Support every liveness_primer adapter. Never rerun the detector or liveness_primer. Opt-in only: use solely when the user explicitly invokes $review-liveness-pr or the designated liveness_primer CI workflow invokes it; never auto-select this skill for a general pull-request review, even when a liveness_primer artifact is available.
 ---
 
 # Review a liveness_primer pull request
-
-## Activation boundary
-
-Use this skill only after an explicit ``$review-liveness-pr`` invocation or
-from the designated liveness_primer CI workflow. A general pull-request review
-does not authorize this workflow, even when a liveness_primer artifact is
-available.
 
 Produce a read-only advisory review of an existing liveness_primer JSON report.
 Return concise GitHub-flavored Markdown followed by an embedded machine-readable
