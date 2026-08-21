@@ -81,6 +81,12 @@ An adapter must populate `rule_id` using the following precedence:
 An adapter must not infer a rule ID from free-form message text. The human renderer displays
 an absent rule ID as `-`; it must not invent a tool-specific code.
 
+One documented exception to step 3: when a bucket is multi-rule and every supported detector
+revision stamps the rule ID explicitly on each entry (Skylos `unused_files`, below), a
+missing explicit rule ID is a malformed entry the adapter must reject, not a `None` — no
+bucket mapping exists, and accepting the entry rule-less would let the same finding surface
+under two identities across revisions.
+
 The Skylos JSON buckets currently ingested by `liveness_primer` map as follows:
 
 | Skylos bucket | Rule ID | Meaning |
@@ -90,6 +96,13 @@ The Skylos JSON buckets currently ingested by `liveness_primer` map as follows:
 | `unused_variables` | `SKY-U003` | unused variable or constant |
 | `unused_classes` | `SKY-U004` | unused class or type |
 | `unused_parameters` | `SKY-U006` | unused parameter |
+
+The `unused_files` bucket is also ingested but has no bucket fallback: it is a multi-rule
+bucket whose entries every supported Skylos revision stamps with an explicit `rule_id`
+(`SKY-E002` for an empty or docstring-only Python file, `SKY-E003` for a TypeScript or
+JavaScript file no other file imports). The adapter must require the explicit `rule_id` on
+each `unused_files` entry and reject an entry without one as malformed; defaulting one
+rule's code onto the other's entries would corrupt the finding identity.
 
 The mapping is adapter normalization and must be covered by recorded-output tests. If a
 supported Skylos revision changes the documented mapping, the adapter must be updated rather
@@ -206,9 +219,15 @@ occurrence:
 - context beyond the `N`-line evidence budget was never requested and is not counted as
   omitted;
 - a point finding near end-of-file has `omitted_lines = 0` when fewer than `N` source lines
-  exist; and
+  exist;
 - missing, unreadable, non-regular, or out-of-range source produces no excerpt and a bounded
-  report warning rather than fabricated text.
+  report warning rather than fabricated text; and
+- a finding in the normalized unused-file shape — kind `file`, no symbol, and a point span at
+  line 1 — on a file with zero source lines produces no excerpt and no warning: the emptiness
+  is the reported condition itself (e.g. Skylos `SKY-E002`), so the occurrence is
+  intentionally source-less and must not spend the warning budget that exists to surface
+  genuine source anomalies. Any other occurrence claiming source in an empty file — a symbol
+  finding, or a file finding pointing past line 1 — remains a warned anomaly.
 
 Source evidence is derived review context. It must not participate in finding identity, the
 canonical occurrence key, or changed-field classification. The corpus is identical across
@@ -351,7 +370,9 @@ sufficient evidence.
 
 For `new`, the head excerpt follows the summary row. For `dropped` and `changed`, the base
 excerpt follows it; both sides of a `changed` pair share their identity-pinned span, so one
-excerpt always suffices. If the excerpt cannot be collected, the bounded warning records it.
+excerpt always suffices. If the excerpt cannot be collected, the bounded warning records it —
+except for an intentionally source-less occurrence (§3.3's normalized unused-file shape on a
+zero-line file), which has no excerpt and no warning by design.
 
 A finding and its evidence must read as one visually coherent block. The continuation region
 is indented two cells from the left margin — not aligned under the location column, which

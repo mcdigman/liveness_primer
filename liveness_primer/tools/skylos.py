@@ -24,8 +24,17 @@ from liveness_primer.tools.base import (
     normalize_finding_path,
 )
 
-# Dead-code finding arrays in the skylos JSON document
-_DEAD_CODE_KEYS = ('unused_functions', 'unused_imports', 'unused_classes', 'unused_variables', 'unused_parameters')
+# Dead-code finding arrays in the skylos JSON document; the complete
+# always-ingested bucket list, public so the fake detector emits the same
+# document shape as a real skylos run.
+DEAD_CODE_KEYS = (
+    'unused_functions',
+    'unused_imports',
+    'unused_classes',
+    'unused_variables',
+    'unused_parameters',
+    'unused_files',
+)
 
 # Diagnostic arrays, each emitted only under its opt-in analysis flag,
 # mapped to the normalized kind stamped onto its findings. Entries carry a
@@ -60,12 +69,15 @@ _NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
 # the pass cannot on its own starve the rest of the run.
 _GREP_BUDGET_SECONDS = '150'
 
-# Documented, versioned mapping from each ingested skylos structured output
-# bucket to its canonical rule ID (reporting contract §3.1). A rule ID
-# explicitly present on the detector finding takes precedence; a rule ID is
-# never inferred from free-form message text. If a supported skylos revision
-# changes the documented mapping, this table must be updated rather than
-# silently retaining a stale code.
+# Documented, versioned mapping from each ingested single-rule skylos
+# symbol bucket to its canonical rule ID (reporting contract §3.1). A rule
+# ID explicitly present on the detector finding takes precedence; a rule ID
+# is never inferred from free-form message text. The multi-rule
+# ``unused_files`` bucket is deliberately absent: it has no canonical
+# bucket-level code, so its entries must carry their explicit rule IDs
+# (see ``_SkylosUnusedFileEntry``). If a supported skylos revision changes
+# the documented mapping, this table must be updated rather than silently
+# retaining a stale code.
 BUCKET_RULE_IDS = {
     'unused_functions': 'SKY-U001',
     'unused_imports': 'SKY-U002',
@@ -105,6 +117,26 @@ class _SkylosDiagnosticEntry(BaseModel):
     line: int
     symbol: str | None = None
     name: str | None = None
+
+
+class _SkylosUnusedFileEntry(BaseModel):
+    """One unused-file entry from a skylos JSON array (untrusted input).
+
+    ``unused_files`` is a multi-rule bucket (``SKY-E002`` empty file,
+    ``SKY-E003`` unused TypeScript/JavaScript file) and every supported
+    skylos revision stamps the rule ID explicitly on each entry, so
+    ``rule_id`` is a guaranteed field: no bucket fallback exists, and
+    defaulting one rule's code onto the other's entries would corrupt the
+    finding identity (reporting contract §3.1).
+    """
+
+    model_config = ConfigDict(frozen=True, extra='ignore')
+
+    rule_id: str
+    severity: str | None = None
+    message: str
+    file: str
+    line: int
 
 
 class SkylosAdapter:
@@ -212,14 +244,19 @@ class SkylosAdapter:
         if not isinstance(document, dict):
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
-        result_keys = (*_DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected))
+        result_keys = (*DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected))
         findings: list[Finding] = []
         for key in result_keys:
             bucket = document.get(key, [])
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
                 raise AdapterError(msg)
-            parse_entry = _parse_diagnostic_entry if key in DIAGNOSTIC_KINDS else _parse_entry
+            if key == 'unused_files':
+                parse_entry = _parse_unused_file_entry
+            elif key in DIAGNOSTIC_KINDS:
+                parse_entry = _parse_diagnostic_entry
+            else:
+                parse_entry = _parse_entry
             findings.extend(parse_entry(raw, key=key, project=project, root=root) for raw in bucket)
         if output.returncode not in SkylosAdapter.success_exit_codes and not findings:
             msg = 'failed skylos output has no findings in recognized result buckets'
@@ -270,6 +307,51 @@ def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
         # An explicit detector rule ID wins; the documented bucket mapping
         # is the fallback (reporting contract §3.1).
         rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS.get(key),
+        raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
+    )
+
+
+def _parse_unused_file_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
+    """Convert one unused-file entry into a finding.
+
+    Parameters
+    ----------
+    raw : object
+        Untrusted JSON entry.
+    key : str
+        Array name the entry came from, for error context.
+    project : str
+        Corpus project name to stamp onto the finding.
+    root : Path
+        Checkout directory skylos analyzed.
+
+    Returns
+    -------
+    Finding
+        The normalized file-level finding.
+
+    Raises
+    ------
+    AdapterError
+        If the entry does not carry the guaranteed skylos fields.
+    """
+    try:
+        entry = _SkylosUnusedFileEntry.model_validate(raw)
+    except ValidationError as exc:
+        msg = f'malformed skylos entry in {key!r}: {exc}'
+        raise AdapterError(msg) from exc
+    line = max(entry.line, 1)
+    return Finding(
+        tool=SkylosAdapter.name,
+        project=project,
+        path=normalize_finding_path(entry.file, root),
+        symbol=None,
+        kind='file',
+        message=entry.message,
+        start_line=line,
+        end_line=line,
+        severity=entry.severity,
+        rule_id=entry.rule_id,
         raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
     )
 
