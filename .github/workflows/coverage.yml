@@ -78,6 +78,17 @@ jobs:
           .venv/bin/python -m coverage xml
           .venv/bin/python -m coverage html
 
+      # The implicit success gate prevents partial reports from failed tests
+      # reaching the public badge. Coveralls availability is advisory.
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329  # v2.3.8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage.xml
+          format: cobertura
+          fail-on-error: false
+          coverage-reporter-version: v0.6.17
+
       - name: Upload coverage reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
