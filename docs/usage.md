@@ -115,6 +115,34 @@ For a new feature, leaving finding-diff gates off makes the run an
 evidence-producing review job. For a semantics-preserving refactor,
 `--fail-on any` turns it into a strict regression gate.
 
+## Run inside Docker containers
+
+`--container` moves the build and execution of both detector revisions into
+per-side ephemeral Docker containers:
+
+```bash
+liveness-primer run --tool vulture \
+  --repo https://github.com/jendrikseipp/vulture \
+  --old v2.15 \
+  --new v2.16 \
+  -k pluggy \
+  --container
+```
+
+Each revision installs into a fingerprint-cached environment image built
+offline (`docker build --network none`) from dependencies prefetched during
+the fetch step; each side of the run then executes inside its own container
+with networking disabled. Both containers are destroyed when the analysis
+finishes, before the report or any `--json-out` artifact is written, and the
+run records enforced isolation on every host platform.
+
+The mode requires a running Docker daemon, probed at run start.
+`--container-image IMAGE` overrides the default `python:3.12-slim` base
+image and requires `--container`; `--fresh` forces image rebuilds. The mode
+cannot combine with `--old-cmd`/`--new-cmd`, and operator-supplied native
+helper executables (such as `SKYLOS_GO_BIN`) are refused: a host binary
+cannot run inside the container.
+
 ## Use pre-built detector commands
 
 The escape hatch compares commands you have already built:

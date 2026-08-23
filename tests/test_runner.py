@@ -17,6 +17,7 @@ import pytest
 
 import liveness_primer.runner as runner_module
 from liveness_primer.config import CorpusProject, ToolSettings
+from liveness_primer.container import CONTAINER_ISOLATION, DEFAULT_CONTAINER_IMAGE, ContainerEnvironments
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
 from liveness_primer.filesystem import atomic_write_text, read_small_text
@@ -35,6 +36,7 @@ from liveness_primer.runner import (
 )
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.tools.registry import get_adapter
+from tests.test_container import FakeDocker
 
 BASE_FINDING = FakeFinding(path='pkg/mod.py', line=5, symbol='unused_helper', kind='function', confidence=60)
 MOVED_FINDING = FakeFinding(path='pkg/mod.py', line=9, symbol='unused_helper', kind='function', confidence=60)
@@ -1104,3 +1106,104 @@ def test_runner_reads_the_process_environment_by_default(tmp_path: Path, monkeyp
     manifest = runner.run_escape_hatch([], base_cmd=('true',), head_cmd=('true',)).manifest
     (record,) = manifest.native_tools
     assert record.sha256 == hashlib.sha256(engine.read_bytes()).hexdigest()
+
+
+def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, fake_detector_repo: str) -> None:
+    docker = FakeDocker()
+    environments = ContainerEnvironments(CheckoutStore(tmp_path / 'cache'), tmp_path / 'cache', docker=docker)
+    events = docker.events
+    exec_argvs: list[tuple[str, ...]] = []
+
+    async def docker_exec_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        # The docker client is trusted host code: no scrub, no cwd — the
+        # workdir and environment live inside the exec argv (contract §3).
+        assert cwd is None
+        assert env is None
+        await asyncio.sleep(0)
+        events.append('exec')
+        exec_argvs.append(tuple(argv))
+        if any(element.endswith('-base') for element in argv):
+            stdout = "pkg/mod.py:5: unused function 'unused_helper' (60% confidence)\n"
+        else:
+            stdout = (
+                "pkg/mod.py:9: unused function 'unused_helper' (60% confidence)\n"
+                "pkg/extra.py:2: unused variable 'fresh' (100% confidence)\n"
+            )
+        return LaunchResult(
+            argv=tuple(argv),
+            returncode=3,
+            stdout=stdout,
+            stderr='',
+            duration_seconds=0.0,
+            timed_out=False,
+        )
+
+    runner = PrimerRunner(
+        adapter=get_adapter('vulture'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=CONTAINER_ISOLATION,
+        options=DEFAULT_OPTIONS,
+        async_launcher=docker_exec_launcher,
+    )
+    report = runner.run_container(
+        [corpus_project],
+        detector_repo=fake_detector_repo,
+        base_ref='base-branch',
+        head_ref='head-branch',
+        environments=environments,
+    )
+    assert report.totals == DiffTotals(new=2, dropped=1)
+    assert not report_has_failures(report)
+    manifest = report.manifest
+    assert manifest.comparable is True
+    assert manifest.isolation_enforced is True
+    assert manifest.installer == f'docker 99.9; image {DEFAULT_CONTAINER_IMAGE}'
+    assert manifest.base is not None
+    assert manifest.head is not None
+    assert manifest.base.sha != manifest.head.sha
+    assert manifest.base.ref == 'base-branch'
+    # Both invocations were docker execs into per-side workspaces under the
+    # shared mount, running the console script from the container's PATH.
+    assert len(exec_argvs) == 2
+    for argv in exec_argvs:
+        assert argv[:2] == ('docker', 'exec')
+        workdir = argv[argv.index('--workdir') + 1]
+        assert workdir.startswith('/liveness/work/liveness-primer-side-')
+        assert workdir.endswith('/checkout')
+        assert argv[-2:] == ('vulture', '.')
+    # Both ephemeral containers were removed after the last detector exec
+    # and before the report could be assembled (contract §3, §11).
+    removals = [index for index, event in enumerate(events) if event.startswith('rm:')]
+    execs = [index for index, event in enumerate(events) if event == 'exec']
+    assert len(removals) == 2
+    assert removals == [len(events) - 2, len(events) - 1]
+    assert max(execs) < min(removals)
+
+
+def test_container_run_refuses_native_helper_passthrough(tmp_path: Path) -> None:
+    # A host executable cannot run inside the Linux container, so admitting
+    # one would silently degrade both sides' analysis (contract §3).
+    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    docker = FakeDocker()
+    environments = ContainerEnvironments(CheckoutStore(tmp_path / 'cache'), tmp_path / 'cache', docker=docker)
+    runner = PrimerRunner(
+        adapter=get_adapter('skylos'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=CONTAINER_ISOLATION,
+        options=DEFAULT_OPTIONS,
+        environ={'SKYLOS_GO_BIN': str(engine)},
+    )
+    with pytest.raises(RunnerError, match=r'SKYLOS_GO_BIN.*not supported in --container mode'):
+        runner.run_container(
+            [],
+            detector_repo='https://example.invalid/repo',
+            base_ref='a',
+            head_ref='b',
+            environments=environments,
+        )
+    assert docker.events == []

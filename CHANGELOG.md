@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Report and manifest payloads carry their own `schema_version`, versioned
 independently of the package version; `liveness-primer --version` prints both.
 
+## [Unreleased]
+
+### Added
+
+- **Container mode** — `run --container` builds both detector revisions into
+  fingerprint-cached Docker images (offline `docker build --network none` fed
+  from a fetch-step prefetch inside the base image) and executes each side of
+  the comparison in its own ephemeral, network-less container. Both containers
+  are force-removed when the analysis finishes, before the report or any
+  `--json-out` artifact is written. `--container-image IMAGE` overrides the
+  `python:3.12-slim` default base image. The `docker` CLI is a host
+  requirement of this mode only, driven through the audited launcher; it is
+  never a Python dependency (contract §3, §11, §17).
+
 ## [0.1.1] - 2026-08-21
 
 ### Added

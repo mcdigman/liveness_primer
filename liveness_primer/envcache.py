@@ -750,7 +750,7 @@ def dependency_delta(
     return tuple(delta)
 
 
-def _fetch_records_for(wheelhouse: Path, added: Iterable[str]) -> tuple[FetchRecord, ...]:
+def fetch_records_for(wheelhouse: Path, added: Iterable[str]) -> tuple[FetchRecord, ...]:
     """Build manifest fetch records for newly downloaded distribution files.
 
     Parameters
@@ -978,7 +978,7 @@ class DetectorEnvironments:
         before = {entry.name for entry in wheelhouse.iterdir()}
         self._installer.prefetch(deduped, wheelhouse)
         added = {entry.name for entry in wheelhouse.iterdir()} - before
-        self._fetches.extend(_fetch_records_for(wheelhouse, added))
+        self._fetches.extend(fetch_records_for(wheelhouse, added))
         return wheelhouse
 
     def _pair_wheelhouse(self, repo: str, shas: Sequence[str]) -> Path:

@@ -31,6 +31,22 @@ point*: pre-triage, triage, or post-triage (§10).
 - The detector is obtained by cloning its repository and installing the base and head refs
   into two isolated cached virtualenvs (`uv pip` when on `PATH`, stdlib `venv` + `pip`
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
+- Container mode (`--container`, opt-in): the same managed comparison with the build and
+  analysis steps moved into Docker. Each ref installs into a fingerprint-keyed
+  environment image (repository, resolved SHA, adapter build-recipe hash, base image
+  reference, Docker runtime identity) built offline (`docker build --network none`) from
+  a per-pair wheelhouse prefetched during the fetch step by the base image's own pip, so
+  wheels match the container platform rather than the host. Each side of the run then
+  executes inside its own **ephemeral** container started from its image with networking
+  disabled (`docker exec` per invocation, per-invocation workspaces under one bind
+  mount); both containers are force-removed when the analysis context exits — before the
+  manifest is assembled and before any report output is rendered or written. Images are
+  cached by the Docker image store (which also serializes concurrent builds of a tag);
+  `--fresh` forces `--no-cache` rebuilds, and paired same-run delta resolution applies
+  unchanged. The `docker` CLI is a host requirement of this mode only, probed at run
+  time, driven exclusively through the audited launcher (§11), and never a Python
+  dependency (§17). Operator-supplied native helper executables (§4 `passthrough_env`)
+  are refused in this mode: a host binary cannot run inside the container.
 - Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
   statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and
@@ -240,7 +256,10 @@ point*: pre-triage, triage, or post-triage (§10).
   — build-backend hooks can open arbitrary sockets; the sandbox is the guarantee. The
   manifest records whether isolation was enforced, and reports flag unenforced runs. This
   also limits the blast radius of a malicious corpus repository exploiting a detector
-  parser bug.
+  parser bug. In `--container` mode (§3) the runtime itself enforces `--network none` on
+  builds, containers, and every exec, on every host platform — the netns probe is not
+  used, and the mode records enforced isolation everywhere, including hosts where the
+  host-venv path is best-effort.
 - Corpus code execution: the core (Phases 1–2) never executes corpus code — detectors only
   parse it. Any workflow that executes corpus code (coverage evidence, runner files,
   distillation; Phases 3–4) runs only inside an isolated container: no network, read-only
@@ -258,7 +277,9 @@ printing the package version and `SCHEMA_VERSION`. Commands:
   [--ignore-include-tools] [--max-results N] [--excerpt-lines N]
   [--output text|json|github] [--fail-on ...]
   [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]
-  [--analyses NAME[,NAME...]]`
+  [--analyses NAME[,NAME...]] [--container] [--container-image IMAGE]` —
+  `--container` selects the Docker-backed managed mode (§3) and cannot combine with the
+  escape hatch; `--container-image` overrides its base image and requires `--container`.
 - `corpus validate` — parse and validate the corpus YAML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF
@@ -330,6 +351,9 @@ design intentionally blocks it, but it is not gated in CI initially.
 - Stdlib elsewhere: `tomllib`, `argparse`, `subprocess`/`venv`, `asyncio`. Git via
   subprocess; `uv` used opportunistically, never required. Detectors are never dependencies
   of this package.
+- Container mode (§3): the `docker` CLI is a host requirement of `--container` runs only,
+  probed at run time and driven via the audited launcher; it is never a Python dependency,
+  and no Docker SDK is used.
 
 ## 18. Package layout (informative)
 

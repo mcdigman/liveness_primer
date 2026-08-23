@@ -243,6 +243,37 @@ let generated prose replace deterministic gates or human review.
 >
 </details>
 
+## Run inside Docker containers
+
+`--container` moves the build and execution of both detector revisions into
+per-side ephemeral Docker containers:
+
+```bash
+liveness-primer run --tool vulture \
+  --repo https://github.com/jendrikseipp/vulture \
+  --old v2.15 \
+  --new v2.16 \
+  -k pluggy \
+  --container
+```
+
+Each revision is installed into a fingerprint-cached environment image built
+offline (`docker build --network none`) from dependencies prefetched during
+the fetch step, and each side of the run then executes inside its own
+container with networking disabled. Both containers are destroyed as soon as
+the analysis finishes — before the report or any `--json-out` artifact is
+written. Because the container runtime enforces the sandbox on every
+platform, container runs record enforced isolation even on hosts where the
+default host-venv path is best-effort (for example macOS).
+
+The mode requires a running Docker daemon, probed at run start; the `docker`
+CLI is a host requirement of this mode only, never a Python dependency.
+`--container-image IMAGE` overrides the default `python:3.12-slim` base
+image, `--fresh` forces image rebuilds, and `--old-cmd`/`--new-cmd` cannot
+combine with `--container`. Operator-supplied native helper executables
+(such as `SKYLOS_GO_BIN`) are not supported in this mode: a host binary
+cannot run inside the container.
+
 ## Pre-built detector commands
 
 The escape hatch compares commands you have already built:

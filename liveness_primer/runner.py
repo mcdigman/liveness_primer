@@ -23,10 +23,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from liveness_primer.config import CorpusProject, ToolSettings
+from liveness_primer.container import ContainerEnvironments, ContainerExecution, PreparedContainerPair, container_user
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.diffing import diff_findings, merge_rollups
 from liveness_primer.envcache import DetectorEnvironments, PreparedPair
 from liveness_primer.errors import LivenessPrimerError
+from liveness_primer.execution import ExecutionBackend, HostExecution, SideWorkspace
 from liveness_primer.findings import (
     CorpusIntegrityWarning,
     CorpusPinRecord,
@@ -41,7 +43,7 @@ from liveness_primer.findings import (
     RunSettings,
     ToolError,
 )
-from liveness_primer.isolation import Isolation, scrubbed_environment
+from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
 from liveness_primer.locators import attach_locators
 from liveness_primer.report.source import collect_source_evidence
@@ -360,25 +362,6 @@ def _assemble_report(manifest: RunManifest, project_reports: Sequence[ProjectRep
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _SideWorkspace:
-    """Disposable per-invocation workspace (contract §3, §11).
-
-    Attributes
-    ----------
-    root : Path
-        Workspace directory removed after the invocation.
-    checkout : Path
-        This side's own copy of the pinned checkout.
-    home : Path
-        Scratch ``HOME`` exposed to the detector.
-    """
-
-    root: Path
-    checkout: Path
-    home: Path
-
-
 class PrimerRunner:
     """Runs one two-revision comparison over selected corpus projects.
 
@@ -433,7 +416,7 @@ class PrimerRunner:
         self._options = options
         self._async_launcher = async_launcher
 
-    def _materialize_side(self, checkout: Path) -> _SideWorkspace:
+    def _materialize_side(self, checkout: Path, parent: Path | None) -> SideWorkspace:
         """Give one detector invocation its own disposable checkout copy.
 
         Both sides derive from the same pinned cache entry, so the copies are
@@ -445,10 +428,14 @@ class PrimerRunner:
         ----------
         checkout : Path
             Pinned cached checkout to copy.
+        parent : Path | None
+            Directory the workspace must be created under (an execution
+            backend's reachable root), or ``None`` for the default
+            temporary directory.
 
         Returns
         -------
-        _SideWorkspace
+        SideWorkspace
             The materialized workspace.
 
         Raises
@@ -462,14 +449,14 @@ class PrimerRunner:
         if source != checkout:
             msg = f'refusing to copy {checkout}: not a checkout cache entry'
             raise RunnerError(msg)
-        root = Path(tempfile.mkdtemp(prefix='liveness-primer-side-'))
+        root = Path(tempfile.mkdtemp(prefix='liveness-primer-side-', dir=parent))
         side_checkout = root / 'checkout'
         # Symlinks are copied as symlinks: following them could pull content
         # from outside the pinned tree into the analyzed copy.
         shutil.copytree(source, side_checkout, symlinks=True, ignore=shutil.ignore_patterns('.git'))
         home = root / 'home'
         home.mkdir()
-        return _SideWorkspace(root=root, checkout=side_checkout, home=home)
+        return SideWorkspace(root=root, checkout=side_checkout, home=home)
 
     def _fetch_corpus(self, projects: Sequence[CorpusProject]) -> tuple[list[_ProjectWork], tuple[FetchRecord, ...]]:
         """Resolve and materialize every selected project (fetch step, §3).
@@ -565,6 +552,7 @@ class PrimerRunner:
         side: str,
         command: tuple[str, ...],
         semaphore: asyncio.Semaphore,
+        execution: ExecutionBackend,
     ) -> _SideOutcome:
         """Run the detector once on one side of one project (analysis step, §3).
 
@@ -578,6 +566,8 @@ class PrimerRunner:
             Detector command prefix for this side.
         semaphore : asyncio.Semaphore
             The ``--jobs`` limiter.
+        execution : ExecutionBackend
+            Backend deciding where and how the invocation runs.
 
         Returns
         -------
@@ -588,20 +578,14 @@ class PrimerRunner:
         timeout = item.settings.timeout if item.settings.timeout is not None else self._options.timeout
         async with semaphore:
             # Each side analyzes its own disposable copy of the pinned
-            # checkout under a scrubbed, credential-free environment
-            # (contract §3, §11).
-            workspace = await asyncio.to_thread(self._materialize_side, item.checkout)
+            # checkout in a sandboxed, credential-free environment prepared
+            # by the execution backend (contract §3, §11).
+            workspace = await asyncio.to_thread(self._materialize_side, item.checkout, execution.workspace_parent)
             try:
-                environment = scrubbed_environment(home=workspace.home)
-                environment.update(self._adapter.invocation_env)
-                environment.update(self._passthrough_env)
+                plan = execution.launch_plan(side=side, argv=argv, workspace=workspace)
                 try:
                     async with asyncio.timeout(timeout):
-                        result = await self._async_launcher(
-                            self._isolation.wrap(argv),
-                            cwd=workspace.checkout,
-                            env=environment,
-                        )
+                        result = await self._async_launcher(list(plan.argv), cwd=plan.cwd, env=plan.env)
                 except TimeoutError:
                     error = ToolError(side=side, exit_code=None, detail=f'timed out after {timeout:g}s')
                     return _SideOutcome(
@@ -611,7 +595,7 @@ class PrimerRunner:
                         duration_seconds=timeout,
                         returncode=None,
                     )
-                return self._parse_outcome(item, side=side, result=result, root=workspace.checkout)
+                return self._parse_outcome(item, side=side, result=result, root=execution.analysis_root(workspace))
             finally:
                 await asyncio.to_thread(shutil.rmtree, workspace.root, ignore_errors=True)
 
@@ -685,6 +669,7 @@ class PrimerRunner:
         semaphore: asyncio.Semaphore,
         base_command: tuple[str, ...],
         head_command: tuple[str, ...],
+        execution: ExecutionBackend,
     ) -> ProjectReport:
         """Analyze one project on both sides and diff the outcomes.
 
@@ -698,6 +683,8 @@ class PrimerRunner:
             Base detector command prefix.
         head_command : tuple[str, ...]
             Head detector command prefix.
+        execution : ExecutionBackend
+            Backend deciding where and how invocations run.
 
         Returns
         -------
@@ -705,8 +692,12 @@ class PrimerRunner:
             The per-project slice of the blast radius.
         """
         async with asyncio.TaskGroup() as group:
-            base_task = group.create_task(self._invoke(item, side='base', command=base_command, semaphore=semaphore))
-            head_task = group.create_task(self._invoke(item, side='head', command=head_command, semaphore=semaphore))
+            base_task = group.create_task(
+                self._invoke(item, side='base', command=base_command, semaphore=semaphore, execution=execution)
+            )
+            head_task = group.create_task(
+                self._invoke(item, side='head', command=head_command, semaphore=semaphore, execution=execution)
+            )
         return self._project_report(item, base_task.result(), head_task.result())
 
     async def _analyze_all(
@@ -715,6 +706,7 @@ class PrimerRunner:
         *,
         base_command: tuple[str, ...],
         head_command: tuple[str, ...],
+        execution: ExecutionBackend,
     ) -> tuple[ProjectReport, ...]:
         """Fan analysis out over projects under the jobs limit (contract §3).
 
@@ -726,6 +718,8 @@ class PrimerRunner:
             Base detector command prefix.
         head_command : tuple[str, ...]
             Head detector command prefix.
+        execution : ExecutionBackend
+            Backend deciding where and how invocations run.
 
         Returns
         -------
@@ -741,17 +735,32 @@ class PrimerRunner:
                         semaphore=semaphore,
                         base_command=base_command,
                         head_command=head_command,
+                        execution=execution,
                     )
                 )
                 for item in work
             ]
         return tuple(task.result() for task in tasks)
 
+    def _host_execution(self) -> HostExecution:
+        """Build the host execution backend of this runner's configuration.
+
+        Returns
+        -------
+        HostExecution
+            Sandboxed host execution (contract §3, §11).
+        """
+        return HostExecution(
+            isolation=self._isolation,
+            invocation_env=self._adapter.invocation_env,
+            passthrough_env=self._passthrough_env,
+        )
+
     def _manifest(
         self,
         *,
         detector_repo: str | None,
-        pair: PreparedPair | None,
+        pair: PreparedPair | PreparedContainerPair | None,
         base_cmd: tuple[str, ...] | None,
         head_cmd: tuple[str, ...] | None,
         fetches: tuple[FetchRecord, ...],
@@ -763,7 +772,7 @@ class PrimerRunner:
         ----------
         detector_repo : str | None
             Detector repository URL; absent for escape-hatch runs.
-        pair : PreparedPair | None
+        pair : PreparedPair | PreparedContainerPair | None
             Prepared environments; absent for escape-hatch runs.
         base_cmd : tuple[str, ...] | None
             Escape-hatch base command.
@@ -843,7 +852,12 @@ class PrimerRunner:
         with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
             work, corpus_fetches = self._fetch_corpus(projects)
             project_reports = asyncio.run(
-                self._analyze_all(work, base_command=(pair.base.executable,), head_command=(pair.head.executable,))
+                self._analyze_all(
+                    work,
+                    base_command=(pair.base.executable,),
+                    head_command=(pair.head.executable,),
+                    execution=self._host_execution(),
+                )
             )
         manifest = self._manifest(
             detector_repo=detector_repo,
@@ -883,7 +897,12 @@ class PrimerRunner:
         """
         work, corpus_fetches = self._fetch_corpus(projects)
         project_reports = asyncio.run(
-            self._analyze_all(work, base_command=tuple(base_cmd), head_command=tuple(head_cmd))
+            self._analyze_all(
+                work,
+                base_command=tuple(base_cmd),
+                head_command=tuple(head_cmd),
+                execution=self._host_execution(),
+            )
         )
         manifest = self._manifest(
             detector_repo=None,
@@ -891,6 +910,79 @@ class PrimerRunner:
             base_cmd=tuple(base_cmd),
             head_cmd=tuple(head_cmd),
             fetches=corpus_fetches,
+            pins=tuple(item.pin for item in work),
+        )
+        return _assemble_report(manifest, project_reports)
+
+    def run_container(
+        self,
+        projects: Sequence[CorpusProject],
+        *,
+        detector_repo: str,
+        base_ref: str,
+        head_ref: str,
+        environments: ContainerEnvironments,
+    ) -> Report:
+        """Run the primer with per-side ephemeral Docker containers (contract §3, §11).
+
+        Both detector refs build into fingerprint-keyed images and execute
+        inside their own network-less container. The containers live only
+        for the analysis context: they are force-removed when it exits, so
+        no container is running by the time the manifest is assembled or any
+        report output is rendered or written.
+
+        Parameters
+        ----------
+        projects : Sequence[CorpusProject]
+            Selected corpus projects, in run order.
+        detector_repo : str
+            Detector repository URL.
+        base_ref : str
+            Base detector ref.
+        head_ref : str
+            Head detector ref.
+        environments : ContainerEnvironments
+            Container environment builder running both refs.
+
+        Returns
+        -------
+        Report
+            The blast radius.
+
+        Raises
+        ------
+        RunnerError
+            If an operator-supplied native helper was admitted: a host
+            executable cannot run inside the container.
+        """
+        if self._passthrough_env:
+            names = ', '.join(sorted(self._passthrough_env))
+            msg = f'native helper passthrough ({names}) is not supported in --container mode'
+            raise RunnerError(msg)
+        with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
+            execution = ContainerExecution(
+                work_root=pair.work_root,
+                containers={'base': pair.base_container, 'head': pair.head_container},
+                invocation_env=dict(self._adapter.invocation_env),
+                user=container_user(),
+            )
+            work, corpus_fetches = self._fetch_corpus(projects)
+            project_reports = asyncio.run(
+                self._analyze_all(
+                    work,
+                    base_command=(self._adapter.executable,),
+                    head_command=(self._adapter.executable,),
+                    execution=execution,
+                )
+            )
+        # Both containers are force-removed by the context exit above: the
+        # manifest and every report output exist only after that point.
+        manifest = self._manifest(
+            detector_repo=detector_repo,
+            pair=pair,
+            base_cmd=None,
+            head_cmd=None,
+            fetches=(*pair.fetches, *corpus_fetches),
             pins=tuple(item.pin for item in work),
         )
         return _assemble_report(manifest, project_reports)
