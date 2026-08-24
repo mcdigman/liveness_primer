@@ -11,6 +11,7 @@ from typing import cast
 
 import pytest
 
+import liveness_primer.container as container_module
 from liveness_primer.container import (
     CONTAINER_WORK_ROOT,
     DEFAULT_CONTAINER_IMAGE,
@@ -203,6 +204,15 @@ def test_container_fingerprint_varies_by_inputs() -> None:
     assert base != container_fingerprint('https://r', 'b' * 40, adapter, 'docker 27', 'python:3.12-slim')
     assert base != container_fingerprint('https://r', 'a' * 40, adapter, 'docker 28', 'python:3.12-slim')
     assert base != container_fingerprint('https://r', 'a' * 40, adapter, 'docker 27', 'python:3.13-slim')
+
+
+def test_container_fingerprint_tracks_the_cache_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A cache-format / security revision must make every prior image miss the
+    # cache and rebuild, so it participates in the fingerprint material.
+    adapter = VultureAdapter()
+    before = container_fingerprint('https://r', 'a' * 40, adapter, 'docker 27', 'python:3.12-slim')
+    monkeypatch.setattr(container_module, '_CONTAINER_CACHE_FORMAT', 999)
+    assert before != container_fingerprint('https://r', 'a' * 40, adapter, 'docker 27', 'python:3.12-slim')
 
 
 def test_image_tag_embeds_the_fingerprint() -> None:

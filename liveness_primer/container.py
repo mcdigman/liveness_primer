@@ -51,6 +51,14 @@ CONTAINER_WORK_ROOT = PurePosixPath('/liveness/work')
 
 _DOCKER_TIMEOUT = 1800.0
 
+# Cache-format / security revision of the environment image. Bump whenever the
+# Dockerfile, the build inputs (e.g. per-side isolated wheelhouses), or the
+# container hardening change in a way that must not silently reuse an image an
+# earlier revision cached under an otherwise-identical fingerprint.
+#   1: initial ephemeral-container build.
+#   2: container hardening + per-side isolated fetch/build wheelhouses.
+_CONTAINER_CACHE_FORMAT = 2
+
 # Fork-bomb backstop for every container this module starts; generous enough
 # for any real detector or pip invocation.
 _PIDS_LIMIT = 4096
@@ -245,11 +253,13 @@ def container_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, docker_
     Returns
     -------
     str
-        Stable hex fingerprint over repository, SHA, recipe, base image,
-        and Docker runtime.
+        Stable hex fingerprint over the cache-format revision, repository,
+        SHA, recipe, base image, and Docker runtime. A cache-format bump
+        makes every prior image miss the cache and rebuild.
     """
     material = json.dumps(
         {
+            'cache_format': _CONTAINER_CACHE_FORMAT,
             'repo': repo,
             'sha': sha,
             'recipe': adapter.build_recipe.digest(),
