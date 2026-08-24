@@ -34,9 +34,11 @@ indent-width = 4
 # Assume Python 3.12
 target-version = "py312"
 
+output-prefer-rule-codes = true
+
 [lint]
 select = ["ALL"]
-ignore = ["SIM108", "COM812", "PLR2004", "PLR0912", "PLR0913", "PLR0915", "RUF069", "PLR0914", "PLR0917"]
+ignore = ["SIM108", "COM812", "PLR2004", "PLR0912", "PLR0913", "PLR0915", "RUF069", "PLR0914", "PLR0917", "RUF201"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
