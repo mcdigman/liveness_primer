@@ -23,7 +23,7 @@ from liveness_primer.container import (
     container_user,
     image_tag,
     promote_prefetched,
-    stage_wheelhouse,
+    stage_wheelhouses,
 )
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.execution import SideWorkspace
@@ -132,6 +132,16 @@ def test_prefetch_without_posix_ids_omits_the_user_mapping(tmp_path: Path, monke
     assert '--user' not in run_argv
 
 
+def test_prefetch_mounts_find_links_read_only(tmp_path: Path) -> None:
+    base_links = tmp_path / 'base-wheels'
+    launcher = RecordingLauncher()
+    DockerCli(launcher=launcher).prefetch('python:3.12-slim', ('tomli>=2.1',), tmp_path, find_links=base_links)
+    run_argv = launcher.calls[0]
+    # The base wheelhouse is offered read-only for reuse, never writable.
+    assert f'{base_links}:/liveness/base-links:ro' in run_argv
+    assert run_argv[run_argv.index('--find-links') + 1] == '/liveness/base-links'
+
+
 def test_freeze_parses_lines() -> None:
     launcher = RecordingLauncher(stdout='tomli==2.4.0\n\nvulture @ file:///x\n')
     assert DockerCli(launcher=launcher).freeze('t:1') == ('tomli==2.4.0', 'vulture @ file:///x')
@@ -199,6 +209,29 @@ def test_image_tag_embeds_the_fingerprint() -> None:
     assert image_tag('abc123') == 'liveness-primer/env:abc123'
 
 
+def requirement_wheel(requirement: str) -> str:
+    """Map a requirement string to the wheel filename the fake resolves it to.
+
+    Every version of a package resolves to one fixed wheel name, so the base
+    and head fetches of the same package produce the same filename — which is
+    what lets the head fetch reuse (and the promotion exclude) it.
+
+    Parameters
+    ----------
+    requirement : str
+        A PEP 508 requirement string.
+
+    Returns
+    -------
+    str
+        The scripted wheel filename.
+    """
+    package = requirement
+    for separator in ('>=', '<=', '==', '!=', '~=', '<', '>', ' '):
+        package = package.split(separator)[0]
+    return f'{package}-1.0-py3-none-any.whl'
+
+
 @dataclass
 class FakeDocker:
     """Scripted Docker runtime recording every operation (contract §15)."""
@@ -207,15 +240,17 @@ class FakeDocker:
     always_cached: bool = False
     remove_ok: bool = True
     wheel_symlink_target: Path | None = None
+    # Files a head-side build hook fabricates during the head fetch (the
+    # fetch with a find_links source); each maps a filename to its bytes.
+    fabricate: dict[str, bytes] = field(default_factory=dict)
     events: list[str] = field(default_factory=list)
     existing_images: set[str] = field(default_factory=set)
-    prefetches: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+    prefetches: list[tuple[str, tuple[str, ...], Path | None]] = field(default_factory=list)
     built: list[tuple[str, bool]] = field(default_factory=list)
     built_contexts: list[tuple[tuple[str, ...], str]] = field(default_factory=list)
     started: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     work_roots: list[Path] = field(default_factory=list)
-    wheel_names: tuple[str, ...] = ('tomli-2.4.0-py3-none-any.whl',)
 
     def identity(self) -> str:
         """Report a fixed identity.
@@ -247,15 +282,29 @@ class FakeDocker:
         self.built_contexts.append((names, read_small_text(context / 'Dockerfile')))
         self.existing_images.add(tag)
 
-    def prefetch(self, image: str, requirements: Sequence[str], destination: Path) -> None:
-        """Record the request and materialize scripted wheel files."""
+    def prefetch(
+        self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
+    ) -> None:
+        """Record the request and materialize scripted wheel files.
+
+        Every resolved requirement's wheel is written into the staging
+        destination — including ones a real ``pip download`` would copy back
+        from the read-only ``find_links`` source — so the promotion's
+        exclusion of base-owned names is exercised. A head fetch (the one
+        with a ``find_links`` source) additionally writes any fabricated
+        files, modelling an untrusted build hook.
+        """
         self.events.append('prefetch')
-        self.prefetches.append((image, tuple(requirements)))
-        for wheel in self.wheel_names:
+        self.prefetches.append((image, tuple(requirements), find_links))
+        for requirement in requirements:
+            wheel = requirement_wheel(requirement)
             if self.wheel_symlink_target is None:
                 atomic_write_bytes(destination / wheel, b'payload-' + wheel.encode('utf-8'))
             else:
                 (destination / wheel).symlink_to(self.wheel_symlink_target)
+        if find_links is not None:
+            for name, payload in self.fabricate.items():
+                atomic_write_bytes(destination / name, payload)
 
     def freeze(self, tag: str) -> tuple[str, ...]:
         """Pop the next scripted freeze.
@@ -342,21 +391,32 @@ def test_cold_pair_builds_images_and_runs_ephemeral_containers(tmp_path: Path, d
         assert docker.removed == []
     assert docker.removed == [pair.base_container, pair.head_container]
     assert not pair.work_root.exists()
-    # The union prefetch ran once, in the base image, before either build.
-    ((image, requirements),) = docker.prefetches
-    assert image == DEFAULT_CONTAINER_IMAGE
-    assert requirements == ('tomli>=2', 'setuptools>=61', 'tomli>=2.1')
-    assert docker.events.index('prefetch') < docker.events.index('build')
+    # Two fetches: base first (no find-links), then head reusing the base
+    # wheelhouse read-only — the shared closure is downloaded only once.
+    (base_fetch, head_fetch) = docker.prefetches
+    assert base_fetch == (DEFAULT_CONTAINER_IMAGE, ('tomli>=2', 'setuptools>=61'), None)
+    head_image, head_reqs, head_links = head_fetch
+    assert head_image == DEFAULT_CONTAINER_IMAGE
+    assert head_reqs == ('tomli>=2.1', 'setuptools>=61')
+    assert head_links is not None
+    prefetch_indexes = [index for index, event in enumerate(docker.events) if event == 'prefetch']
+    assert prefetch_indexes[0] < docker.events.index('build')
     git_fetches = [record for record in pair.fetches if record.kind == 'git']
     assert len(git_fetches) == 2
+    # The head fetch reuses the base wheels (same names) and adds nothing, so
+    # each shared wheel is recorded once.
     wheel_fetches = [record for record in pair.fetches if record.kind == 'wheel']
-    assert [record.name for record in wheel_fetches] == ['tomli-2.4.0-py3-none-any.whl']
+    assert sorted(record.name for record in wheel_fetches) == [
+        'setuptools-1.0-py3-none-any.whl',
+        'tomli-1.0-py3-none-any.whl',
+    ]
     # Build contexts are offline and self-contained: Dockerfile, the
-    # .git-less checkout, and the wheelhouse (contract §3, §11).
+    # .git-less checkout, and the shared wheelhouse (contract §3, §11).
     for names, dockerfile in docker.built_contexts:
         assert dockerfile.startswith(f'FROM {DEFAULT_CONTAINER_IMAGE}\n')
         assert 'detector/pyproject.toml' in names
-        assert 'wheelhouse/tomli-2.4.0-py3-none-any.whl' in names
+        assert 'wheelhouse/tomli-1.0-py3-none-any.whl' in names
+        assert 'wheelhouse/setuptools-1.0-py3-none-any.whl' in names
         assert not any(name.startswith('detector/.git') for name in names)
 
 
@@ -479,7 +539,22 @@ def test_promote_prefetched_reports_only_new_files(tmp_path: Path) -> None:
     assert (wheelhouse / 'fresh.whl').read_bytes() == b'fresh'
 
 
-def test_stage_wheelhouse_refuses_symlinked_cache_entries(tmp_path: Path) -> None:
+def test_promote_prefetched_drops_excluded_names(tmp_path: Path) -> None:
+    # A head fetch's staging holds base wheels the resolver copied back plus
+    # its own extras; base-owned names are dropped, never promoted, so the
+    # head side cannot introduce an artifact under a base dependency's name.
+    staging = tmp_path / 'staging'
+    wheelhouse = tmp_path / 'wheelhouse'
+    staging.mkdir()
+    wheelhouse.mkdir()
+    atomic_write_bytes(staging / 'base-dep.whl', b'forged')
+    atomic_write_bytes(staging / 'head-extra.whl', b'real')
+    assert promote_prefetched(staging, wheelhouse, exclude=frozenset({'base-dep.whl'})) == {'head-extra.whl'}
+    assert not (wheelhouse / 'base-dep.whl').exists()
+    assert (wheelhouse / 'head-extra.whl').read_bytes() == b'real'
+
+
+def test_stage_wheelhouses_refuses_symlinked_cache_entries(tmp_path: Path) -> None:
     # The persistent wheelhouse outlives runs: a symlink that slipped in
     # must never be dereferenced while assembling a build context.
     wheelhouse = tmp_path / 'wheelhouse'
@@ -487,10 +562,47 @@ def test_stage_wheelhouse_refuses_symlinked_cache_entries(tmp_path: Path) -> Non
     atomic_write_bytes(wheelhouse / 'good.whl', b'payload')
     (wheelhouse / 'evil.whl').symlink_to(tmp_path / 'host-secret')
     with pytest.raises(ContainerError, match='cached distribution is not a regular file'):
-        stage_wheelhouse(wheelhouse, tmp_path / 'context')
+        stage_wheelhouses([wheelhouse], tmp_path / 'context')
     (wheelhouse / 'evil.whl').unlink()
-    stage_wheelhouse(wheelhouse, tmp_path / 'clean-context')
+    stage_wheelhouses([wheelhouse], tmp_path / 'clean-context')
     assert (tmp_path / 'clean-context' / 'good.whl').read_bytes() == b'payload'
+
+
+def test_stage_wheelhouses_rejects_cross_source_name_collision(tmp_path: Path) -> None:
+    base = tmp_path / 'base'
+    head = tmp_path / 'head'
+    base.mkdir()
+    head.mkdir()
+    atomic_write_bytes(base / 'shared.whl', b'base')
+    atomic_write_bytes(head / 'shared.whl', b'head')
+    with pytest.raises(ContainerError, match='appears in more than one source'):
+        stage_wheelhouses([base, head], tmp_path / 'context')
+
+
+def test_head_fetch_cannot_poison_the_base_image(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    # A head-side build hook fabricates a wheel named for a base dependency
+    # during the head fetch. Because the base image builds only from the
+    # base wheelhouse — which the head fetch mounts read-only and whose names
+    # the promotion excludes — the forgery never reaches the base build, and
+    # the comparison's independence is preserved (contract §3, §11).
+    docker = FakeDocker(
+        freezes=deque([FREEZE_A, FREEZE_B]),
+        fabricate={'tomli-1.0-py3-none-any.whl': b'forged', 'sneaky-9.9-py3-none-any.whl': b'forged'},
+    )
+    with environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()):
+        pass
+    base_context, head_context = docker.built_contexts
+    base_names, _ = base_context
+    head_names, _ = head_context
+    # The base build never sees the forged base wheel or the sneaky extra:
+    # its own tomli wheel is the one the base fetch produced.
+    assert 'wheelhouse/sneaky-9.9-py3-none-any.whl' not in base_names
+    # The head fetch mounts the base wheelhouse read-only for reuse.
+    (_base_fetch, head_fetch) = docker.prefetches
+    _image, _reqs, head_links = head_fetch
+    assert head_links is not None
+    # The sneaky extra is confined to the head image, never the base one.
+    assert 'wheelhouse/sneaky-9.9-py3-none-any.whl' in head_names
 
 
 def test_unconfirmed_removal_fails_the_run(tmp_path: Path, detector_repo: DetectorRepo) -> None:

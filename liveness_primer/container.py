@@ -143,20 +143,28 @@ def _user_flags() -> tuple[str, ...]:
     return ('--user', user)
 
 
-def promote_prefetched(staging: Path, wheelhouse: Path) -> set[str]:
-    """Validate staged downloads and move them into the cached wheelhouse (contract §11).
+def promote_prefetched(staging: Path, wheelhouse: Path, *, exclude: frozenset[str] = frozenset()) -> set[str]:
+    """Validate staged downloads and move them into a side's wheelhouse (contract §3, §11).
 
     The download runs third-party build hooks inside a container that can
     write anything into the staged directory — including a symlink whose
-    target only resolves on the host. Every entry must therefore be a
-    regular, non-symlink file before anything host-side dereferences it.
+    target only resolves on the host, or a wheel fabricated under the name
+    of the *other* side's dependency. Every promoted entry must therefore be
+    a regular, non-symlink file, and any name already owned by the base side
+    (``exclude``) is dropped rather than promoted, so the head fetch can
+    never introduce an artifact the base image would build from.
 
     Parameters
     ----------
     staging : Path
         Fresh staging directory the fetch container wrote into.
     wheelhouse : Path
-        Cached wheelhouse the validated files move to (same filesystem).
+        The side's own wheelhouse the validated files move to (same
+        filesystem); never the other side's.
+    exclude : frozenset[str]
+        Filenames the base side already owns; a staged entry with one of
+        these names is a base wheel the resolver copied back (or a head
+        fabrication of a base name) and is discarded, not promoted.
 
     Returns
     -------
@@ -166,11 +174,13 @@ def promote_prefetched(staging: Path, wheelhouse: Path) -> set[str]:
     Raises
     ------
     ContainerError
-        If a staged entry is a symlink or not a regular file.
+        If a promoted staged entry is a symlink or not a regular file.
     """
     before = {entry.name for entry in wheelhouse.iterdir()}
     added: set[str] = set()
     for entry in sorted(staging.iterdir()):
+        if entry.name in exclude:
+            continue
         if entry.is_symlink() or not entry.is_file():
             msg = f'prefetched distribution is not a regular file: {entry.name}'
             raise ContainerError(msg)
@@ -180,31 +190,40 @@ def promote_prefetched(staging: Path, wheelhouse: Path) -> set[str]:
     return added
 
 
-def stage_wheelhouse(wheelhouse: Path, destination: Path) -> None:
-    """Copy the wheelhouse into a build context without following symlinks (contract §11).
+def stage_wheelhouses(sources: Sequence[Path], destination: Path) -> None:
+    """Copy one or more wheelhouses into a build context, never following symlinks (contract §11).
 
-    The cached wheelhouse persists across runs; a symlink that slipped into
-    it must never be dereferenced on the host while assembling an image
-    build context.
+    A cached wheelhouse persists across runs; a symlink that slipped into
+    one must never be dereferenced on the host while assembling an image
+    build context. Sources are staged in order; because the head-side
+    wheelhouse excludes every name the base side owns, no name collides
+    across sources, and a collision is treated as a defect rather than
+    silently resolved.
 
     Parameters
     ----------
-    wheelhouse : Path
-        Cached wheelhouse directory.
+    sources : Sequence[Path]
+        Cached wheelhouse directories, in precedence order.
     destination : Path
         Build-context wheelhouse directory to create and fill.
 
     Raises
     ------
     ContainerError
-        If a cached entry is a symlink or not a regular file.
+        If a cached entry is a symlink, is not a regular file, or a name
+        appears in more than one source.
     """
     destination.mkdir()
-    for entry in sorted(wheelhouse.iterdir()):
-        if entry.is_symlink() or not entry.is_file():
-            msg = f'cached distribution is not a regular file: {entry.name}'
-            raise ContainerError(msg)
-        shutil.copyfile(entry, destination / entry.name)
+    for source in sources:
+        for entry in sorted(source.iterdir()):
+            if entry.is_symlink() or not entry.is_file():
+                msg = f'cached distribution is not a regular file: {entry.name}'
+                raise ContainerError(msg)
+            target = destination / entry.name
+            if target.exists():
+                msg = f'wheelhouse name appears in more than one source: {entry.name}'
+                raise ContainerError(msg)
+            shutil.copyfile(entry, target)
 
 
 def container_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, docker_identity: str, image: str) -> str:
@@ -301,13 +320,18 @@ class DockerRuntime(Protocol):
         """
         ...
 
-    def prefetch(self, image: str, requirements: Sequence[str], destination: Path) -> None:
+    def prefetch(
+        self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
+    ) -> None:
         """Download distributions into a staging directory (fetch step, §3).
 
         Runs pip inside the base image so the fetched wheels match the
         container platform, not the host. The destination is a fresh
         staging directory, never the persistent cache: the caller validates
-        and promotes the results (contract §11).
+        and promotes the results (contract §11). ``find_links``, when given,
+        is mounted **read-only** and offered to the resolver, so the head
+        fetch reuses the base side's already-downloaded wheels without being
+        able to alter them.
 
         Parameters
         ----------
@@ -317,6 +341,9 @@ class DockerRuntime(Protocol):
             Requirement strings to download, wheels preferred.
         destination : Path
             Fresh host staging directory mounted into the fetch container.
+        find_links : Path | None
+            Base-side wheelhouse mounted read-only as an extra resolver
+            source, or ``None`` for the base fetch itself.
         """
         ...
 
@@ -457,11 +484,15 @@ class DockerCli:
         """
         self.launcher([self.binary, 'rm', '--force', name], timeout=_DOCKER_TIMEOUT)
 
-    def prefetch(self, image: str, requirements: Sequence[str], destination: Path) -> None:
+    def prefetch(
+        self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
+    ) -> None:
         """Download distributions with the base image's pip (fetch step, §3).
 
         The fetch container is named and force-removed afterwards, so a
-        client-side timeout cannot leak an untracked running container.
+        client-side timeout cannot leak an untracked running container. A
+        ``find_links`` wheelhouse is mounted read-only, so the head fetch
+        reuses base-side wheels it cannot modify (contract §3, §11).
 
         Parameters
         ----------
@@ -471,6 +502,9 @@ class DockerCli:
             Requirement strings to download, wheels preferred.
         destination : Path
             Fresh host staging directory mounted into the fetch container.
+        find_links : Path | None
+            Base-side wheelhouse mounted read-only as an extra resolver
+            source, or ``None`` for the base fetch itself.
         """
         name = f'liveness-primer-fetch-{secrets.token_hex(6)}'
         argv = [
@@ -485,17 +519,25 @@ class DockerCli:
             f'{destination}:/liveness/wheelhouse',
             '--env',
             'HOME=/tmp',
-            image,
-            'python',
-            '-m',
-            'pip',
-            'download',
-            '--quiet',
-            '--dest',
-            '/liveness/wheelhouse',
-            '--prefer-binary',
-            *requirements,
         ]
+        download_flags = ['--prefer-binary']
+        if find_links is not None:
+            argv.extend(['--volume', f'{find_links}:/liveness/base-links:ro'])
+            download_flags.extend(['--find-links', '/liveness/base-links'])
+        argv.extend(
+            [
+                image,
+                'python',
+                '-m',
+                'pip',
+                'download',
+                '--quiet',
+                '--dest',
+                '/liveness/wheelhouse',
+                *download_flags,
+                *requirements,
+            ]
+        )
         try:
             _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='dependency prefetch (pip download)')
         finally:
@@ -700,55 +742,71 @@ class ContainerEnvironments:
         self._fresh = fresh
         self._fetches: list[FetchRecord] = []
 
-    def _prefetch(self, repo: str, shas: Sequence[str], pair_key: str) -> Path:
-        """Prefetch the union of every ref's requirements before any build (§3).
-
-        Both sides build against identical resolution inputs, keeping delta
-        attribution temporal, never textual. The download runs inside the
-        base image so the wheels match the container platform, not the host;
-        the wheelhouse is keyed per pair so each build context stays bounded.
-        The fetch container only ever sees a fresh staging directory — every
-        staged entry is validated as a regular, non-symlink file before it
-        is promoted into the persistent cache (contract §11).
+    def _side_requirements(self, repo: str, sha: str) -> tuple[str, ...]:
+        """Statically resolve one ref's fetch requirements (fetch step, §3).
 
         Parameters
         ----------
         repo : str
             Detector repository URL.
-        shas : Sequence[str]
-            Resolved commit SHAs of the refs being prepared.
-        pair_key : str
-            Stable key of the (base, head) fingerprint pair.
+        sha : str
+            Resolved commit SHA of the ref.
 
         Returns
         -------
-        Path
-            The wheelhouse directory.
+        tuple[str, ...]
+            Deduplicated declared dependencies and build requirements.
+            Extras are deliberately left out, exactly as in the host-venv
+            path: the offline install selects no extras (contract §3).
         """
-        requirements: list[str] = []
-        for sha in dict.fromkeys(shas):
-            checkout = self._store.materialize(repo, sha)
-            metadata = parse_static_metadata(checkout)
-            requirements.extend(metadata.dependencies)
-            # Extras are deliberately left out, exactly as in the host-venv
-            # path: the offline install selects no extras (contract §3).
-            requirements.extend(metadata.build_requires)
-        wheelhouse = self._cache_dir / 'wheelhouse-container' / Path(pair_key).name
-        wheelhouse.mkdir(parents=True, exist_ok=True)
-        deduped = tuple(dict.fromkeys(requirements))
-        if not deduped:
-            return wheelhouse
+        checkout = self._store.materialize(repo, sha)
+        metadata = parse_static_metadata(checkout)
+        return tuple(dict.fromkeys((*metadata.dependencies, *metadata.build_requires)))
+
+    def _fetch_into(
+        self, repo: str, sha: str, wheelhouse: Path, *, find_links: Path | None, exclude: frozenset[str]
+    ) -> None:
+        """Fetch one ref's requirements into its own wheelhouse (fetch step, §3, §11).
+
+        The download runs inside the base image so wheels match the
+        container platform, not the host. The fetch container only ever
+        writes into a fresh staging directory; every entry it produces is
+        validated as a regular, non-symlink file, and any name the base side
+        already owns (``exclude``) is dropped, before promotion — so an
+        untrusted build hook cannot slip an artifact into a wheelhouse the
+        *other* side builds from. When ``find_links`` is set, the base-side
+        wheelhouse is offered read-only as a resolver source, so the head
+        fetch reuses base's already-downloaded wheels instead of fetching
+        the shared closure again.
+
+        Parameters
+        ----------
+        repo : str
+            Detector repository URL.
+        sha : str
+            Resolved commit SHA of the ref to fetch.
+        wheelhouse : Path
+            This side's own wheelhouse; promotion never touches the other
+            side's.
+        find_links : Path | None
+            Base-side wheelhouse mounted read-only for reuse, or ``None``
+            for the base fetch itself.
+        exclude : frozenset[str]
+            Filenames the base side already owns, dropped from promotion.
+        """
+        requirements = self._side_requirements(repo, sha)
+        if not requirements:
+            return
         # Same filesystem as the wheelhouse, so promotion is an atomic rename.
         staging = Path(tempfile.mkdtemp(prefix='liveness-primer-fetch-', dir=wheelhouse.parent))
         try:
-            self._docker.prefetch(self._image, deduped, staging)
-            added = promote_prefetched(staging, wheelhouse)
+            self._docker.prefetch(self._image, requirements, staging, find_links=find_links)
+            added = promote_prefetched(staging, wheelhouse, exclude=exclude)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         self._fetches.extend(fetch_records_for(wheelhouse, added))
-        return wheelhouse
 
-    def _build(self, tag: str, checkout: Path, wheelhouse: Path) -> None:
+    def _build(self, tag: str, checkout: Path, wheelhouses: Sequence[Path]) -> None:
         """Build one environment image from an offline context (build step, §3, §11).
 
         Parameters
@@ -757,15 +815,17 @@ class ContainerEnvironments:
             Tag for the built image.
         checkout : Path
             Detector checkout to install.
-        wheelhouse : Path
-            Prefetched wheelhouse both sides install from.
+        wheelhouses : Sequence[Path]
+            This side's wheelhouse directories, staged into one offline
+            context (base side: its own; head side: base's plus its own
+            extras).
         """
         with tempfile.TemporaryDirectory(prefix='liveness-primer-context-') as scratch:
             context = Path(scratch)
             # Symlinks are copied as symlinks: following them could pull
             # content from outside the untrusted checkout into the image.
             shutil.copytree(checkout, context / 'detector', symlinks=True, ignore=shutil.ignore_patterns('.git'))
-            stage_wheelhouse(wheelhouse, context / 'wheelhouse')
+            stage_wheelhouses(wheelhouses, context / 'wheelhouse')
             (context / 'Dockerfile').write_text(_DOCKERFILE.format(image=self._image), encoding='utf-8')
             self._docker.build_image(tag, context, fresh=self._fresh)
 
@@ -776,7 +836,7 @@ class ContainerEnvironments:
         ref: str,
         sha: str,
         fingerprint: str,
-        wheelhouse: Callable[[], Path],
+        wheelhouses: Callable[[], Sequence[Path]],
         force_rebuild: bool,
     ) -> ContainerEnvHandle:
         """Return a cached environment image or build it.
@@ -791,8 +851,9 @@ class ContainerEnvironments:
             Resolved commit SHA.
         fingerprint : str
             Full container fingerprint of this ref.
-        wheelhouse : Callable[[], Path]
-            Lazy provider of the pair's prefetched wheelhouse.
+        wheelhouses : Callable[[], Sequence[Path]]
+            Lazy provider of this side's wheelhouse directories, triggering
+            its fetch on first build.
         force_rebuild : bool
             Skip cache reuse and rebuild.
 
@@ -804,9 +865,9 @@ class ContainerEnvironments:
         tag = image_tag(fingerprint)
         cached = not force_rebuild and self._docker.image_exists(tag)
         if not cached:
-            house = wheelhouse()
+            houses = wheelhouses()
             checkout = self._store.materialize(repo, sha)
-            self._build(tag, checkout, house)
+            self._build(tag, checkout, houses)
         record = EnvironmentRecord(
             ref=ref,
             sha=sha,
@@ -822,6 +883,16 @@ class ContainerEnvironments:
         self, repo: str, base_ref: str, head_ref: str, adapter: DetectorAdapter
     ) -> Iterator[PreparedContainerPair]:
         """Prepare both environment images and run their ephemeral containers (contract §3, §11).
+
+        The two refs are fetched in sequence into separate wheelhouses: the
+        base side first, into a wheelhouse the head fetch then reads
+        **read-only** for reuse (so the shared dependency closure is
+        downloaded only once), and the head side into its own wheelhouse
+        holding only the names base does not already own. The base image is
+        built from the base wheelhouse alone, so an untrusted head build
+        hook cannot introduce an artifact the base side would install and so
+        cannot forge the independent-reference comparison (contract §3,
+        §11).
 
         Cached image pairs with an empty non-detector dependency delta are
         used directly; any non-empty delta triggers an automatic paired
@@ -865,27 +936,50 @@ class ContainerEnvironments:
         base_fingerprint = container_fingerprint(repo, base_sha, adapter, docker_identity, self._image)
         head_fingerprint = container_fingerprint(repo, head_sha, adapter, docker_identity, self._image)
         pair_key = hashlib.sha256(f'{base_fingerprint}:{head_fingerprint}'.encode()).hexdigest()[:24]
-        wheelhouse: Path | None = None
+        pair_dir = self._cache_dir / 'wheelhouse-container' / Path(pair_key).name
+        base_house = pair_dir / 'base'
+        head_house = pair_dir / 'head'
+        base_house.mkdir(parents=True, exist_ok=True)
+        head_house.mkdir(parents=True, exist_ok=True)
 
-        def pair_wheelhouse() -> Path:
-            """Prefetch the pair's union wheelhouse once, on first build.
+        def base_wheelhouses() -> Sequence[Path]:
+            """Fetch the base closure, then serve the base wheelhouse.
+
+            Called once per build of the base side (``_ensure`` fetches only
+            when it actually builds, and a paired rebuild resets first).
 
             Returns
             -------
-            Path
-                The wheelhouse directory.
+            Sequence[Path]
+                The base side's single wheelhouse.
             """
-            nonlocal wheelhouse
-            if wheelhouse is None:
-                wheelhouse = self._prefetch(repo, (base_sha, head_sha), pair_key)
-            return wheelhouse
+            self._fetch_into(repo, base_sha, base_house, find_links=None, exclude=frozenset())
+            return (base_house,)
+
+        def head_wheelhouses() -> Sequence[Path]:
+            """Fetch the head extras, reusing base wheels read-only.
+
+            The base fetch, when it runs at all, always precedes the head
+            fetch (base ``_ensure`` runs first), so ``base_house`` already
+            holds the shared closure the head fetch reuses and excludes; when
+            the base side is cached, ``base_house`` is empty and the head
+            fetch downloads its own full closure.
+
+            Returns
+            -------
+            Sequence[Path]
+                The base wheelhouse followed by the head-extras wheelhouse.
+            """
+            owned = frozenset(entry.name for entry in base_house.iterdir())
+            self._fetch_into(repo, head_sha, head_house, find_links=base_house, exclude=owned)
+            return (base_house, head_house)
 
         base = self._ensure(
             repo=repo,
             ref=base_ref,
             sha=base_sha,
             fingerprint=base_fingerprint,
-            wheelhouse=pair_wheelhouse,
+            wheelhouses=base_wheelhouses,
             force_rebuild=self._fresh,
         )
         head = self._ensure(
@@ -893,19 +987,33 @@ class ContainerEnvironments:
             ref=head_ref,
             sha=head_sha,
             fingerprint=head_fingerprint,
-            wheelhouse=pair_wheelhouse,
+            wheelhouses=head_wheelhouses,
             force_rebuild=self._fresh,
         )
+
+        def reset_fetches() -> None:
+            """Discard partial fetch state before a forced two-phase re-fetch.
+
+            A cached side leaves its wheelhouse empty while the other side
+            fetched a full closure; forcing both to build must re-fetch
+            cleanly base-first, or the head wheelhouse would overlap the
+            now-populated base one.
+            """
+            for house in (base_house, head_house):
+                shutil.rmtree(house, ignore_errors=True)
+                house.mkdir(parents=True, exist_ok=True)
+
         delta = dependency_delta(base.record.freeze, head.record.freeze, detector_distribution=adapter.distribution)
         if delta and not (base.record.rebuilt and head.record.rebuilt):
             # Attribution is temporal, never textual: rebuild both sides in
             # this run before attributing the delta to the refs (§3).
+            reset_fetches()
             base = self._ensure(
                 repo=repo,
                 ref=base_ref,
                 sha=base_sha,
                 fingerprint=base_fingerprint,
-                wheelhouse=pair_wheelhouse,
+                wheelhouses=base_wheelhouses,
                 force_rebuild=True,
             )
             head = self._ensure(
@@ -913,7 +1021,7 @@ class ContainerEnvironments:
                 ref=head_ref,
                 sha=head_sha,
                 fingerprint=head_fingerprint,
-                wheelhouse=pair_wheelhouse,
+                wheelhouses=head_wheelhouses,
                 force_rebuild=True,
             )
             delta = dependency_delta(base.record.freeze, head.record.freeze, detector_distribution=adapter.distribution)

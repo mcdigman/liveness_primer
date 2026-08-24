@@ -35,12 +35,20 @@ point*: pre-triage, triage, or post-triage (§10).
   analysis steps moved into Docker. Each ref installs into a fingerprint-keyed
   environment image (repository, resolved SHA, adapter build-recipe hash, base image
   reference, Docker runtime identity) built offline (`docker build --network none`) from
-  a per-pair wheelhouse prefetched during the fetch step by the base image's own pip, so
-  wheels match the container platform rather than the host. The fetch container writes
-  only into a fresh staging directory whose every entry is validated as a regular,
-  non-symlink file before promotion into the persistent wheelhouse, and build-context
-  assembly re-validates and never follows symlinks — a build hook must not be able to
-  make the host dereference a planted link (§11). Each side of the run then executes
+  a wheelhouse prefetched during the fetch step by the base image's own pip, so
+  wheels match the container platform rather than the host. The two refs are fetched into
+  **separate per-side wheelhouses**, base first; the head fetch then mounts the base
+  wheelhouse **read-only** as a `--find-links` source, so the shared dependency closure is
+  downloaded only once while the base image is built from the base wheelhouse alone. The
+  head wheelhouse holds only the names the base side does not already own. A fetch step
+  runs untrusted third-party build hooks (a detector ref's declared dependencies are
+  ref-controlled), so this keeps a head-side hook from forging a wheel under a base
+  dependency's name and thereby poisoning the base image and the independent-reference
+  comparison. Each fetch container writes only into a fresh staging directory whose every
+  promoted entry is validated as a regular, non-symlink file (and any base-owned name is
+  dropped) before promotion into that side's wheelhouse, and build-context assembly
+  re-validates and never follows symlinks — a build hook must not be able to make the host
+  dereference a planted link (§11). Each side of the run then executes
   inside its own **ephemeral** container started from its image with networking disabled
   (`docker exec` per invocation, per-invocation workspaces under a per-side bind mount —
   each container sees only its own side's workspaces, so neither side's untrusted code

@@ -17,10 +17,15 @@ independently of the package version; `liveness-primer --version` prints both.
   from a fetch-step prefetch inside the base image) and executes each side of
   the comparison in its own ephemeral, network-less, hardened container
   (invoking-user PID 1, all capabilities dropped, `no-new-privileges`, PID
-  limit, read-only root filesystem, per-side workspace mounts). Prefetched
-  distributions are staged and validated as regular files before entering the
-  persistent wheelhouse, and helper containers are named and tracked so a
-  client-side timeout cannot leak one. Both analysis containers are
+  limit, read-only root filesystem, per-side workspace mounts). The two
+  revisions are fetched into separate per-side wheelhouses — base first, then
+  head reusing the base wheelhouse read-only via `--find-links` so the shared
+  closure downloads once — and the base image builds from the base wheelhouse
+  alone, so an untrusted head-side build hook cannot forge a wheel under a
+  base dependency's name. Prefetched distributions are staged and validated as
+  regular files (base-owned names excluded) before entering a side's
+  wheelhouse, and helper containers are named and tracked so a client-side
+  timeout cannot leak one. Both analysis containers are
   force-removed when the analysis finishes, before the report or any
   `--json-out` artifact is written; an unconfirmed removal fails the run.
   `--container-image IMAGE` overrides the `python:3.12-slim` default base

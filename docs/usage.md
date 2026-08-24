@@ -131,7 +131,11 @@ liveness-primer run --tool vulture \
 
 Each revision installs into a fingerprint-cached environment image built
 offline (`docker build --network none`) from dependencies prefetched during
-the fetch step; each side of the run then executes inside its own hardened
+the fetch step. The two revisions are fetched into separate wheelhouses —
+base first, then head reusing the base wheelhouse read-only so the shared
+dependencies download only once — and the base image builds from the base
+wheelhouse alone, so an untrusted head-side build hook cannot forge a wheel
+into the base build. Each side of the run then executes inside its own hardened
 container — networking disabled, running as the invoking user with all
 capabilities dropped, a PID limit, and a read-only root filesystem, with
 only its own side's workspaces mounted. Both containers are destroyed when
