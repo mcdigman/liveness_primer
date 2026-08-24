@@ -10,14 +10,19 @@ import stat
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import cast
+from pathlib import Path, PurePosixPath
+from typing import cast, override
 
 import pytest
 
 import liveness_primer.runner as runner_module
 from liveness_primer.config import CorpusProject, ToolSettings
-from liveness_primer.container import CONTAINER_ISOLATION, DEFAULT_CONTAINER_IMAGE, ContainerEnvironments
+from liveness_primer.container import (
+    CONTAINER_ISOLATION,
+    CONTAINER_WORK_ROOT,
+    DEFAULT_CONTAINER_IMAGE,
+    ContainerEnvironments,
+)
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
 from liveness_primer.filesystem import atomic_write_text, read_small_text
@@ -43,6 +48,26 @@ MOVED_FINDING = FakeFinding(path='pkg/mod.py', line=9, symbol='unused_helper', k
 NEW_FINDING = FakeFinding(path='pkg/extra.py', line=2, symbol='fresh', kind='variable', confidence=100)
 
 DEFAULT_OPTIONS = RunOptions(jobs=2, timeout=30.0)
+
+
+@dataclass
+class WorkspaceCheckingDocker(FakeDocker):
+    """Fake runtime checking cleanup precedes workspace deletion."""
+
+    invocation_workspaces: dict[str, Path] = field(default_factory=dict)
+    workspace_existed_at_removal: list[bool] = field(default_factory=list)
+
+    @override
+    def remove_container(self, name: str) -> bool:
+        """Record whether the named invocation workspace still exists.
+
+        Returns
+        -------
+        bool
+            The scripted removal outcome.
+        """
+        self.workspace_existed_at_removal.append(self.invocation_workspaces[name].is_dir())
+        return super().remove_container(name)
 
 
 @pytest.fixture
@@ -1128,8 +1153,15 @@ def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject,
         assert cwd is None
         assert env is None
         await asyncio.sleep(0)
-        events.append('exec')
+        container_name = argv[argv.index('--name') + 1]
+        events.append(f'exec:{container_name}')
         exec_argvs.append(tuple(argv))
+        volume = argv[argv.index('--volume') + 1]
+        host_root = Path(volume.split(':', maxsplit=1)[0])
+        home_entry = next(entry for entry in argv if entry.startswith('HOME='))
+        container_home = PurePosixPath(home_entry.removeprefix('HOME='))
+        relative_home = container_home.relative_to(CONTAINER_WORK_ROOT)
+        assert host_root.joinpath(*relative_home.parts).is_dir()
         if any(element.endswith('-base') for element in argv):
             stdout = "pkg/mod.py:5: unused function 'unused_helper' (60% confidence)\n"
         else:
@@ -1167,27 +1199,86 @@ def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject,
     assert manifest.isolation_enforced is True
     assert manifest.installer == f'docker 99.9; image {DEFAULT_CONTAINER_IMAGE}'
     # The manifest records the container interpreter, not the host's.
-    assert manifest.python_version == '3.12.99'
+    assert manifest.python_version == '3.14.99'
     assert manifest.base is not None
     assert manifest.head is not None
     assert manifest.base.sha != manifest.head.sha
     assert manifest.base.ref == 'base-branch'
-    # Both invocations were docker execs into per-side workspaces under the
-    # shared mount, running the console script from the container's PATH.
+    # Both invocations were named containers with per-side workspace mounts,
+    # running the console script from the environment image's PATH.
     assert len(exec_argvs) == 2
     for argv in exec_argvs:
-        assert argv[:2] == ('podman', 'exec')
+        assert argv[:2] == ('podman', 'run')
+        assert argv[argv.index('--network') + 1] == 'none'
         workdir = argv[argv.index('--workdir') + 1]
         assert workdir.startswith('/liveness/work/liveness-primer-side-')
         assert workdir.endswith('/checkout')
+        home = argv[argv.index('--env') + 1]
+        assert home.startswith('HOME=/liveness/work/liveness-primer-side-')
+        assert '/liveness-primer-home-' in home
         assert argv[-2:] == ('vulture', '.')
-    # Both ephemeral containers were removed after the last detector exec
+    # Both invocation containers were removed after their detector launch
     # and before the report could be assembled (contract §3, §11).
-    removals = [index for index, event in enumerate(events) if event.startswith('rm:')]
-    execs = [index for index, event in enumerate(events) if event == 'exec']
-    assert len(removals) == 2
-    assert removals == [len(events) - 2, len(events) - 1]
-    assert max(execs) < min(removals)
+    container_names = {argv[argv.index('--name') + 1] for argv in exec_argvs}
+    assert {event.removeprefix('rm:') for event in events if event.startswith('rm:')} == container_names
+    for name in container_names:
+        assert events.index(f'exec:{name}') < events.index(f'rm:{name}')
+
+
+def test_container_timeout_force_removes_each_invocation(
+    tmp_path: Path, corpus_project: CorpusProject, fake_detector_repo: str
+) -> None:
+    project = corpus_project.model_copy(update={'tools': {'vulture': ToolSettings(timeout=0.05)}})
+    docker = WorkspaceCheckingDocker()
+    environments = ContainerEnvironments(CheckoutStore(tmp_path / 'cache'), tmp_path / 'cache', docker=docker)
+    launches: list[tuple[str, ...]] = []
+    cancelled: list[str] = []
+
+    async def hanging_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        del cwd, env
+        launched = tuple(argv)
+        launches.append(launched)
+        name = launched[launched.index('--name') + 1]
+        volume = launched[launched.index('--volume') + 1]
+        side_root = Path(volume.split(':', maxsplit=1)[0])
+        workdir = PurePosixPath(launched[launched.index('--workdir') + 1])
+        docker.invocation_workspaces[name] = side_root / workdir.relative_to(CONTAINER_WORK_ROOT).parts[0]
+        try:
+            await asyncio.sleep(30.0)
+        except asyncio.CancelledError:
+            cancelled.append(name)
+            raise
+        msg = 'timeout did not cancel the attached container client'
+        raise AssertionError(msg)
+
+    runner = PrimerRunner(
+        adapter=get_adapter('vulture'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=CONTAINER_ISOLATION,
+        options=DEFAULT_OPTIONS,
+        async_launcher=hanging_launcher,
+    )
+    report = runner.run_container(
+        [project],
+        detector_repo=fake_detector_repo,
+        base_ref='base-branch',
+        head_ref='head-branch',
+        environments=environments,
+    )
+    (project_report,) = report.projects
+    assert len(project_report.errors) == 2
+    assert all(error.exit_code is None for error in project_report.errors)
+    assert all('timed out after 0.05s' in error.detail for error in project_report.errors)
+    names = {argv[argv.index('--name') + 1] for argv in launches}
+    assert set(cancelled) == names
+    assert set(docker.removed) == names
+    assert len(docker.removed) == 2
+    assert docker.workspace_existed_at_removal == [True, True]
 
 
 def test_container_run_stages_the_skylos_neutral_config(
@@ -1209,10 +1300,11 @@ def test_container_run_stages_the_skylos_neutral_config(
         del cwd, env
         await asyncio.sleep(0)
         exec_argvs.append(tuple(argv))
-        # The staged copy exists under both side mounts while execs run.
-        for work_root in docker.work_roots:
-            staged = work_root / 'invocation-env' / 'SKYLOS_CONFIG_FILE' / 'skylos_neutral_config.toml'
-            assert '[skylos]' in staged.read_text(encoding='utf-8')
+        # The staged copy exists under the invocation's side mount.
+        volume = argv[argv.index('--volume') + 1]
+        work_root = Path(volume.split(':', maxsplit=1)[0])
+        staged = work_root / 'invocation-env' / 'SKYLOS_CONFIG_FILE' / 'skylos_neutral_config.toml'
+        assert '[skylos]' in staged.read_text(encoding='utf-8')
         return LaunchResult(
             argv=tuple(argv), returncode=0, stdout='{}', stderr='', duration_seconds=0.0, timed_out=False
         )

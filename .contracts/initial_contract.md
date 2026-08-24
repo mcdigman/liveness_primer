@@ -48,14 +48,14 @@ point*: pre-triage, triage, or post-triage (§10).
   promoted entry is validated as a regular, non-symlink file (and any base-owned name is
   dropped) before promotion into that side's wheelhouse, and build-context assembly
   re-validates and never follows symlinks — a build hook must not be able to make the host
-  dereference a planted link (§11). Each side of the run then executes
-  inside its own **ephemeral** container started from its image with networking disabled
-  (`docker exec` per invocation, per-invocation workspaces under a per-side bind mount —
-  each container sees only its own side's workspaces, so neither side's untrusted code
-  can reach the other's checkout copies); both containers are force-removed when the
-  analysis context exits — before the manifest is assembled and before any report output
-  is rendered or written — and, when the analysis itself succeeded, a removal the daemon
-  cannot confirm fails the run instead of letting output be written. Images are
+  dereference a planted link (§11). Every detector invocation then executes in its own
+  named **ephemeral** container started from that side's image with networking disabled
+  and a per-invocation workspace under a per-side bind mount (so neither side's untrusted
+  code can reach the other's checkout copies). The runner force-removes that container in
+  the invocation's `finally`, after detector completion or timeout and before deleting the
+  writable workspace. The analysis context tracks and reaps any leftover before the
+  manifest is assembled or report output is rendered or written; when analysis succeeded,
+  a removal the daemon cannot confirm fails the run instead of allowing output. Images are
   cached by the Docker image store (which also serializes concurrent builds of a tag);
   `--fresh` forces `--no-cache` rebuilds, and paired same-run delta resolution applies
   unchanged. The `docker` CLI is a host requirement of this mode only, probed at run
@@ -278,14 +278,14 @@ point*: pre-triage, triage, or post-triage (§10).
   manifest records whether isolation was enforced, and reports flag unenforced runs. This
   also limits the blast radius of a malicious corpus repository exploiting a detector
   parser bug. In `--container` mode (§3) the runtime itself enforces `--network none` on
-  builds, containers, and every exec, on every host platform — the netns probe is not
+  builds and every container, on every host platform — the netns probe is not
   used, and the mode records enforced isolation everywhere, including hosts where the
   host-venv path is best-effort. Every container the mode starts (fetch, freeze, and
   analysis) is additionally hardened: it runs as the invoking host user (PID 1 included —
   the untrusted detector build shaped the image, so even its entrypoint binaries are
   untrusted), with all capabilities dropped, `no-new-privileges`, a PID limit, and a
-  read-only root filesystem with a tmpfs `/tmp`; helper containers are named and
-  force-removed so a client-side timeout cannot leak one. A host that cannot supply
+  read-only root filesystem with a tmpfs `/tmp`; helper and analysis containers are named
+  and force-removed so a client-side timeout cannot leak one. A host that cannot supply
   POSIX user ids cannot honor the user mapping, and `--container` refuses to run there
   rather than silently degrading to the untrusted image's default user. Hard memory/CPU caps are
   deliberately not imposed: the §3 per-(project, tool) timeout is the resource bound,

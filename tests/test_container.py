@@ -51,6 +51,10 @@ from tests.test_envcache import (
 __all__ = ['detector_repo']
 
 
+def test_default_container_image_uses_current_python() -> None:
+    assert DEFAULT_CONTAINER_IMAGE == 'python:3.14-slim'
+
+
 def test_docker_cli_rejects_async_launcher() -> None:
     with pytest.raises(LauncherError, match='launcher must be synchronous'):
         DockerCli(launcher=cast('SyncLauncher', run_async))
@@ -180,23 +184,6 @@ def test_python_version_queries_the_image_offline() -> None:
         DockerCli(launcher=RecordingLauncher(returncode=1)).python_version('t:1')
 
 
-def test_start_container_argv_is_network_less_and_hardened(tmp_path: Path) -> None:
-    launcher = RecordingLauncher()
-    DockerCli(launcher=launcher).start_container('t:1', 'primer-base', work_root=tmp_path)
-    (argv,) = launcher.calls
-    assert argv[argv.index('--network') + 1] == 'none'
-    assert argv[argv.index('--name') + 1] == 'primer-base'
-    assert_hardened(argv)
-    # PID 1 (the untrusted image's own `sleep`) runs as the mapped host
-    # user, never as the image default.
-    assert argv[argv.index('--user') + 1] == container_user()
-    assert f'{tmp_path}:{CONTAINER_WORK_ROOT}' in argv
-    assert argv[-2:] == ('sleep', 'infinity')
-    assert {'--detach', '--rm', '--init'} <= set(argv)
-    with pytest.raises(ContainerError, match='container start failed'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).start_container('t:1', 'primer-base', work_root=tmp_path)
-
-
 def test_remove_container_reports_the_outcome() -> None:
     launcher = RecordingLauncher()
     assert DockerCli(launcher=launcher).remove_container('primer-base') is True
@@ -281,9 +268,7 @@ class FakeDocker:
     staging_paths: list[Path] = field(default_factory=list)
     built: list[tuple[str, bool]] = field(default_factory=list)
     built_contexts: list[tuple[tuple[str, ...], str]] = field(default_factory=list)
-    started: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
-    work_roots: list[Path] = field(default_factory=list)
 
     def identity(self) -> str:
         """Report a fixed identity.
@@ -360,18 +345,11 @@ class FakeDocker:
         Returns
         -------
         str
-            ``3.12.99``.
+            ``3.14.99``.
         """
         del tag
         self.events.append('pyver')
-        return '3.12.99'
-
-    def start_container(self, tag: str, name: str, *, work_root: Path) -> None:
-        """Record the started container and its mounted root."""
-        del tag
-        self.events.append(f'start:{name}')
-        self.started.append(name)
-        self.work_roots.append(work_root)
+        return '3.14.99'
 
     def remove_container(self, name: str) -> bool:
         """Record the removal.
@@ -439,17 +417,16 @@ def test_build_refuses_checkout_outside_the_cache(
     ):
         pass
     assert docker.built == []
-    assert docker.started == []
+    assert docker.removed == []
 
 
-def test_cold_pair_builds_images_and_runs_ephemeral_containers(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]))
     with environments(tmp_path, docker).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
     ) as pair:
         assert pair.installer_identity == f'docker 99.9; image {DEFAULT_CONTAINER_IMAGE}'
-        assert pair.binary == 'docker'
-        assert pair.python_version == '3.12.99'
+        assert pair.python_version == '3.14.99'
         assert pair.base.record.rebuilt
         assert not pair.base.record.from_cache
         assert pair.head.record.rebuilt
@@ -458,17 +435,14 @@ def test_cold_pair_builds_images_and_runs_ephemeral_containers(tmp_path: Path, d
         assert pair.base.image == image_tag(pair.base.record.fingerprint)
         assert pair.environment_delta == ()
         assert pair.work_root.is_dir()
-        assert pair.base_container == f'{pair.work_root.name}-base'
-        assert pair.head_container == f'{pair.work_root.name}-head'
-        assert docker.started == [pair.base_container, pair.head_container]
-        # Each container mounts only its own side's workspace root, so
+        assert pair.active_containers == set()
+        # Each invocation mounts only its own side's workspace root, so
         # neither side's untrusted code can reach the other's checkout copy.
-        assert docker.work_roots == [pair.base_work_root, pair.head_work_root]
         assert pair.base_work_root != pair.head_work_root
         assert pair.base_work_root.parent == pair.work_root
         assert pair.head_work_root.parent == pair.work_root
         assert docker.removed == []
-    assert docker.removed == [pair.base_container, pair.head_container]
+    assert docker.removed == []
     assert not pair.work_root.exists()
     # Two fetches: base first (no find-links), then head reusing the base
     # wheelhouse read-only — the shared closure is downloaded only once.
@@ -550,19 +524,36 @@ def test_fresh_forces_image_rebuilds(tmp_path: Path, detector_repo: DetectorRepo
     assert not pair.base.record.from_cache
 
 
-def explode_during_analysis(pair_environments: ContainerEnvironments, repo: str) -> None:
-    with pair_environments.prepare_pair(repo, 'base-branch', 'head-branch', VultureAdapter()):
+def prepare_with_leftover(pair_environments: ContainerEnvironments, repo: str, work_roots: list[Path]) -> None:
+    """Leave one registered container for context-exit cleanup."""
+    with pair_environments.prepare_pair(repo, 'base-branch', 'head-branch', VultureAdapter()) as pair:
+        work_roots.append(pair.work_root)
+        pair.active_containers.add('primer-orphan')
+
+
+def explode_with_leftover(pair_environments: ContainerEnvironments, repo: str, work_roots: list[Path]) -> None:
+    """Raise while one registered container still needs cleanup.
+
+    Raises
+    ------
+    RuntimeError
+        Always, while the analysis context is active.
+    """
+    with pair_environments.prepare_pair(repo, 'base-branch', 'head-branch', VultureAdapter()) as pair:
+        work_roots.append(pair.work_root)
+        pair.active_containers.add('primer-orphan')
         msg = 'analysis exploded'
         raise RuntimeError(msg)
 
 
-def test_containers_are_removed_when_the_analysis_raises(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+def test_leftover_containers_are_removed_when_the_analysis_raises(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]))
+    work_roots: list[Path] = []
     with pytest.raises(RuntimeError, match='analysis exploded'):
-        explode_during_analysis(environments(tmp_path, docker), detector_repo.url)
-    assert len(docker.started) == 2
-    assert docker.removed == docker.started
-    assert not docker.work_roots[0].exists()
+        explode_with_leftover(environments(tmp_path, docker), detector_repo.url, work_roots)
+    assert docker.removed == ['primer-orphan']
+    assert len(work_roots) == 1
+    assert not work_roots[0].exists()
 
 
 def test_same_sha_on_both_sides_shares_the_image(tmp_path: Path, detector_repo: DetectorRepo) -> None:
@@ -603,7 +594,7 @@ def test_prefetched_symlink_never_reaches_the_wheelhouse(tmp_path: Path, detecto
     ):
         pass
     assert docker.built == []
-    assert docker.started == []
+    assert docker.removed == []
     assert all(not path.exists() for path in docker.staging_paths)
 
 
@@ -788,7 +779,7 @@ def test_unsafe_container_cache_directories_are_rejected(
         pass
     assert read_small_text(victim / 'sentinel.txt') == 'untouched'
     assert docker.built == []
-    assert docker.started == []
+    assert docker.removed == []
 
 
 def test_container_wheelhouse_reset_failure_is_a_domain_error(
@@ -813,7 +804,7 @@ def test_container_wheelhouse_reset_failure_is_a_domain_error(
     ):
         pass
     assert docker.built == []
-    assert docker.started == []
+    assert docker.removed == []
 
 
 def test_pair_wheelhouse_lock_timeout_fails_the_run(tmp_path: Path, detector_repo: DetectorRepo) -> None:
@@ -854,12 +845,9 @@ def test_unconfirmed_removal_fails_the_run(tmp_path: Path, detector_repo: Detect
     # Contract §3, §11: report output must never be written while an
     # analysis container may still exist, so the success path fails closed.
     docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]), remove_ok=False)
-    with (
-        pytest.raises(ContainerError, match='could not confirm removal of analysis container'),
-        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
-    ):
-        pass
-    assert docker.removed == docker.started
+    with pytest.raises(ContainerError, match='could not confirm removal of analysis container'):
+        prepare_with_leftover(environments(tmp_path, docker), detector_repo.url, [])
+    assert docker.removed == ['primer-orphan']
 
 
 def test_analysis_failure_is_not_masked_by_removal_failure(tmp_path: Path, detector_repo: DetectorRepo) -> None:
@@ -867,67 +855,114 @@ def test_analysis_failure_is_not_masked_by_removal_failure(tmp_path: Path, detec
     # already prevents report output and must reach the caller unmasked.
     docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]), remove_ok=False)
     with pytest.raises(RuntimeError, match='analysis exploded'):
-        explode_during_analysis(environments(tmp_path, docker), detector_repo.url)
-    assert docker.removed == docker.started
+        explode_with_leftover(environments(tmp_path, docker), detector_repo.url, [])
+    assert docker.removed == ['primer-orphan']
 
 
-def workspace_under(work_root: Path) -> SideWorkspace:
+def workspace_under(work_root: Path, side: Literal['base', 'head']) -> SideWorkspace:
     root = work_root / 'liveness-primer-side-x1'
-    return SideWorkspace(root=root, checkout=root / 'checkout', home=root / 'home')
+    return SideWorkspace(root=root, checkout=root / 'checkout', home=root / 'liveness-primer-home-y2', side=side)
 
 
 def side_execution(tmp_path: Path) -> ContainerExecution:
     return ContainerExecution(
         work_roots={'base': tmp_path / 'base', 'head': tmp_path / 'head'},
-        containers={'base': 'primer-base', 'head': 'primer-head'},
+        images={'base': 'base-image', 'head': 'head-image'},
         invocation_env={},
+        docker=FakeDocker(),
+        active_containers=set(),
     )
 
 
 def test_execution_workspaces_live_under_the_side_mounted_root(tmp_path: Path) -> None:
     execution = side_execution(tmp_path)
-    assert execution.workspace_parent('base') == tmp_path / 'base'
-    assert execution.workspace_parent('head') == tmp_path / 'head'
+    assert execution.workspace_parents == {'base': tmp_path / 'base', 'head': tmp_path / 'head'}
 
 
-def test_launch_plan_builds_a_docker_exec(tmp_path: Path) -> None:
+def test_launch_plan_builds_a_named_hardened_container(tmp_path: Path) -> None:
+    docker = FakeDocker()
+    active: set[str] = set()
     execution = ContainerExecution(
         work_roots={'base': tmp_path / 'base', 'head': tmp_path / 'head'},
-        containers={'base': 'primer-base', 'head': 'primer-head'},
+        images={'base': 'base-image', 'head': 'head-image'},
         invocation_env={'SKYLOS_GREP_BUDGET': '5'},
+        docker=docker,
+        active_containers=active,
         user='501:20',
     )
-    workspace = workspace_under(tmp_path / 'head')
-    plan = execution.launch_plan(side='head', argv=('vulture', '.'), workspace=workspace)
+    workspace = workspace_under(tmp_path / 'head', 'head')
+    plan = execution.launch_plan(argv=('vulture', '.'), workspace=workspace)
     assert plan.cwd is None
     assert plan.env is None
     assert plan.argv == (
         'docker',
-        'exec',
+        'run',
+        '--rm',
+        '--init',
+        '--network',
+        'none',
+        '--name',
+        'liveness-primer-side-x1-head',
+        '--cap-drop',
+        'ALL',
+        '--security-opt',
+        'no-new-privileges',
+        '--pids-limit',
+        '4096',
+        '--read-only',
+        '--tmpfs',
+        str(CONTAINER_TMP_ROOT),
+        '--volume',
+        f'{tmp_path / "head"}:{CONTAINER_WORK_ROOT}',
         '--workdir',
         '/liveness/work/liveness-primer-side-x1/checkout',
         '--env',
-        'HOME=/liveness/work/liveness-primer-side-x1/home',
+        'HOME=/liveness/work/liveness-primer-side-x1/liveness-primer-home-y2',
         '--env',
         'SKYLOS_GREP_BUDGET=5',
         '--user',
         '501:20',
-        'primer-head',
+        'head-image',
         'vulture',
         '.',
     )
+    container_name = 'liveness-primer-side-x1-head'
+    assert plan.cleanup is not None
+    assert active == {container_name}
+    with pytest.raises(ContainerError, match='already active'):
+        execution.launch_plan(argv=('vulture', '.'), workspace=workspace)
+    plan.cleanup()
+    assert docker.removed == [container_name]
+    assert active == set()
+
+
+def test_container_cleanup_confirms_removal(tmp_path: Path) -> None:
+    execution = side_execution(tmp_path)
+    failing = ContainerExecution(
+        work_roots=execution.work_roots,
+        images=execution.images,
+        invocation_env={},
+        docker=FakeDocker(remove_ok=False),
+        active_containers=set(),
+    )
+    workspace = workspace_under(tmp_path / 'base', 'base')
+    plan = failing.launch_plan(argv=('vulture', '.'), workspace=workspace)
+    assert plan.cleanup is not None
+    with pytest.raises(ContainerError, match='could not confirm removal'):
+        plan.cleanup()
+    assert failing.active_containers == {'liveness-primer-side-x1-base'}
 
 
 def test_launch_plan_without_a_user_mapping(tmp_path: Path) -> None:
     execution = side_execution(tmp_path)
-    plan = execution.launch_plan(side='base', argv=('vulture', '.'), workspace=workspace_under(tmp_path / 'base'))
+    plan = execution.launch_plan(argv=('vulture', '.'), workspace=workspace_under(tmp_path / 'base', 'base'))
     assert '--user' not in plan.argv
-    assert 'primer-base' in plan.argv
+    assert 'base-image' in plan.argv
 
 
 def test_analysis_root_is_the_container_side_checkout(tmp_path: Path) -> None:
     execution = side_execution(tmp_path)
-    root = execution.analysis_root(workspace_under(tmp_path / 'base'))
+    root = execution.analysis_root(workspace_under(tmp_path / 'base', 'base'))
     assert root == PurePosixPath('/liveness/work/liveness-primer-side-x1/checkout')
     # A pure POSIX path, never a native host path: it must stay absolute on
     # every host platform so path normalization strips the prefix (§7).

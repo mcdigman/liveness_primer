@@ -118,7 +118,7 @@ evidence-producing review job. For a semantics-preserving refactor,
 ## Run inside Docker containers
 
 `--container` moves the build and execution of both detector revisions into
-per-side ephemeral Docker containers:
+ephemeral Docker containers:
 
 ```bash
 liveness-primer run --tool vulture \
@@ -135,16 +135,16 @@ the fetch step. The two revisions are fetched into separate wheelhouses —
 base first, then head reusing the base wheelhouse read-only so the shared
 dependencies download only once — and the base image builds from the base
 wheelhouse alone, so an untrusted head-side build hook cannot forge a wheel
-into the base build. Each side of the run then executes inside its own hardened
-container — networking disabled, running as the invoking user with all
-capabilities dropped, a PID limit, and a read-only root filesystem, with
-only its own side's workspaces mounted. Both containers are destroyed when
-the analysis finishes, before the report or any `--json-out` artifact is
-written — a removal Docker cannot confirm fails the run — and the run
-records enforced isolation on every host platform.
+into the base build. Every detector invocation then executes in its own named,
+hardened container — networking disabled, running as the invoking user with
+all capabilities dropped, a PID limit, and a read-only root filesystem, with
+only its side's workspaces mounted. Its container is force-removed before the
+writable workspace is deleted, including on timeout; the run reaps any
+leftover before report output. A removal Docker cannot confirm fails the run,
+and container isolation is recorded as enforced on every host platform.
 
 The mode requires a running Docker daemon, probed at run start.
-`--container-image IMAGE` overrides the default `python:3.12-slim` base
+`--container-image IMAGE` overrides the default `python:3.14-slim` base
 image and requires `--container`; `--fresh` forces image rebuilds. The mode
 cannot combine with `--old-cmd`/`--new-cmd`, and operator-supplied native
 helper executables (such as `SKYLOS_GO_BIN`) are refused: a host binary

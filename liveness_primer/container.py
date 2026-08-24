@@ -1,20 +1,18 @@
 # SPDX-FileCopyrightText: Copyright 2026 Matthew C. Digman
 # SPDX-License-Identifier: Apache-2.0
-"""Container-backed detector environments: ephemeral per-side Docker containers (contract §3, §11).
+"""Container-backed detector environments: ephemeral invocation containers (contract §3, §11).
 
 ``--container`` moves the build and execution of both detector refs into
 Docker. Each ref is installed into a fingerprint-keyed image by an offline
 ``docker build --network none`` fed from a wheelhouse prefetched during the
-fetch step; each side of the run then executes inside its own ephemeral,
-hardened container (non-root, all capabilities dropped, no new privileges,
-PID-limited, read-only root filesystem) started from that image with
-networking disabled and with only its own side's workspace mounted. Both
-containers are force-removed when the analysis context exits, and a removal
-the daemon cannot confirm fails the run — so no report output is ever
-rendered or written while a container may still exist. Docker is driven
-exclusively through the audited launcher via the ``docker`` CLI, and the
-runtime is injectable so the logic is testable without a daemon (contract
-§15).
+fetch step. Every detector invocation then runs in its own named, hardened
+container (non-root, all capabilities dropped, no new privileges, PID-limited,
+read-only root filesystem) with networking disabled and only its side's
+workspace root mounted. Each container is force-removed before its workspace;
+the pair context reaps any leftover before output, and an unconfirmed removal
+fails the run. Docker is driven exclusively through the audited launcher via
+the ``docker`` CLI, and the runtime is injectable so the logic is testable
+without a daemon (contract §15).
 """
 
 import contextlib
@@ -28,6 +26,7 @@ import stat
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Literal, Protocol, runtime_checkable
 
@@ -47,7 +46,7 @@ from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
 from liveness_primer.tools.base import DetectorAdapter
 
-DEFAULT_CONTAINER_IMAGE = 'python:3.12-slim'
+DEFAULT_CONTAINER_IMAGE = 'python:3.14-slim'
 
 # Both sides' containers run with networking disabled; unlike the host netns
 # probe this is enforced by the container runtime on every platform (§11).
@@ -362,8 +361,8 @@ class DockerRuntime(Protocol):
     def binary(self) -> str:
         """Client binary spawning every container-mode argv.
 
-        The per-invocation ``docker exec`` calls are composed outside this
-        protocol and must spawn the same client, so the runtime names it.
+        Per-invocation container launches are composed outside this protocol
+        and must spawn the same client, so the runtime names it.
 
         Returns
         -------
@@ -465,21 +464,6 @@ class DockerRuntime(Protocol):
         -------
         str
             The container-side ``platform.python_version()``.
-        """
-        ...
-
-    def start_container(self, tag: str, name: str, *, work_root: Path) -> None:
-        """Start one ephemeral, network-less, hardened analysis container.
-
-        Parameters
-        ----------
-        tag : str
-            Environment image to run.
-        name : str
-            Container name used for ``docker exec`` and removal.
-        work_root : Path
-            This side's host workspace root, mounted at the container work
-            root.
         """
         ...
 
@@ -710,46 +694,6 @@ class DockerCli:
         result = self._run_auxiliary('pyver', tag, command, action='container python version', offline=True)
         return result.stdout.strip()
 
-    def start_container(self, tag: str, name: str, *, work_root: Path) -> None:
-        """Start one ephemeral, network-less, hardened analysis container (contract §11).
-
-        ``--rm`` backstops removal on daemon-side stops; ``--init`` reaps
-        detector children of the idle keep-alive process. The untrusted
-        detector build shaped the image — including its ``sleep`` binary —
-        so PID 1 already runs as the mapped host user with all capabilities
-        dropped, no new privileges, a PID limit, and a read-only root
-        filesystem; only this side's workspace root is mounted writable.
-
-        Parameters
-        ----------
-        tag : str
-            Environment image to run.
-        name : str
-            Container name used for ``docker exec`` and removal.
-        work_root : Path
-            This side's host workspace root, mounted at the container work
-            root.
-        """
-        argv = [
-            self.binary,
-            'run',
-            '--detach',
-            '--rm',
-            '--init',
-            '--network',
-            'none',
-            '--name',
-            name,
-            *_HARDENING_FLAGS,
-            *_user_flags(),
-            '--volume',
-            f'{work_root}:{CONTAINER_WORK_ROOT}',
-            tag,
-            'sleep',
-            'infinity',
-        ]
-        _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='container start')
-
     def remove_container(self, name: str) -> bool:
         """Force-remove one analysis container and confirm the outcome.
 
@@ -800,8 +744,6 @@ class PreparedContainerPair:
         Every fetch performed while preparing the pair.
     installer_identity : str
         Docker runtime and base image used for builds.
-    binary : str
-        Client binary the per-invocation execs must spawn.
     python_version : str
         Interpreter version inside the environment images.
     work_root : Path
@@ -810,10 +752,8 @@ class PreparedContainerPair:
         Base-side workspace root; the only mount the base container sees.
     head_work_root : Path
         Head-side workspace root; the only mount the head container sees.
-    base_container : str
-        Name of the running base-side container.
-    head_container : str
-        Name of the running head-side container.
+    active_containers : set[str]
+        Invocation container names still requiring confirmed removal.
     """
 
     base: ContainerEnvHandle
@@ -821,24 +761,22 @@ class PreparedContainerPair:
     environment_delta: tuple[DependencyDelta, ...]
     fetches: tuple[FetchRecord, ...]
     installer_identity: str
-    binary: str
     python_version: str
     work_root: Path
     base_work_root: Path
     head_work_root: Path
-    base_container: str
-    head_container: str
+    active_containers: set[str]
 
 
 class ContainerEnvironments:
-    """Builds the two detector environment images and runs their containers (contract §3).
+    """Build two detector images and own their invocation lifecycle (contract §3).
 
     Environment images are keyed by the container fingerprint and cached by
     the Docker image store, which also serializes concurrent builds of the
     same tag; the persistent per-pair wheelhouses are guarded by a
-    cross-process ``filelock`` instead. The analysis containers themselves
-    are ephemeral: started when the pair context is entered and force-removed
-    when it exits, before any report output is rendered or written.
+    cross-process ``filelock`` instead. Analysis containers are created per
+    invocation and force-removed before their workspaces; the pair context
+    tracks and reaps any leftover before report output.
 
     Parameters
     ----------
@@ -886,6 +824,17 @@ class ContainerEnvironments:
         self._fresh = fresh
         self._lock_timeout = lock_timeout
         self._fetches: list[FetchRecord] = []
+
+    @property
+    def runtime(self) -> DockerRuntime:
+        """Runtime that owns invocation containers.
+
+        Returns
+        -------
+        DockerRuntime
+            Runtime used for both environment preparation and analysis.
+        """
+        return self._docker
 
     @contextlib.contextmanager
     def _pair_lock(self, pair_dir: Path) -> Iterator[None]:
@@ -1084,13 +1033,12 @@ class ContainerEnvironments:
         Cached image pairs with an empty non-detector dependency delta are
         used directly; any non-empty delta triggers an automatic paired
         same-run rebuild, so only a delta that survives it is
-        ref-attributable. Both analysis containers start network-less before
-        the context yields, each seeing only its own side's workspace root,
-        and are force-removed when the context exits — regardless of
-        analysis outcome, and before the caller can assemble or write any
-        report output. When the analysis itself succeeded, a removal the
-        daemon cannot confirm fails the run rather than letting output be
-        written while a container may still exist.
+        ref-attributable. The yielded pair owns a registry of per-invocation
+        containers. Each is force-removed before its writable workspace; the
+        context exit reaps any leftover before the caller can assemble or
+        write report output. When analysis succeeded, a removal the daemon
+        cannot confirm fails the run instead of allowing output while a
+        container may still exist.
 
         Parameters
         ----------
@@ -1106,7 +1054,8 @@ class ContainerEnvironments:
         Yields
         ------
         PreparedContainerPair
-            The two running containers, surviving delta, and fetch records.
+            The two environment images, lifecycle registry, surviving delta,
+            and fetch records.
 
         Raises
         ------
@@ -1224,37 +1173,24 @@ class ContainerEnvironments:
         head_work_root = work_root / 'head'
         base_work_root.mkdir()
         head_work_root.mkdir()
-        base_container = f'{work_root.name}-base'
-        head_container = f'{work_root.name}-head'
-        started: list[str] = []
+        active_containers: set[str] = set()
         completed = False
         try:
-            # Each container mounts only its own side's root: the sides run
-            # concurrently, and a shared writable mount would let one side's
-            # untrusted code rewrite the other's checkout copy (contract §3).
-            for name, handle, side_root in (
-                (base_container, base, base_work_root),
-                (head_container, head, head_work_root),
-            ):
-                self._docker.start_container(handle.image, name, work_root=side_root)
-                started.append(name)
             yield PreparedContainerPair(
                 base=base,
                 head=head,
                 environment_delta=delta,
                 fetches=tuple(self._fetches),
                 installer_identity=f'{docker_identity}; image {self._image}',
-                binary=self._docker.binary,
                 python_version=python_version,
                 work_root=work_root,
                 base_work_root=base_work_root,
                 head_work_root=head_work_root,
-                base_container=base_container,
-                head_container=head_container,
+                active_containers=active_containers,
             )
             completed = True
         finally:
-            leftovers = [name for name in started if not self._docker.remove_container(name)]
+            leftovers = [name for name in tuple(active_containers) if not self._docker.remove_container(name)]
             shutil.rmtree(work_root, ignore_errors=True)
             # The success path fails closed: report output must never be
             # written while a container may still exist, so an unconfirmed
@@ -1270,49 +1206,48 @@ class ContainerEnvironments:
 
 @dataclass(frozen=True, slots=True)
 class ContainerExecution:
-    """Run detector invocations inside the per-side containers (contract §3, §11).
+    """Run each detector invocation in its own container (contract §3, §11).
 
     Attributes
     ----------
     work_roots : dict[str, Path]
-        Host workspace root per side (``base``/``head``); each container
+        Host workspace root per side (``base``/``head``); each invocation
         mounts only its own side's root, so one side's untrusted code can
         never reach the other's workspaces.
-    containers : dict[str, str]
-        Container name per side (``base``/``head``).
+    images : dict[str, str]
+        Environment image tag per side.
     invocation_env : dict[str, str]
-        Adapter-declared side-identical variables set on every exec.
+        Adapter-declared side-identical variables set on every invocation.
+    docker : DockerRuntime
+        Runtime used to confirm force-removal after every invocation.
+    active_containers : set[str]
+        Names registered before launch and discarded only after confirmed
+        removal.
     isolation : Isolation
         The isolation this backend enforces, recorded in the manifest; the
-        container runtime disables networking on every exec.
-    binary : str
-        Docker client binary name.
+        container runtime disables networking on every invocation.
     user : str | None
         ``uid:gid`` the detector runs as, or ``None`` for the image default.
     """
 
     work_roots: dict[str, Path]
-    containers: dict[str, str]
+    images: dict[str, str]
     invocation_env: dict[str, str]
+    docker: DockerRuntime
+    active_containers: set[str]
     isolation: Isolation = CONTAINER_ISOLATION
-    binary: str = 'docker'
     user: str | None = None
 
-    def workspace_parent(self, side: str) -> Path | None:
-        """Report where one side's workspaces must be created.
-
-        Parameters
-        ----------
-        side : str
-            ``base`` or ``head``.
+    @property
+    def workspace_parents(self) -> Mapping[str, Path]:
+        """Report where side workspaces must be created.
 
         Returns
         -------
-        Path | None
-            That side's mounted workspace root — only paths under it exist
-            inside that side's container.
+        Mapping[str, Path]
+            Mounted workspace roots keyed by side.
         """
-        return self.work_roots[side]
+        return self.work_roots
 
     @staticmethod
     def _container_side_root(workspace: SideWorkspace) -> PurePosixPath:
@@ -1330,17 +1265,35 @@ class ContainerExecution:
         """
         return CONTAINER_WORK_ROOT / workspace.root.name / 'checkout'
 
-    def launch_plan(self, *, side: str, argv: Sequence[str], workspace: SideWorkspace) -> LaunchPlan:
-        """Rewrite the detector argv into a ``docker exec`` (contract §3, §11).
-
-        The container only receives explicitly passed variables, so the
-        exec is inherently credential-free; the docker client itself is
-        trusted host code and keeps its own environment.
+    def _cleanup_container(self, container_name: str) -> None:
+        """Force-remove one invocation container and confirm it is gone.
 
         Parameters
         ----------
-        side : str
-            ``base`` or ``head``, selecting the container.
+        container_name : str
+            Name registered for the invocation container.
+
+        Raises
+        ------
+        ContainerError
+            If the daemon cannot confirm removal.
+        """
+        if not self.docker.remove_container(container_name):
+            msg = f'could not confirm removal of analysis container {container_name}'
+            raise ContainerError(msg)
+        self.active_containers.discard(container_name)
+
+    def launch_plan(self, *, argv: Sequence[str], workspace: SideWorkspace) -> LaunchPlan:
+        """Rewrite the detector argv into a named ``docker run`` (contract §3, §11).
+
+        One container per invocation gives the host daemon an authoritative
+        kill handle. If the outer timeout cancels the attached Docker client,
+        ``cleanup`` force-removes this exact container before its writable
+        workspace is deleted. The container receives only explicitly passed
+        variables; the trusted Docker client keeps its host environment.
+
+        Parameters
+        ----------
         argv : Sequence[str]
             Composed detector argv.
         workspace : SideWorkspace
@@ -1349,18 +1302,48 @@ class ContainerExecution:
         Returns
         -------
         LaunchPlan
-            The prepared ``docker exec`` launch.
+            The prepared attached container launch.
+
+        Raises
+        ------
+        ContainerError
+            If the invocation's unique container name is already active.
         """
-        home = CONTAINER_WORK_ROOT / workspace.root.name / 'home'
-        plan = [self.binary, 'exec', '--workdir', str(self._container_side_root(workspace))]
+        side = workspace.side
+        container_name = f'{workspace.root.name}-{side}'
+        if container_name in self.active_containers:
+            msg = f'analysis container name is already active: {container_name}'
+            raise ContainerError(msg)
+        home = CONTAINER_WORK_ROOT / workspace.root.name / workspace.home.name
+        plan = [
+            self.docker.binary,
+            'run',
+            '--rm',
+            '--init',
+            '--network',
+            'none',
+            '--name',
+            container_name,
+            *_HARDENING_FLAGS,
+            '--volume',
+            f'{self.work_roots[side]}:{CONTAINER_WORK_ROOT}',
+            '--workdir',
+            str(self._container_side_root(workspace)),
+        ]
         plan.extend(['--env', f'HOME={home}'])
         for name, value in self.invocation_env.items():
             plan.extend(['--env', f'{name}={value}'])
         if self.user is not None:
             plan.extend(['--user', self.user])
-        plan.append(self.containers[side])
+        plan.append(self.images[side])
         plan.extend(argv)
-        return LaunchPlan(argv=tuple(plan), cwd=None, env=None)
+        self.active_containers.add(container_name)
+        return LaunchPlan(
+            argv=tuple(plan),
+            cwd=None,
+            env=None,
+            cleanup=partial(self._cleanup_container, container_name),
+        )
 
     def analysis_root(self, workspace: SideWorkspace) -> PurePosixPath:
         """Report the checkout root as the detector sees it.

@@ -245,7 +245,7 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     run_parser.add_argument(
         '--container',
         action='store_true',
-        help='build and run both detector refs in per-side ephemeral Docker containers (§3, §11)',
+        help='build both detector refs and run each invocation in an ephemeral Docker container (§3, §11)',
     )
     run_parser.add_argument(
         '--container-image',

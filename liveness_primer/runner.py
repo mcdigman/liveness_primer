@@ -34,7 +34,7 @@ from liveness_primer.corpus import CheckoutStore
 from liveness_primer.diffing import diff_findings, merge_rollups
 from liveness_primer.envcache import DetectorEnvironments, PreparedPair
 from liveness_primer.errors import LivenessPrimerError
-from liveness_primer.execution import ExecutionBackend, HostExecution, SideWorkspace
+from liveness_primer.execution import ExecutionBackend, HostExecution, SideName, SideWorkspace
 from liveness_primer.findings import (
     CorpusIntegrityWarning,
     CorpusPinRecord,
@@ -422,7 +422,7 @@ class PrimerRunner:
         self._options = options
         self._async_launcher = async_launcher
 
-    def _materialize_side(self, checkout: Path, parent: Path | None) -> SideWorkspace:
+    def _materialize_side(self, checkout: Path, parent: Path | None, side: SideName) -> SideWorkspace:
         """Give one detector invocation its own disposable checkout copy.
 
         Both sides derive from the same pinned cache entry, so the copies are
@@ -438,6 +438,8 @@ class PrimerRunner:
             Directory the workspace must be created under (an execution
             backend's reachable root), or ``None`` for the default
             temporary directory.
+        side : SideName
+            Detector revision that will use the workspace.
 
         Returns
         -------
@@ -461,7 +463,7 @@ class PrimerRunner:
         # from outside the pinned tree into the analyzed copy.
         shutil.copytree(source, side_checkout, symlinks=True, ignore=shutil.ignore_patterns('.git'))
         home = Path(tempfile.mkdtemp(prefix='liveness-primer-home-', dir=root))
-        return SideWorkspace(root=root, checkout=side_checkout, home=home)
+        return SideWorkspace(root=root, checkout=side_checkout, home=home, side=side)
 
     def _fetch_corpus(self, projects: Sequence[CorpusProject]) -> tuple[list[_ProjectWork], tuple[FetchRecord, ...]]:
         """Resolve and materialize every selected project (fetch step, §3).
@@ -554,7 +556,7 @@ class PrimerRunner:
         self,
         item: _ProjectWork,
         *,
-        side: str,
+        side: SideName,
         command: tuple[str, ...],
         semaphore: asyncio.Semaphore,
         execution: ExecutionBackend,
@@ -585,22 +587,40 @@ class PrimerRunner:
             # Each side analyzes its own disposable copy of the pinned
             # checkout in a sandboxed, credential-free environment prepared
             # by the execution backend (contract §3, §11).
-            workspace = await asyncio.to_thread(self._materialize_side, item.checkout, execution.workspace_parent(side))
+            workspace = await asyncio.to_thread(
+                self._materialize_side,
+                item.checkout,
+                execution.workspace_parents.get(side),
+                side,
+            )
             try:
-                plan = execution.launch_plan(side=side, argv=argv, workspace=workspace)
+                plan = execution.launch_plan(argv=argv, workspace=workspace)
                 try:
-                    async with asyncio.timeout(timeout):
-                        result = await self._async_launcher(list(plan.argv), cwd=plan.cwd, env=plan.env)
-                except TimeoutError:
-                    error = ToolError(side=side, exit_code=None, detail=f'timed out after {timeout:g}s')
-                    return _SideOutcome(
+                    try:
+                        async with asyncio.timeout(timeout):
+                            result = await self._async_launcher(list(plan.argv), cwd=plan.cwd, env=plan.env)
+                    except TimeoutError:
+                        error = ToolError(side=side, exit_code=None, detail=f'timed out after {timeout:g}s')
+                        return _SideOutcome(
+                            side=side,
+                            findings=None,
+                            error=error,
+                            duration_seconds=timeout,
+                            returncode=None,
+                        )
+                    return self._parse_outcome(
+                        item,
                         side=side,
-                        findings=None,
-                        error=error,
-                        duration_seconds=timeout,
-                        returncode=None,
+                        result=result,
+                        root=execution.analysis_root(workspace),
                     )
-                return self._parse_outcome(item, side=side, result=result, root=execution.analysis_root(workspace))
+                finally:
+                    # Container plans force-remove the named invocation here.
+                    # This runs after cancellation has killed only the host
+                    # Docker client, but before the writable workspace is
+                    # deleted; host plans own no cleanup action.
+                    if plan.cleanup is not None:
+                        await asyncio.to_thread(plan.cleanup)
             finally:
                 await asyncio.to_thread(shutil.rmtree, workspace.root, ignore_errors=True)
 
@@ -941,13 +961,12 @@ class PrimerRunner:
         head_ref: str,
         environments: ContainerEnvironments,
     ) -> Report:
-        """Run the primer with per-side ephemeral Docker containers (contract §3, §11).
+        """Run the primer with ephemeral per-invocation containers (contract §3, §11).
 
-        Both detector refs build into fingerprint-keyed images and execute
-        inside their own network-less container. The containers live only
-        for the analysis context: they are force-removed when it exits, so
-        no container is running by the time the manifest is assembled or any
-        report output is rendered or written.
+        Both detector refs build into fingerprint-keyed images. Every
+        invocation runs in its own named, network-less container, which is
+        force-removed before its workspace; the context reaps any leftover
+        before the manifest or report output is assembled.
 
         Parameters
         ----------
@@ -985,9 +1004,10 @@ class PrimerRunner:
             )
             execution = ContainerExecution(
                 work_roots={'base': pair.base_work_root, 'head': pair.head_work_root},
-                containers={'base': pair.base_container, 'head': pair.head_container},
+                images={'base': pair.base.image, 'head': pair.head.image},
                 invocation_env={**self._adapter.invocation_env, **env_files},
-                binary=pair.binary,
+                docker=environments.runtime,
+                active_containers=pair.active_containers,
                 user=container_user(),
             )
             work, corpus_fetches = self._fetch_corpus(projects)
@@ -999,8 +1019,8 @@ class PrimerRunner:
                     execution=execution,
                 )
             )
-        # Both containers are force-removed by the context exit above: the
-        # manifest and every report output exist only after that point.
+        # Every invocation container is force-removed before its workspace;
+        # the context exit above reaps any leftover before report assembly.
         manifest = self._manifest(
             detector_repo=detector_repo,
             pair=pair,

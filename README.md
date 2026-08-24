@@ -246,7 +246,7 @@ let generated prose replace deterministic gates or human review.
 ## Run inside Docker containers
 
 `--container` moves the build and execution of both detector revisions into
-per-side ephemeral Docker containers:
+ephemeral Docker containers:
 
 ```bash
 liveness-primer run --tool vulture \
@@ -263,20 +263,20 @@ the fetch step. The two revisions are fetched into separate wheelhouses —
 base first, then head reusing the base wheelhouse read-only so the shared
 dependencies download only once — and the base image is built from the base
 wheelhouse alone, so an untrusted head-side build hook cannot slip a forged
-wheel into the base build. Each side of the run then executes inside its own
-hardened container — networking disabled, running as the invoking user with
-all capabilities dropped, a PID limit, and a read-only root filesystem, with
-only its own side's workspaces mounted. Both containers are destroyed as
-soon as the analysis finishes — before the report or any `--json-out`
-artifact is written, and a removal Docker cannot confirm fails the run
-rather than letting output be written. Because the container runtime
+wheel into the base build. Every detector invocation then executes in its own
+named, hardened container — networking disabled, running as the invoking user
+with all capabilities dropped, a PID limit, and a read-only root filesystem,
+with only its side's workspaces mounted. Its container is force-removed before
+the writable workspace is deleted, including on timeout; the run also reaps
+any leftover before the report or `--json-out` artifact is written. A removal
+Docker cannot confirm fails the run rather than allowing output. Because the container runtime
 enforces the sandbox on every platform, container runs record enforced
 isolation even on hosts where the default host-venv path is best-effort
 (for example macOS).
 
 The mode requires a running Docker daemon, probed at run start; the `docker`
 CLI is a host requirement of this mode only, never a Python dependency.
-`--container-image IMAGE` overrides the default `python:3.12-slim` base
+`--container-image IMAGE` overrides the default `python:3.14-slim` base
 image, `--fresh` forces image rebuilds, and `--old-cmd`/`--new-cmd` cannot
 combine with `--container`. Operator-supplied native helper executables
 (such as `SKYLOS_GO_BIN`) are not supported in this mode: a host binary

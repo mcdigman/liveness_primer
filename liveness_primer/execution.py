@@ -5,17 +5,19 @@
 The runner materializes a disposable per-invocation workspace and asks a
 backend to turn the composed detector argv into a concrete launch: the host
 backend wraps it in the §11 network sandbox with a scrubbed environment,
-while the container backend rewrites it into a ``docker exec`` against a
-side's ephemeral container. Backends are injectable, so isolation logic is
+while the container backend rewrites it into a named, ephemeral ``docker run``.
+Backends are injectable, so isolation logic is
 testable without real sandboxes or containers (contract §15).
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from liveness_primer.isolation import Isolation, scrubbed_environment
+
+SideName = Literal['base', 'head']
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,11 +32,14 @@ class SideWorkspace:
         This side's own copy of the pinned checkout.
     home : Path
         Scratch ``HOME`` exposed to the detector.
+    side : SideName
+        Detector revision this workspace belongs to.
     """
 
     root: Path
     checkout: Path
     home: Path
+    side: SideName
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,21 +54,24 @@ class LaunchPlan:
         Working directory of the launched process.
     env : Mapping[str, str] | None
         Environment of the launched process; inherited when ``None``.
+    cleanup : Callable[[], None] | None
+        Backend-owned resource cleanup to run after the launch, if any.
     """
 
     argv: tuple[str, ...]
     cwd: Path | None
     env: Mapping[str, str] | None
+    cleanup: Callable[[], None] | None = None
 
 
 @runtime_checkable
 class ExecutionBackend(Protocol):
     """Injectable strategy deciding where detector invocations run (contract §15).
 
-    ``workspace_parent`` names the directory one side's workspaces must be
-    created under, when the backend can only reach a specific host location
-    (e.g. that side's container mount); ``None`` lets the runner use the
-    default temporary directory.
+    ``workspace_parents`` maps sides to the directory their workspaces must
+    be created under when the backend can only reach specific host locations
+    (e.g. container mounts); an absent side lets the runner use the default
+    temporary directory.
     """
 
     @property
@@ -80,28 +88,23 @@ class ExecutionBackend(Protocol):
         """
         ...
 
-    def workspace_parent(self, side: str) -> Path | None:
-        """Report where one side's workspaces must be created.
-
-        Parameters
-        ----------
-        side : str
-            ``base`` or ``head``.
+    @property
+    def workspace_parents(self) -> Mapping[str, Path]:
+        """Report where side workspaces must be created.
 
         Returns
         -------
-        Path | None
-            The required parent directory, or ``None`` for the default.
+        Mapping[str, Path]
+            Required parent directories keyed by side. An absent side uses
+            the default temporary directory.
         """
         ...
 
-    def launch_plan(self, *, side: str, argv: Sequence[str], workspace: SideWorkspace) -> LaunchPlan:
+    def launch_plan(self, *, argv: Sequence[str], workspace: SideWorkspace) -> LaunchPlan:
         """Turn a composed detector argv into a concrete launch.
 
         Parameters
         ----------
-        side : str
-            ``base`` or ``head``.
         argv : Sequence[str]
             Composed detector argv (contract §4).
         workspace : SideWorkspace
@@ -150,30 +153,22 @@ class HostExecution:
     invocation_env: Mapping[str, str]
     passthrough_env: Mapping[str, str]
 
-    @staticmethod
-    def workspace_parent(side: str) -> Path | None:
-        """Report where one side's workspaces must be created.
-
-        Parameters
-        ----------
-        side : str
-            ``base`` or ``head``; both sides use the default.
+    @property
+    def workspace_parents(self) -> Mapping[str, Path]:
+        """Report where side workspaces must be created.
 
         Returns
         -------
-        Path | None
-            Always ``None``: the default temporary directory works.
+        Mapping[str, Path]
+            Empty: the default temporary directory works for both sides.
         """
-        del side
-        return None
+        return {}
 
-    def launch_plan(self, *, side: str, argv: Sequence[str], workspace: SideWorkspace) -> LaunchPlan:
+    def launch_plan(self, *, argv: Sequence[str], workspace: SideWorkspace) -> LaunchPlan:
         """Wrap the argv in the sandbox with a scrubbed environment (contract §3, §11).
 
         Parameters
         ----------
-        side : str
-            ``base`` or ``head``; both sides launch identically.
         argv : Sequence[str]
             Composed detector argv.
         workspace : SideWorkspace
@@ -184,7 +179,6 @@ class HostExecution:
         LaunchPlan
             The sandboxed launch.
         """
-        del side
         environment = scrubbed_environment(home=workspace.home)
         environment.update(self.invocation_env)
         environment.update(self.passthrough_env)
