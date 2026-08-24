@@ -263,6 +263,7 @@ def stage_invocation_env_files(files: Mapping[str, Path], work_roots: Iterable[P
     dict[str, str]
         Each variable mapped to the staged file's container-side path.
     """
+    work_roots = tuple(work_roots)
     staged: dict[str, str] = {}
     for name, source in files.items():
         for root in work_roots:
