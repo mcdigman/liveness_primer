@@ -57,6 +57,10 @@ CONTAINER_ISOLATION = Isolation(enforced=True, description='container:docker-net
 # created under it on the host and addressed through it inside the containers.
 CONTAINER_WORK_ROOT = PurePosixPath('/liveness/work')
 
+# Container-side tmpfs mount point. Constructing it as a POSIX container path
+# keeps it distinct from host filesystem paths governed by tempfile.
+CONTAINER_TMP_ROOT = PurePosixPath('/') / 'tmp'
+
 _DOCKER_TIMEOUT = 1800.0
 
 # Cache-format / security revision of the environment image. Bump whenever the
@@ -85,7 +89,7 @@ _HARDENING_FLAGS: tuple[str, ...] = (
     str(_PIDS_LIMIT),
     '--read-only',
     '--tmpfs',
-    '/tmp',
+    str(CONTAINER_TMP_ROOT),
 )
 
 _IMAGE_REFERENCE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/@-]*$')
@@ -628,7 +632,7 @@ class DockerCli:
         argv.extend((*_HARDENING_FLAGS, *_user_flags()))
         for volume in volumes:
             argv.extend(('--volume', volume))
-        argv.extend(('--env', 'HOME=/tmp', image, *command))
+        argv.extend(('--env', f'HOME={CONTAINER_TMP_ROOT}', image, *command))
         try:
             return _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action=action)
         finally:

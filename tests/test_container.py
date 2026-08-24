@@ -17,6 +17,7 @@ from filelock import FileLock
 import liveness_primer.container as container_module
 from liveness_primer.container import (
     CONTAINER_ISOLATION,
+    CONTAINER_TMP_ROOT,
     CONTAINER_WORK_ROOT,
     DEFAULT_CONTAINER_IMAGE,
     ContainerEnvironments,
@@ -104,7 +105,7 @@ def assert_hardened(argv: tuple[str, ...]) -> None:
     assert argv[argv.index('--security-opt') + 1] == 'no-new-privileges'
     assert argv[argv.index('--pids-limit') + 1] == '4096'
     assert '--read-only' in argv
-    assert argv[argv.index('--tmpfs') + 1] == '/tmp'
+    assert argv[argv.index('--tmpfs') + 1] == str(CONTAINER_TMP_ROOT)
 
 
 def test_prefetch_runs_pip_download_in_the_base_image(tmp_path: Path) -> None:
@@ -120,7 +121,7 @@ def test_prefetch_runs_pip_download_in_the_base_image(tmp_path: Path) -> None:
     assert_hardened(run_argv)
     assert run_argv[run_argv.index('--user') + 1] == container_user()
     assert f'{tmp_path}:/liveness/wheelhouse' in run_argv
-    assert run_argv[run_argv.index('--env') + 1] == 'HOME=/tmp'
+    assert run_argv[run_argv.index('--env') + 1] == f'HOME={CONTAINER_TMP_ROOT}'
     assert run_argv[-1] == 'tomli>=2'
     assert 'python:3.12-slim' in run_argv
     failing = RecordingLauncher(returncode=1)

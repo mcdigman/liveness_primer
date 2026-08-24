@@ -107,11 +107,6 @@ min-file-size = 1024
 # raw subprocess APIs. S603 fires on every subprocess call, safe or not, and
 # S404 fires on merely importing subprocess.
 "liveness_primer/launcher.py" = ["TID251", "S603", "S404"]
-# S108 targets insecure use of the *host* temp directory. The /tmp literals in
-# the container module (and the test asserting them) name a tmpfs mounted
-# inside the hardened analysis containers, never a host path (contract §11).
-"liveness_primer/container.py" = ["S108"]
-"tests/test_container.py" = ["S108"]
 
 [lint.pydocstyle]
 convention = "numpy"
