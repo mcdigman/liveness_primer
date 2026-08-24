@@ -623,6 +623,7 @@ def test_analysis_runs_with_a_scrubbed_environment(
         assert env is not None
         assert 'LP_PLANTED_SECRET' not in env
         assert 'liveness-primer-side-' in env['HOME']
+        assert 'liveness-primer-home-' in env['HOME']
 
 
 def test_managed_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, fake_detector_repo: str) -> None:

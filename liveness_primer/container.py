@@ -24,11 +24,12 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from filelock import BaseFileLock, FileLock, Timeout
 
@@ -99,6 +100,28 @@ RUN python -m pip install --quiet --no-index --find-links /liveness/wheelhouse /
 
 class ContainerError(LivenessPrimerError):
     """Raised when the Docker runtime cannot prepare or run an environment."""
+
+
+def _validate_cache_directory(path: Path) -> None:
+    """Reject a persistent cache path that redirects or is not a directory.
+
+    Parameters
+    ----------
+    path : Path
+        Cache directory to validate before use.
+
+    Raises
+    ------
+    ContainerError
+        If the path is a symlink or exists as anything but a directory.
+    """
+    try:
+        status = path.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(status.st_mode) or not stat.S_ISDIR(status.st_mode):
+        msg = f'container cache path is not a regular directory: {path}'
+        raise ContainerError(msg)
 
 
 def _checked(result: LaunchResult, *, action: str) -> LaunchResult:
@@ -951,12 +974,10 @@ class ContainerEnvironments:
         if not requirements:
             return
         # Same filesystem as the wheelhouse, so promotion is an atomic rename.
-        staging = Path(tempfile.mkdtemp(prefix='liveness-primer-fetch-', dir=wheelhouse.parent))
-        try:
+        with tempfile.TemporaryDirectory(prefix='liveness-primer-fetch-', dir=wheelhouse.parent) as scratch:
+            staging = Path(scratch)
             self._docker.prefetch(self._image, requirements, staging, find_links=find_links)
             added = promote_prefetched(staging, wheelhouse, exclude=exclude)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
         self._fetches.extend(fetch_records_for(wheelhouse, added))
 
     def _build(self, tag: str, checkout: Path, wheelhouses: Sequence[Path]) -> None:
@@ -972,12 +993,21 @@ class ContainerEnvironments:
             This side's wheelhouse directories, staged into one offline
             context (base side: its own; head side: base's plus its own
             extras).
+
+        Raises
+        ------
+        ContainerError
+            If ``checkout`` is not a direct entry of the checkout cache.
         """
+        source = self._store.checkout_root / Path(checkout).name
+        if source != checkout:
+            msg = f'refusing to build from {checkout}: not a checkout cache entry'
+            raise ContainerError(msg)
         with tempfile.TemporaryDirectory(prefix='liveness-primer-context-') as scratch:
             context = Path(scratch)
             # Symlinks are copied as symlinks: following them could pull
             # content from outside the untrusted checkout into the image.
-            shutil.copytree(checkout, context / 'detector', symlinks=True, ignore=shutil.ignore_patterns('.git'))
+            shutil.copytree(source, context / 'detector', symlinks=True, ignore=shutil.ignore_patterns('.git'))
             stage_wheelhouses(wheelhouses, context / 'wheelhouse')
             (context / 'Dockerfile').write_text(_DOCKERFILE.format(image=self._image), encoding='utf-8')
             self._docker.build_image(tag, context, fresh=self._fresh)
@@ -1086,20 +1116,33 @@ class ContainerEnvironments:
         base_fingerprint = container_fingerprint(repo, base_sha, adapter, docker_identity, self._image)
         head_fingerprint = container_fingerprint(repo, head_sha, adapter, docker_identity, self._image)
         pair_key = hashlib.sha256(f'{base_fingerprint}:{head_fingerprint}'.encode()).hexdigest()[:24]
-        pair_dir = self._cache_dir / 'wheelhouse-container' / Path(pair_key).name
+        wheelhouse_root = self._cache_dir / 'wheelhouse-container'
+        pair_dir = wheelhouse_root / Path(pair_key).name
         base_house = pair_dir / 'base'
         head_house = pair_dir / 'head'
+        houses: dict[Literal['base', 'head'], Path] = {'base': base_house, 'head': head_house}
 
-        def reset_house(house: Path) -> None:
+        def reset_house(side: Literal['base', 'head']) -> None:
             """Restore one persistent wheelhouse to an empty state.
 
             Parameters
             ----------
-            house : Path
-                The wheelhouse directory to empty.
+            side : Literal['base', 'head']
+                Wheelhouse side to empty.
+
+            Raises
+            ------
+            ContainerError
+                If the cache path is unsafe or cannot be reset.
             """
-            shutil.rmtree(house, ignore_errors=True)
-            house.mkdir(parents=True, exist_ok=True)
+            house = houses[side]
+            _validate_cache_directory(house)
+            try:
+                shutil.rmtree(house)
+                house.mkdir()
+            except OSError as error:
+                msg = f'cannot reset the {side} container wheelhouse: {error}'
+                raise ContainerError(msg) from error
 
         def base_wheelhouses() -> Sequence[Path]:
             """Fetch the base closure, then serve the base wheelhouse.
@@ -1114,8 +1157,8 @@ class ContainerEnvironments:
             Sequence[Path]
                 The base side's single wheelhouse.
             """
-            reset_house(base_house)
-            reset_house(head_house)
+            reset_house('base')
+            reset_house('head')
             self._fetch_into(repo, base_sha, base_house, find_links=None, exclude=frozenset())
             return (base_house,)
 
@@ -1135,15 +1178,22 @@ class ContainerEnvironments:
             Sequence[Path]
                 The base wheelhouse followed by the head-extras wheelhouse.
             """
-            reset_house(head_house)
+            reset_house('head')
             owned = frozenset(entry.name for entry in base_house.iterdir())
             self._fetch_into(repo, head_sha, head_house, find_links=base_house, exclude=owned)
             return (base_house, head_house)
 
-        pair_dir.parent.mkdir(parents=True, exist_ok=True)
+        _validate_cache_directory(wheelhouse_root)
+        wheelhouse_root.mkdir(parents=True, exist_ok=True)
+        _validate_cache_directory(wheelhouse_root)
         with self._pair_lock(pair_dir):
-            base_house.mkdir(parents=True, exist_ok=True)
-            head_house.mkdir(parents=True, exist_ok=True)
+            _validate_cache_directory(pair_dir)
+            pair_dir.mkdir(exist_ok=True)
+            _validate_cache_directory(pair_dir)
+            for house in houses.values():
+                _validate_cache_directory(house)
+                house.mkdir(exist_ok=True)
+                _validate_cache_directory(house)
             base, head, delta = resolve_paired_delta(
                 lambda force: self._ensure(
                     repo=repo,

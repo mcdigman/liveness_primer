@@ -460,8 +460,7 @@ class PrimerRunner:
         # Symlinks are copied as symlinks: following them could pull content
         # from outside the pinned tree into the analyzed copy.
         shutil.copytree(source, side_checkout, symlinks=True, ignore=shutil.ignore_patterns('.git'))
-        home = root / 'home'
-        home.mkdir()
+        home = Path(tempfile.mkdtemp(prefix='liveness-primer-home-', dir=root))
         return SideWorkspace(root=root, checkout=side_checkout, home=home)
 
     def _fetch_corpus(self, projects: Sequence[CorpusProject]) -> tuple[list[_ProjectWork], tuple[FetchRecord, ...]]:

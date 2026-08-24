@@ -4,11 +4,12 @@
 
 import hashlib
 import os
+import shutil
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from filelock import FileLock
@@ -32,7 +33,7 @@ from liveness_primer.container import (
 )
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.execution import SideWorkspace
-from liveness_primer.filesystem import atomic_write_bytes, read_small_text
+from liveness_primer.filesystem import atomic_write_bytes, atomic_write_text, read_small_text
 from liveness_primer.findings import DependencyDelta
 from liveness_primer.launcher import LauncherError, SyncLauncher, run_async
 from liveness_primer.tools.vulture import VultureAdapter
@@ -276,6 +277,7 @@ class FakeDocker:
     events: list[str] = field(default_factory=list)
     existing_images: set[str] = field(default_factory=set)
     prefetches: list[tuple[str, tuple[str, ...], Path | None]] = field(default_factory=list)
+    staging_paths: list[Path] = field(default_factory=list)
     built: list[tuple[str, bool]] = field(default_factory=list)
     built_contexts: list[tuple[tuple[str, ...], str]] = field(default_factory=list)
     started: list[str] = field(default_factory=list)
@@ -326,6 +328,7 @@ class FakeDocker:
         """
         self.events.append('prefetch')
         self.prefetches.append((image, tuple(requirements), find_links))
+        self.staging_paths.append(destination)
         for requirement in requirements:
             wheel = requirement_wheel(requirement)
             if self.wheel_symlink_target is None:
@@ -416,6 +419,28 @@ def test_container_mode_refuses_hosts_without_posix_ids(tmp_path: Path, monkeypa
         environments(tmp_path, FakeDocker())
 
 
+def test_build_refuses_checkout_outside_the_cache(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = CheckoutStore(tmp_path / 'cache')
+
+    def misdirected_materialize(_repo: str, _sha: str) -> Path:
+        return detector_repo.path
+
+    monkeypatch.setattr(store, 'materialize', misdirected_materialize)
+    docker = FakeDocker()
+    unsafe = ContainerEnvironments(store, tmp_path / 'cache', docker=docker)
+    with (
+        pytest.raises(ContainerError, match='not a checkout cache entry'),
+        unsafe.prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+    ):
+        pass
+    assert docker.built == []
+    assert docker.started == []
+
+
 def test_cold_pair_builds_images_and_runs_ephemeral_containers(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]))
     with environments(tmp_path, docker).prepare_pair(
@@ -463,6 +488,7 @@ def test_cold_pair_builds_images_and_runs_ephemeral_containers(tmp_path: Path, d
         'setuptools-1.0-py3-none-any.whl',
         'tomli-1.0-py3-none-any.whl',
     ]
+    assert all(not path.exists() for path in docker.staging_paths)
     # Build contexts are offline and self-contained: Dockerfile, the
     # .git-less checkout, and the shared wheelhouse (contract §3, §11).
     for names, dockerfile in docker.built_contexts:
@@ -554,7 +580,7 @@ def test_same_sha_on_both_sides_shares_the_image(tmp_path: Path, detector_repo: 
 
 def test_dependency_free_detector_skips_the_prefetch(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     minimal = '[build-system]\nrequires = []\n\n[project]\nname = "fakedet"\nversion = "1"\n'
-    (detector_repo.path / 'pyproject.toml').write_text(minimal, encoding='utf-8')
+    atomic_write_text(detector_repo.path / 'pyproject.toml', minimal)
     git('add', 'pyproject.toml', cwd=detector_repo.path)
     git('commit', '--quiet', '-m', 'no deps', cwd=detector_repo.path)
     docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_A]))
@@ -577,6 +603,7 @@ def test_prefetched_symlink_never_reaches_the_wheelhouse(tmp_path: Path, detecto
         pass
     assert docker.built == []
     assert docker.started == []
+    assert all(not path.exists() for path in docker.staging_paths)
 
 
 def test_promote_prefetched_reports_only_new_files(tmp_path: Path) -> None:
@@ -725,6 +752,67 @@ def test_stale_wheelhouses_from_a_cached_base_run_are_reset(tmp_path: Path, dete
         'tomli-1.0-py3-none-any.whl',
     ]
     assert list((pair_dir / 'head').iterdir()) == []
+
+
+@pytest.mark.parametrize('level', ['root', 'pair', 'base'])
+@pytest.mark.parametrize('kind', ['symlink', 'file'])
+def test_unsafe_container_cache_directories_are_rejected(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    level: Literal['root', 'pair', 'base'],
+    kind: Literal['symlink', 'file'],
+) -> None:
+    pair_dir, _base_tag = pair_dir_and_base_tag(tmp_path, detector_repo.url)
+    locations = {'root': pair_dir.parent, 'pair': pair_dir, 'base': pair_dir / 'base'}
+    unsafe = locations[level]
+    unsafe.parent.mkdir(parents=True, exist_ok=True)
+    victim = tmp_path / 'cache-victim'
+    victim.mkdir()
+    atomic_write_text(victim / 'sentinel.txt', 'untouched')
+    if kind == 'symlink':
+        unsafe.symlink_to(victim, target_is_directory=True)
+    else:
+        atomic_write_text(unsafe, 'not a directory')
+
+    docker = FakeDocker()
+    with (
+        pytest.raises(ContainerError, match='container cache path is not a regular directory'),
+        environments(tmp_path, docker).prepare_pair(
+            detector_repo.url,
+            'base-branch',
+            'head-branch',
+            VultureAdapter(),
+        ),
+    ):
+        pass
+    assert read_small_text(victim / 'sentinel.txt') == 'untouched'
+    assert docker.built == []
+    assert docker.started == []
+
+
+def test_container_wheelhouse_reset_failure_is_a_domain_error(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse_removal(_path: Path) -> None:
+        msg = 'permission denied'
+        raise OSError(msg)
+
+    monkeypatch.setattr(shutil, 'rmtree', refuse_removal)
+    docker = FakeDocker()
+    with (
+        pytest.raises(ContainerError, match='cannot reset the base container wheelhouse'),
+        environments(tmp_path, docker).prepare_pair(
+            detector_repo.url,
+            'base-branch',
+            'head-branch',
+            VultureAdapter(),
+        ),
+    ):
+        pass
+    assert docker.built == []
+    assert docker.started == []
 
 
 def test_pair_wheelhouse_lock_timeout_fails_the_run(tmp_path: Path, detector_repo: DetectorRepo) -> None:
