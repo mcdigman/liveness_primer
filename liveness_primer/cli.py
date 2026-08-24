@@ -29,6 +29,7 @@ from liveness_primer.config import (
 )
 from liveness_primer.container import (
     CONTAINER_ISOLATION,
+    DEFAULT_CONTAINER_BUILDER_IMAGE,
     DEFAULT_CONTAINER_IMAGE,
     ContainerEnvironments,
     DockerCli,
@@ -249,7 +250,14 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
     )
     run_parser.add_argument(
         '--container-image',
-        help=f'base image for --container environments (default: {DEFAULT_CONTAINER_IMAGE})',
+        help=f'distroless runtime image for --container environments (default: {DEFAULT_CONTAINER_IMAGE})',
+    )
+    run_parser.add_argument(
+        '--container-builder-image',
+        help=(
+            'matching development image for --container dependency fetching and installation '
+            f'(default: {DEFAULT_CONTAINER_BUILDER_IMAGE})'
+        ),
     )
 
 
@@ -357,6 +365,9 @@ def _check_run_mode(args: argparse.Namespace) -> bool:
         raise RunnerError(msg)
     if args.container_image is not None and not args.container:
         msg = '--container-image requires --container'
+        raise RunnerError(msg)
+    if args.container_builder_image is not None and not args.container:
+        msg = '--container-builder-image requires --container'
         raise RunnerError(msg)
     return escape
 
@@ -617,7 +628,12 @@ def _command_run(args: argparse.Namespace) -> int:
             store,
             cache_root(),
             docker=DockerCli(),
-            image=args.container_image if args.container_image is not None else DEFAULT_CONTAINER_IMAGE,
+            builder_image=(
+                args.container_builder_image
+                if args.container_builder_image is not None
+                else DEFAULT_CONTAINER_BUILDER_IMAGE
+            ),
+            runtime_image=args.container_image if args.container_image is not None else DEFAULT_CONTAINER_IMAGE,
             fresh=args.fresh,
         )
         # Both ephemeral containers are destroyed inside run_container,

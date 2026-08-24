@@ -33,10 +33,17 @@ point*: pre-triage, triage, or post-triage (§10).
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
 - Container mode (`--container`, opt-in): the same managed comparison with the build and
   analysis steps moved into Docker. Each ref installs into a fingerprint-keyed
-  environment image (repository, resolved SHA, adapter build-recipe hash, base image
-  reference, Docker runtime identity) built offline (`docker build --network none`) from
-  a wheelhouse prefetched during the fetch step by the base image's own pip, so
-  wheels match the container platform rather than the host. The two refs are fetched into
+  environment image (repository, resolved SHA, adapter build-recipe hash, exact builder
+  and runtime image references, exact static ripgrep identity, Docker runtime identity)
+  built offline with a multi-stage `docker build --network none`. A digest-pinned
+  development image prefetches the wheelhouse and builds a virtual environment; after
+  capturing its package freeze and removing `pip`, the build copies that environment,
+  freeze, and a separately digest-verified static ripgrep binary into the matching
+  digest-pinned distroless runtime. Ripgrep preserves Skylos's safe verification pass;
+  both its official architecture-specific release archive and extracted executable are
+  SHA-256 checked in the network-enabled fetch step. Wheels therefore match the runtime
+  platform rather than the host, while the final image inherits no builder shell or
+  package manager. The two refs are fetched into
   **separate per-side wheelhouses**, base first; the head fetch then mounts the base
   wheelhouse **read-only** as a `--find-links` source, so the shared dependency closure is
   downloaded only once while the base image is built from the base wheelhouse alone. The
@@ -307,9 +314,12 @@ printing the package version and `SCHEMA_VERSION`. Commands:
   [--ignore-include-tools] [--max-results N] [--excerpt-lines N]
   [--output text|json|github] [--fail-on ...]
   [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]
-  [--analyses NAME[,NAME...]] [--container] [--container-image IMAGE]` —
+  [--analyses NAME[,NAME...]] [--container] [--container-image IMAGE]
+  [--container-builder-image IMAGE]` —
   `--container` selects the Docker-backed managed mode (§3) and cannot combine with the
-  escape hatch; `--container-image` overrides its base image and requires `--container`.
+  escape hatch; `--container-image` overrides its runtime image and
+  `--container-builder-image` overrides its matching development image. Both overrides
+  require `--container`.
 - `corpus validate` — parse and validate the corpus YAML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF

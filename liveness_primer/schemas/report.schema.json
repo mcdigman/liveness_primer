@@ -247,7 +247,7 @@
     },
     "FetchRecord": {
       "additionalProperties": false,
-      "description": "Record of one network fetch performed during the fetch step.\n\nAttributes\n----------\nkind : str\n    Fetch kind: ``git`` or ``wheel``.\nname : str\n    Repository URL for ``git`` fetches; distribution filename for ``wheel``.\nresolved : str\n    Resolved commit SHA (``git``) or version (``wheel``).\ndigest : str | None\n    Hex SHA-256 of the fetched artifact, when applicable.",
+      "description": "Record of one network fetch performed during the fetch step.\n\nAttributes\n----------\nkind : str\n    Fetch kind: ``git``, ``wheel``, or ``binary``.\nname : str\n    Repository URL for ``git`` fetches; artifact filename otherwise.\nresolved : str\n    Resolved commit SHA (``git``) or artifact version.\ndigest : str | None\n    Hex SHA-256 of the fetched artifact, when applicable.",
       "properties": {
         "digest": {
           "anyOf": [

@@ -258,29 +258,38 @@ liveness-primer run --tool vulture \
 ```
 
 Each revision is installed into a fingerprint-cached environment image built
-offline (`docker build --network none`) from dependencies prefetched during
-the fetch step. The two revisions are fetched into separate wheelhouses —
-base first, then head reusing the base wheelhouse read-only so the shared
-dependencies download only once — and the base image is built from the base
-wheelhouse alone, so an untrusted head-side build hook cannot slip a forged
-wheel into the base build. Every detector invocation then executes in its own
-named, hardened container — networking disabled, running as the invoking user
-with all capabilities dropped, a PID limit, and a read-only root filesystem,
-with only its side's workspaces mounted. Its container is force-removed before
-the writable workspace is deleted, including on timeout; the run also reaps
-any leftover before the report or `--json-out` artifact is written. A removal
-Docker cannot confirm fails the run rather than allowing output. Because the container runtime
+offline (`docker build --network none`) with digest-pinned Chainguard Python
+images: `latest-dev` fetches dependencies and builds a virtual environment,
+then that environment, its captured package freeze, and a digest-verified
+static ripgrep binary enter the minimal `latest` runtime. Ripgrep preserves
+Skylos's safe grep-verification pass; its architecture-specific official
+release archive and extracted executable are both SHA-256 checked during the
+network-enabled fetch phase. `pip` is removed before the copy, and the runtime
+contains no shell or package manager from the builder. The two revisions are
+fetched into separate wheelhouses — base first, then head reusing the base
+wheelhouse read-only so the shared dependencies download only once — and the
+base image is built from the base wheelhouse alone, so an untrusted head-side
+build hook cannot slip a forged wheel into the base build. Every detector
+invocation then executes in its own named, hardened container — networking
+disabled, running as the invoking user with all capabilities dropped, a PID
+limit, and a read-only root filesystem, with only its side's workspaces
+mounted. Its container is force-removed before the writable workspace is
+deleted, including on timeout; the run also reaps any leftover before the
+report or `--json-out` artifact is written. A removal Docker cannot confirm
+fails the run rather than allowing output. Because the container runtime
 enforces the sandbox on every platform, container runs record enforced
-isolation even on hosts where the default host-venv path is best-effort
-(for example macOS).
+isolation even on hosts where the default host-venv path is best-effort (for
+example macOS).
 
 The mode requires a running Docker daemon, probed at run start; the `docker`
 CLI is a host requirement of this mode only, never a Python dependency.
-`--container-image IMAGE` overrides the default `python:3.14-slim` base
-image, `--fresh` forces image rebuilds, and `--old-cmd`/`--new-cmd` cannot
-combine with `--container`. Operator-supplied native helper executables
-(such as `SKYLOS_GO_BIN`) are not supported in this mode: a host binary
-cannot run inside the container.
+`--container-builder-image IMAGE` and `--container-image IMAGE` override the
+builder and runtime respectively; custom images must provide matching Python
+and platform ABIs. The runtime platform must be `x86_64` or `aarch64`, for
+which pinned static ripgrep release artifacts are available. `--fresh` forces
+image rebuilds, and `--old-cmd`/`--new-cmd` cannot combine with `--container`.
+Operator-supplied native helper executables (such as `SKYLOS_GO_BIN`) are not
+supported in this mode: a host binary cannot run inside the container.
 
 ## Pre-built detector commands
 

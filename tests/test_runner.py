@@ -21,6 +21,7 @@ from liveness_primer.config import CorpusProject, ToolSettings
 from liveness_primer.container import (
     CONTAINER_ISOLATION,
     CONTAINER_WORK_ROOT,
+    DEFAULT_CONTAINER_BUILDER_IMAGE,
     DEFAULT_CONTAINER_IMAGE,
     ContainerEnvironments,
 )
@@ -1198,7 +1199,11 @@ def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject,
     manifest = report.manifest
     assert manifest.comparable is True
     assert manifest.isolation_enforced is True
-    assert manifest.installer == f'docker 99.9; image {DEFAULT_CONTAINER_IMAGE}'
+    assert manifest.installer == (
+        f'docker 99.9; builder {DEFAULT_CONTAINER_BUILDER_IMAGE}; runtime {DEFAULT_CONTAINER_IMAGE}; '
+        'ripgrep 15.2.0 (aarch64) '
+        'sha256:c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a'
+    )
     # The manifest records the container interpreter, not the host's.
     assert manifest.python_version == '3.14.99'
     assert manifest.base is not None

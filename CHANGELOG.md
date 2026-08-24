@@ -13,9 +13,10 @@ independently of the package version; `liveness-primer --version` prints both.
 ### Added
 
 - **Container mode** — `run --container` builds both detector revisions into
-  fingerprint-cached Docker images (offline `docker build --network none` fed
-  from a fetch-step prefetch inside the base image) and executes each side of
-  the comparison in its own ephemeral, network-less, hardened container
+  fingerprint-cached, distroless Docker images (offline multi-stage `docker
+  build --network none` fed from a fetch-step prefetch inside a digest-pinned
+  Chainguard Python development image) and executes each side of the comparison
+  in its own ephemeral, network-less, hardened container
   (invoking-user PID 1, all capabilities dropped, `no-new-privileges`, PID
   limit, read-only root filesystem, per-side workspace mounts). The two
   revisions are fetched into separate per-side wheelhouses — base first, then
@@ -28,10 +29,15 @@ independently of the package version; `liveness-primer --version` prints both.
   timeout cannot leak one. Both analysis containers are
   force-removed when the analysis finishes, before the report or any
   `--json-out` artifact is written; an unconfirmed removal fails the run.
-  `--container-image IMAGE` overrides the `python:3.12-slim` default base
-  image. The `docker` CLI is a host requirement of this mode only, driven
-  through the audited launcher; it is never a Python dependency (contract
-  §3, §11, §17).
+  The final image copies the detector virtual environment, package freeze, and
+  a digest-verified static ripgrep binary into the matching minimal Chainguard
+  runtime after removing `pip`, so Skylos keeps its safe verification pass but
+  no builder shell or package manager remains. Both the architecture-specific
+  official ripgrep archive and extracted executable are SHA-256 checked.
+  `--container-builder-image IMAGE` and `--container-image IMAGE` override the
+  builder and runtime respectively. The `docker` CLI is a host requirement of
+  this mode only, driven through the audited launcher; it is never a Python
+  dependency (contract §3, §11, §17).
 
 ## [0.1.1] - 2026-08-21
 

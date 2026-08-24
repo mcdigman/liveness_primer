@@ -653,11 +653,11 @@ class FetchRecord(_FrozenModel):
     Attributes
     ----------
     kind : str
-        Fetch kind: ``git`` or ``wheel``.
+        Fetch kind: ``git``, ``wheel``, or ``binary``.
     name : str
-        Repository URL for ``git`` fetches; distribution filename for ``wheel``.
+        Repository URL for ``git`` fetches; artifact filename otherwise.
     resolved : str
-        Resolved commit SHA (``git``) or version (``wheel``).
+        Resolved commit SHA (``git``) or artifact version.
     digest : str | None
         Hex SHA-256 of the fetched artifact, when applicable.
     """

@@ -3,16 +3,17 @@
 """Container-backed detector environments: ephemeral invocation containers (contract §3, §11).
 
 ``--container`` moves the build and execution of both detector refs into
-Docker. Each ref is installed into a fingerprint-keyed image by an offline
-``docker build --network none`` fed from a wheelhouse prefetched during the
-fetch step. Every detector invocation then runs in its own named, hardened
-container (non-root, all capabilities dropped, no new privileges, PID-limited,
-read-only root filesystem) with networking disabled and only its side's
-workspace root mounted. Each container is force-removed before its workspace;
-the pair context reaps any leftover before output, and an unconfirmed removal
-fails the run. Docker is driven exclusively through the audited launcher via
-the ``docker`` CLI, and the runtime is injectable so the logic is testable
-without a daemon (contract §15).
+Docker. Each ref is installed into a fingerprint-keyed, distroless runtime
+image by an offline multi-stage ``docker build --network none`` fed from a
+wheelhouse prefetched with the matching builder image. Every detector
+invocation then runs in its own named, hardened container (non-root, all
+capabilities dropped, no new privileges, PID-limited, read-only root
+filesystem) with networking disabled and only its side's workspace root
+mounted. Each container is force-removed before its workspace; the pair
+context reaps any leftover before output, and an unconfirmed removal fails the
+run. Docker is driven exclusively through the audited launcher via the
+``docker`` CLI, and the runtime is injectable so the logic is testable without
+a daemon (contract §15).
 """
 
 import contextlib
@@ -46,7 +47,110 @@ from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
 from liveness_primer.tools.base import DetectorAdapter
 
-DEFAULT_CONTAINER_IMAGE = 'python:3.14-slim'
+# The public Chainguard tags are mutable daily-build pointers. Pin the
+# multi-platform OCI indexes so a cache fingerprint names exact builder and
+# runtime bytes on both supported architectures.
+DEFAULT_CONTAINER_BUILDER_IMAGE = (
+    'cgr.dev/chainguard/python:latest-dev@sha256:14acabef9a759e7d07bf647afec92bc28cbe0f89c978fe426411c85035121c14'
+)
+DEFAULT_CONTAINER_IMAGE = (
+    'cgr.dev/chainguard/python:latest@sha256:d812438658b47b73cb4c089f4cca09bca1ba50f6cd1843133864ee074d9ec49b'
+)
+
+
+@dataclass(frozen=True, slots=True)
+class StaticBinaryArtifact:
+    """One digest-pinned static runtime utility release artifact.
+
+    Attributes
+    ----------
+    version : str
+        Upstream release version.
+    architecture : Literal['x86_64', 'aarch64']
+        Linux machine architecture.
+    filename : str
+        Release archive filename.
+    url : str
+        Immutable release download URL.
+    archive_digest : str
+        Expected archive SHA-256.
+    member : str
+        Exact archive member holding the executable.
+    binary_digest : str
+        Expected extracted executable SHA-256.
+    """
+
+    version: str
+    architecture: Literal['x86_64', 'aarch64']
+    filename: str
+    url: str
+    archive_digest: str
+    member: str
+    binary_digest: str
+
+
+_RIPGREP_VERSION = '15.2.0'
+_RIPGREP_ARTIFACTS: Mapping[str, StaticBinaryArtifact] = {
+    'x86_64': StaticBinaryArtifact(
+        version=_RIPGREP_VERSION,
+        architecture='x86_64',
+        filename=f'ripgrep-{_RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz',
+        url=(
+            'https://github.com/BurntSushi/ripgrep/releases/download/'
+            f'{_RIPGREP_VERSION}/ripgrep-{_RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz'
+        ),
+        archive_digest='33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c',
+        member=f'ripgrep-{_RIPGREP_VERSION}-x86_64-unknown-linux-musl/rg',
+        binary_digest='e62198eb19b136b88c330af83647b5a962cb99b6b1f066758568f12de1974849',
+    ),
+    'aarch64': StaticBinaryArtifact(
+        version=_RIPGREP_VERSION,
+        architecture='aarch64',
+        filename=f'ripgrep-{_RIPGREP_VERSION}-aarch64-unknown-linux-musl.tar.gz',
+        url=(
+            'https://github.com/BurntSushi/ripgrep/releases/download/'
+            f'{_RIPGREP_VERSION}/ripgrep-{_RIPGREP_VERSION}-aarch64-unknown-linux-musl.tar.gz'
+        ),
+        archive_digest='800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915',
+        member=f'ripgrep-{_RIPGREP_VERSION}-aarch64-unknown-linux-musl/rg',
+        binary_digest='c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a',
+    ),
+}
+
+# Download and extract the one expected release member inside the hardened,
+# network-enabled fetch container. Both the archive and extracted binary are
+# bounded and digest-checked before the host-visible output is created.
+_RIPGREP_FETCH_SCRIPT = """\
+import hashlib
+import io
+from pathlib import Path
+import sys
+import tarfile
+import urllib.request
+
+url, archive_digest, member_name, binary_digest = sys.argv[1:]
+with urllib.request.urlopen(url, timeout=300) as response:
+    payload = response.read(8_388_609)
+if len(payload) > 8_388_608:
+    raise RuntimeError("ripgrep archive exceeds 8 MiB")
+if hashlib.sha256(payload).hexdigest() != archive_digest:
+    raise RuntimeError("ripgrep archive digest mismatch")
+with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+    member = archive.getmember(member_name)
+    if not member.isfile():
+        raise RuntimeError("ripgrep archive member is not a regular file")
+    source = archive.extractfile(member)
+    if source is None:
+        raise RuntimeError("ripgrep archive member cannot be read")
+    binary = source.read(16_777_217)
+if len(binary) > 16_777_216:
+    raise RuntimeError("ripgrep binary exceeds 16 MiB")
+if hashlib.sha256(binary).hexdigest() != binary_digest:
+    raise RuntimeError("ripgrep binary digest mismatch")
+target = Path("/liveness/tool/rg")
+target.write_bytes(binary)
+target.chmod(0o555)
+"""
 
 # Both sides' containers run with networking disabled; unlike the host netns
 # probe this is enforced by the container runtime on every platform (§11).
@@ -68,7 +172,9 @@ _DOCKER_TIMEOUT = 1800.0
 # earlier revision cached under an otherwise-identical fingerprint.
 #   1: initial ephemeral-container build.
 #   2: container hardening + per-side isolated fetch/build wheelhouses.
-_CONTAINER_CACHE_FORMAT = 2
+#   3: separate builder/runtime images + pip-free distroless runtime with a
+#      pinned static ripgrep utility for Skylos verification.
+_CONTAINER_CACHE_FORMAT = 3
 
 # Fork-bomb backstop for every container this module starts; generous enough
 # for any real detector or pip invocation.
@@ -94,10 +200,22 @@ _HARDENING_FLAGS: tuple[str, ...] = (
 _IMAGE_REFERENCE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/@-]*$')
 
 _DOCKERFILE = """\
-FROM {image}
+FROM {builder_image} AS builder
+USER 0
+RUN ["/usr/bin/python", "-m", "venv", "/liveness/venv"]
 COPY wheelhouse /liveness/wheelhouse
 COPY detector /liveness/detector
-RUN python -m pip install --quiet --no-index --find-links /liveness/wheelhouse /liveness/detector
+RUN /liveness/venv/bin/python -m pip install --quiet --no-index \
+    --find-links /liveness/wheelhouse /liveness/detector
+RUN /liveness/venv/bin/python -m pip freeze > /liveness/freeze.txt
+RUN ["/liveness/venv/bin/python", "-m", "pip", "uninstall", "--yes", "pip"]
+
+FROM {runtime_image}
+COPY --from=builder /liveness/venv /liveness/venv
+COPY --from=builder /liveness/freeze.txt /liveness/freeze.txt
+COPY tools/rg /usr/bin/rg
+ENV PATH="/liveness/venv/bin:$PATH"
+ENTRYPOINT []
 """
 
 
@@ -300,7 +418,15 @@ def stage_invocation_env_files(files: Mapping[str, Path], work_roots: Iterable[P
     return staged
 
 
-def container_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, docker_identity: str, image: str) -> str:
+def container_fingerprint(
+    repo: str,
+    sha: str,
+    adapter: DetectorAdapter,
+    docker_identity: str,
+    builder_image: str,
+    runtime_image: str,
+    ripgrep_identity: str,
+) -> str:
     """Compute the environment fingerprint of one containerized ref (contract §3).
 
     Parameters
@@ -313,15 +439,21 @@ def container_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, docker_
         Adapter supplying the build-recipe hash.
     docker_identity : str
         Docker runtime name and version.
-    image : str
-        Base image reference the environment builds from.
+    builder_image : str
+        Development image that fetches and installs distributions.
+    runtime_image : str
+        Minimal image that runs the installed detector.
+    ripgrep_identity : str
+        Version, architecture, and exact binary digest of the runtime search
+        utility.
 
     Returns
     -------
     str
         Stable hex fingerprint over the cache-format revision, repository,
-        SHA, recipe, base image, and Docker runtime. A cache-format bump
-        makes every prior image miss the cache and rebuild.
+        SHA, recipe, both exact image references, runtime search utility, and
+        Docker runtime. A cache-format bump makes every prior image miss the
+        cache and rebuild.
     """
     material = json.dumps(
         {
@@ -329,8 +461,10 @@ def container_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, docker_
             'repo': repo,
             'sha': sha,
             'recipe': adapter.build_recipe.digest(),
-            'image': image,
+            'builder_image': builder_image,
             'runtime': docker_identity,
+            'runtime_image': runtime_image,
+            'ripgrep': ripgrep_identity,
         },
         sort_keys=True,
     )
@@ -351,6 +485,106 @@ def image_tag(fingerprint: str) -> str:
         The image tag.
     """
     return f'liveness-primer/env:{fingerprint}'
+
+
+def ripgrep_artifact_for(machine: str) -> StaticBinaryArtifact:
+    """Select the pinned ripgrep artifact for one container architecture.
+
+    Parameters
+    ----------
+    machine : str
+        Architecture reported by Python inside the builder image.
+
+    Returns
+    -------
+    StaticBinaryArtifact
+        Matching static Linux release artifact.
+
+    Raises
+    ------
+    ContainerError
+        If the architecture has no pinned artifact.
+    """
+    normalized = {'amd64': 'x86_64', 'arm64': 'aarch64'}.get(machine, machine)
+    try:
+        return _RIPGREP_ARTIFACTS[normalized]
+    except KeyError as error:
+        msg = f'container architecture {machine!r} has no pinned ripgrep artifact'
+        raise ContainerError(msg) from error
+
+
+def _ripgrep_identity(artifact: StaticBinaryArtifact) -> str:
+    """Describe exact ripgrep runtime bytes for fingerprints and manifests.
+
+    Parameters
+    ----------
+    artifact : StaticBinaryArtifact
+        Architecture-specific pinned release metadata.
+
+    Returns
+    -------
+    str
+        Stable version, architecture, and binary-digest identity.
+    """
+    return f'ripgrep {artifact.version} ({artifact.architecture}) sha256:{artifact.binary_digest}'
+
+
+def stage_static_binary(source: Path, destination: Path) -> None:
+    """Copy one verified static binary into an offline build context.
+
+    Parameters
+    ----------
+    source : Path
+        Fresh output of the runtime's digest-verifying fetch operation.
+    destination : Path
+        Build-context path to create.
+
+    Raises
+    ------
+    ContainerError
+        If the fetch output is missing, a symlink, or not a regular file.
+    """
+    try:
+        status = source.lstat()
+    except FileNotFoundError as error:
+        msg = f'prefetched static binary is missing: {source.name}'
+        raise ContainerError(msg) from error
+    if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
+        msg = f'prefetched static binary is not a regular file: {source.name}'
+        raise ContainerError(msg)
+    destination.parent.mkdir()
+    shutil.copyfile(source, destination)
+    destination.chmod(0o555)
+
+
+def _validate_prefetched_binary(path: Path, expected_digest: str) -> None:
+    """Validate the runtime's host-visible static-binary fetch output.
+
+    Parameters
+    ----------
+    path : Path
+        Host-visible executable written by the fetch container.
+    expected_digest : str
+        Required executable SHA-256.
+
+    Raises
+    ------
+    ContainerError
+        If the output is missing, non-regular, or has the wrong digest.
+    """
+    try:
+        status = path.lstat()
+    except FileNotFoundError as error:
+        msg = 'ripgrep fetch did not produce rg'
+        raise ContainerError(msg) from error
+    if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
+        msg = 'ripgrep fetch produced a non-regular rg'
+        raise ContainerError(msg)
+    actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_digest != expected_digest:
+        msg = f'ripgrep binary digest mismatch: expected {expected_digest}, got {actual_digest}'
+        raise ContainerError(msg)
+    path.chmod(0o555)
 
 
 @runtime_checkable
@@ -410,13 +644,28 @@ class DockerRuntime(Protocol):
         """
         ...
 
+    def architecture(self, image: str) -> str:
+        """Report the machine architecture inside an image.
+
+        Parameters
+        ----------
+        image : str
+            Builder image to inspect.
+
+        Returns
+        -------
+        str
+            Python's normalized machine name inside the image.
+        """
+        ...
+
     def prefetch(
         self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
     ) -> None:
         """Download distributions into a staging directory (fetch step, §3).
 
-        Runs pip inside the base image so the fetched wheels match the
-        container platform, not the host. The destination is a fresh
+        Runs pip inside the builder image so the fetched wheels match the
+        runtime platform, not the host. The destination is a fresh
         staging directory, never the persistent cache: the caller validates
         and promotes the results (contract §11). ``find_links``, when given,
         is mounted **read-only** and offered to the resolver, so the head
@@ -426,7 +675,7 @@ class DockerRuntime(Protocol):
         Parameters
         ----------
         image : str
-            Base image whose pip performs the download.
+            Builder image whose pip performs the download.
         requirements : Sequence[str]
             Requirement strings to download, wheels preferred.
         destination : Path
@@ -434,6 +683,20 @@ class DockerRuntime(Protocol):
         find_links : Path | None
             Base-side wheelhouse mounted read-only as an extra resolver
             source, or ``None`` for the base fetch itself.
+        """
+        ...
+
+    def prefetch_ripgrep(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
+        """Fetch and verify a pinned static ripgrep binary.
+
+        Parameters
+        ----------
+        image : str
+            Builder image whose Python performs the fetch.
+        artifact : StaticBinaryArtifact
+            Architecture-specific release metadata and digests.
+        destination : Path
+            Fresh directory that receives an executable named ``rg``.
         """
         ...
 
@@ -610,7 +873,7 @@ class DockerCli:
             The successful result.
         """
         name = f'liveness-primer-{kind}-{secrets.token_hex(6)}'
-        argv = [self.binary, 'run', '--rm', '--name', name]
+        argv = [self.binary, 'run', '--rm', '--name', name, '--entrypoint', '']
         if offline:
             argv.extend(('--network', 'none'))
         argv.extend((*_HARDENING_FLAGS, *_user_flags()))
@@ -622,10 +885,27 @@ class DockerCli:
         finally:
             self._remove_auxiliary(name)
 
+    def architecture(self, image: str) -> str:
+        """Report the machine architecture inside an image, offline.
+
+        Parameters
+        ----------
+        image : str
+            Builder image to inspect.
+
+        Returns
+        -------
+        str
+            Python's machine name inside the image.
+        """
+        command = ('python', '-c', 'import platform; print(platform.machine())')
+        result = self._run_auxiliary('arch', image, command, action='container architecture probe', offline=True)
+        return result.stdout.strip()
+
     def prefetch(
         self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
     ) -> None:
-        """Download distributions with the base image's pip (fetch step, §3).
+        """Download distributions with the builder image's pip (fetch step, §3).
 
         The fetch container is named and force-removed afterwards, so a
         client-side timeout cannot leak an untracked running container. A
@@ -635,7 +915,7 @@ class DockerCli:
         Parameters
         ----------
         image : str
-            Base image whose pip performs the download.
+            Builder image whose pip performs the download.
         requirements : Sequence[str]
             Requirement strings to download, wheels preferred.
         destination : Path
@@ -660,6 +940,37 @@ class DockerCli:
             volumes=volumes,
         )
 
+    def prefetch_ripgrep(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
+        """Fetch and digest-verify one static ripgrep release binary.
+
+        Parameters
+        ----------
+        image : str
+            Builder image whose Python performs the fetch and extraction.
+        artifact : StaticBinaryArtifact
+            Architecture-specific release metadata and digests.
+        destination : Path
+            Fresh directory that receives an executable named ``rg``.
+        """
+        command = (
+            'python',
+            '-c',
+            _RIPGREP_FETCH_SCRIPT,
+            artifact.url,
+            artifact.archive_digest,
+            artifact.member,
+            artifact.binary_digest,
+        )
+        self._run_auxiliary(
+            'ripgrep-fetch',
+            image,
+            command,
+            action='ripgrep prefetch',
+            offline=False,
+            volumes=(f'{destination}:/liveness/tool',),
+        )
+        _validate_prefetched_binary(destination / 'rg', artifact.binary_digest)
+
     def freeze(self, tag: str) -> tuple[str, ...]:
         """Capture the freeze of an environment image, offline.
 
@@ -673,8 +984,12 @@ class DockerCli:
         tuple[str, ...]
             Freeze lines.
         """
-        command = ('python', '-m', 'pip', 'freeze')
-        result = self._run_auxiliary('freeze', tag, command, action='pip freeze', offline=True)
+        command = (
+            'python',
+            '-c',
+            "from pathlib import Path; print(Path('/liveness/freeze.txt').read_text(), end='')",
+        )
+        result = self._run_auxiliary('freeze', tag, command, action='environment freeze', offline=True)
         return tuple(line for line in result.stdout.splitlines() if line.strip())
 
     def python_version(self, tag: str) -> str:
@@ -743,7 +1058,7 @@ class PreparedContainerPair:
     fetches : tuple[FetchRecord, ...]
         Every fetch performed while preparing the pair.
     installer_identity : str
-        Docker runtime and base image used for builds.
+        Docker runtime, exact builder/runtime images, and exact ripgrep bytes.
     python_version : str
         Interpreter version inside the environment images.
     work_root : Path
@@ -786,8 +1101,10 @@ class ContainerEnvironments:
         Cache directory holding the per-pair container wheelhouses.
     docker : DockerRuntime
         Docker runtime operations; injectable for tests (contract §15).
-    image : str
-        Base image both environments build from.
+    builder_image : str
+        Development image used for dependency fetching and installation.
+    runtime_image : str
+        Minimal image used for detector execution.
     fresh : bool
         Force same-run image rebuilds (``--fresh``).
     lock_timeout : float
@@ -796,9 +1113,9 @@ class ContainerEnvironments:
     Raises
     ------
     ContainerError
-        If the base image reference is malformed, or the host has no POSIX
-        user ids — the §11 run-as-host-user hardening cannot be enforced,
-        and the mode refuses rather than silently degrading.
+        If either image reference is malformed, or the host has no POSIX user
+        ids — the §11 run-as-host-user hardening cannot be enforced, and the
+        mode refuses rather than silently degrading.
     """
 
     def __init__(
@@ -807,20 +1124,23 @@ class ContainerEnvironments:
         cache_dir: Path,
         *,
         docker: DockerRuntime,
-        image: str = DEFAULT_CONTAINER_IMAGE,
+        builder_image: str = DEFAULT_CONTAINER_BUILDER_IMAGE,
+        runtime_image: str = DEFAULT_CONTAINER_IMAGE,
         fresh: bool = False,
         lock_timeout: float = _DOCKER_TIMEOUT,
     ) -> None:
-        if not _IMAGE_REFERENCE.match(image):
-            msg = f'malformed container image reference: {image!r}'
-            raise ContainerError(msg)
+        for role, image in (('builder', builder_image), ('runtime', runtime_image)):
+            if not _IMAGE_REFERENCE.match(image):
+                msg = f'malformed container {role} image reference: {image!r}'
+                raise ContainerError(msg)
         if container_user() is None:
             msg = '--container requires POSIX user ids to enforce the run-as-host-user hardening (§11)'
             raise ContainerError(msg)
         self._store = store
         self._cache_dir = cache_dir
         self._docker = docker
-        self._image = image
+        self._builder_image = builder_image
+        self._runtime_image = runtime_image
         self._fresh = fresh
         self._lock_timeout = lock_timeout
         self._fetches: list[FetchRecord] = []
@@ -897,8 +1217,8 @@ class ContainerEnvironments:
     ) -> None:
         """Fetch one ref's requirements into its own wheelhouse (fetch step, §3, §11).
 
-        The download runs inside the base image so wheels match the
-        container platform, not the host. The fetch container only ever
+        The download runs inside the builder image so wheels match the
+        runtime platform, not the host. The fetch container only ever
         writes into a fresh staging directory; every entry it produces is
         validated as a regular, non-symlink file, and any name the base side
         already owns (``exclude``) is dropped, before promotion — so an
@@ -929,11 +1249,17 @@ class ContainerEnvironments:
         # Same filesystem as the wheelhouse, so promotion is an atomic rename.
         with tempfile.TemporaryDirectory(prefix='liveness-primer-fetch-', dir=wheelhouse.parent) as scratch:
             staging = Path(scratch)
-            self._docker.prefetch(self._image, requirements, staging, find_links=find_links)
+            self._docker.prefetch(self._builder_image, requirements, staging, find_links=find_links)
             added = promote_prefetched(staging, wheelhouse, exclude=exclude)
         self._fetches.extend(fetch_records_for(wheelhouse, added))
 
-    def _build(self, tag: str, checkout: Path, wheelhouses: Sequence[Path]) -> None:
+    def _build(
+        self,
+        tag: str,
+        checkout: Path,
+        wheelhouses: Sequence[Path],
+        ripgrep: Callable[[], Path],
+    ) -> None:
         """Build one environment image from an offline context (build step, §3, §11).
 
         Parameters
@@ -946,6 +1272,9 @@ class ContainerEnvironments:
             This side's wheelhouse directories, staged into one offline
             context (base side: its own; head side: base's plus its own
             extras).
+        ripgrep : Callable[[], Path]
+            Lazy provider of the verified static search binary shared by both
+            side builds.
 
         Raises
         ------
@@ -962,7 +1291,12 @@ class ContainerEnvironments:
             # content from outside the untrusted checkout into the image.
             shutil.copytree(source, context / 'detector', symlinks=True, ignore=shutil.ignore_patterns('.git'))
             stage_wheelhouses(wheelhouses, context / 'wheelhouse')
-            (context / 'Dockerfile').write_text(_DOCKERFILE.format(image=self._image), encoding='utf-8')
+            stage_static_binary(ripgrep(), context / 'tools' / 'rg')
+            dockerfile = _DOCKERFILE.format(
+                builder_image=self._builder_image,
+                runtime_image=self._runtime_image,
+            )
+            (context / 'Dockerfile').write_text(dockerfile, encoding='utf-8')
             self._docker.build_image(tag, context, fresh=self._fresh)
 
     def _ensure(
@@ -973,6 +1307,7 @@ class ContainerEnvironments:
         sha: str,
         fingerprint: str,
         wheelhouses: Callable[[], Sequence[Path]],
+        ripgrep: Callable[[], Path],
         force_rebuild: bool,
     ) -> ContainerEnvHandle:
         """Return a cached environment image or build it.
@@ -990,6 +1325,8 @@ class ContainerEnvironments:
         wheelhouses : Callable[[], Sequence[Path]]
             Lazy provider of this side's wheelhouse directories, triggering
             its fetch on first build.
+        ripgrep : Callable[[], Path]
+            Lazy provider of the verified static search binary.
         force_rebuild : bool
             Skip cache reuse and rebuild.
 
@@ -1003,7 +1340,7 @@ class ContainerEnvironments:
         if not cached:
             houses = wheelhouses()
             checkout = self._store.materialize(repo, sha)
-            self._build(tag, checkout, houses)
+            self._build(tag, checkout, houses, ripgrep)
         record = EnvironmentRecord(
             ref=ref,
             sha=sha,
@@ -1066,13 +1403,32 @@ class ContainerEnvironments:
         base_sha, head_sha, ref_fetches = resolve_pair_refs(self._store, repo, base_ref, head_ref)
         self._fetches.extend(ref_fetches)
         docker_identity = self._docker.identity()
-        base_fingerprint = container_fingerprint(repo, base_sha, adapter, docker_identity, self._image)
-        head_fingerprint = container_fingerprint(repo, head_sha, adapter, docker_identity, self._image)
+        ripgrep_artifact = ripgrep_artifact_for(self._docker.architecture(self._builder_image))
+        ripgrep_id = _ripgrep_identity(ripgrep_artifact)
+        base_fingerprint = container_fingerprint(
+            repo,
+            base_sha,
+            adapter,
+            docker_identity,
+            self._builder_image,
+            self._runtime_image,
+            ripgrep_id,
+        )
+        head_fingerprint = container_fingerprint(
+            repo,
+            head_sha,
+            adapter,
+            docker_identity,
+            self._builder_image,
+            self._runtime_image,
+            ripgrep_id,
+        )
         pair_key = hashlib.sha256(f'{base_fingerprint}:{head_fingerprint}'.encode()).hexdigest()[:24]
         wheelhouse_root = self._cache_dir / 'wheelhouse-container'
         pair_dir = wheelhouse_root / Path(pair_key).name
         base_house = pair_dir / 'base'
         head_house = pair_dir / 'head'
+        tool_dir = pair_dir / 'tools'
         houses: dict[Literal['base', 'head'], Path] = {'base': base_house, 'head': head_house}
 
         def reset_house(side: Literal['base', 'head']) -> None:
@@ -1140,6 +1496,42 @@ class ContainerEnvironments:
         wheelhouse_root.mkdir(parents=True, exist_ok=True)
         _validate_cache_directory(wheelhouse_root)
         with self._pair_lock(pair_dir):
+            ripgrep_path: Path | None = None
+
+            def fetch_ripgrep() -> Path:
+                """Fetch the shared pinned runtime search binary once.
+
+                Returns
+                -------
+                Path
+                    Verified executable shared by both side builds.
+
+                Raises
+                ------
+                ContainerError
+                    If the tool cache cannot be reset or the fetch fails.
+                """
+                nonlocal ripgrep_path
+                if ripgrep_path is None:
+                    _validate_cache_directory(tool_dir)
+                    try:
+                        shutil.rmtree(tool_dir)
+                        tool_dir.mkdir()
+                    except OSError as error:
+                        msg = f'cannot reset the container tool cache: {error}'
+                        raise ContainerError(msg) from error
+                    self._docker.prefetch_ripgrep(self._builder_image, ripgrep_artifact, tool_dir)
+                    ripgrep_path = tool_dir / 'rg'
+                    self._fetches.append(
+                        FetchRecord(
+                            kind='binary',
+                            name=ripgrep_artifact.filename,
+                            resolved=ripgrep_artifact.version,
+                            digest=ripgrep_artifact.archive_digest,
+                        )
+                    )
+                return ripgrep_path
+
             _validate_cache_directory(pair_dir)
             pair_dir.mkdir(exist_ok=True)
             _validate_cache_directory(pair_dir)
@@ -1147,6 +1539,9 @@ class ContainerEnvironments:
                 _validate_cache_directory(house)
                 house.mkdir(exist_ok=True)
                 _validate_cache_directory(house)
+            _validate_cache_directory(tool_dir)
+            tool_dir.mkdir(exist_ok=True)
+            _validate_cache_directory(tool_dir)
             base, head, delta = resolve_paired_delta(
                 lambda force: self._ensure(
                     repo=repo,
@@ -1154,6 +1549,7 @@ class ContainerEnvironments:
                     sha=base_sha,
                     fingerprint=base_fingerprint,
                     wheelhouses=base_wheelhouses,
+                    ripgrep=fetch_ripgrep,
                     force_rebuild=force,
                 ),
                 lambda force: self._ensure(
@@ -1162,6 +1558,7 @@ class ContainerEnvironments:
                     sha=head_sha,
                     fingerprint=head_fingerprint,
                     wheelhouses=head_wheelhouses,
+                    ripgrep=fetch_ripgrep,
                     force_rebuild=force,
                 ),
                 fresh=self._fresh,
@@ -1181,7 +1578,9 @@ class ContainerEnvironments:
                 head=head,
                 environment_delta=delta,
                 fetches=tuple(self._fetches),
-                installer_identity=f'{docker_identity}; image {self._image}',
+                installer_identity=(
+                    f'{docker_identity}; builder {self._builder_image}; runtime {self._runtime_image}; {ripgrep_id}'
+                ),
                 python_version=python_version,
                 work_root=work_root,
                 base_work_root=base_work_root,
@@ -1324,6 +1723,8 @@ class ContainerExecution:
             'none',
             '--name',
             container_name,
+            '--entrypoint',
+            '',
             *_HARDENING_FLAGS,
             '--volume',
             f'{self.work_roots[side]}:{CONTAINER_WORK_ROOT}',
