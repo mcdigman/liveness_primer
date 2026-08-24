@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -25,7 +26,7 @@ from liveness_primer.container import (
 )
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import DetectorEnvironments
-from liveness_primer.filesystem import atomic_write_text, read_small_text
+from liveness_primer.filesystem import atomic_write_text, contained_path, read_small_text
 from liveness_primer.findings import ChangedField, DiffClass, DiffRollup, DiffTotals, Report
 from liveness_primer.isolation import UNENFORCED, Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async, run_sync
@@ -1302,9 +1303,22 @@ def test_container_run_stages_the_skylos_neutral_config(
         exec_argvs.append(tuple(argv))
         # The staged copy exists under the invocation's side mount.
         volume = argv[argv.index('--volume') + 1]
-        work_root = Path(volume.split(':', maxsplit=1)[0])
-        staged = work_root / 'invocation-env' / 'SKYLOS_CONFIG_FILE' / 'skylos_neutral_config.toml'
-        assert '[skylos]' in staged.read_text(encoding='utf-8')
+        work_root, temporary_root = await asyncio.gather(
+            asyncio.to_thread(Path(volume.split(':', maxsplit=1)[0]).resolve),
+            asyncio.to_thread(Path(tempfile.gettempdir()).resolve),
+        )
+        relative_root = work_root.relative_to(temporary_root)
+        assert len(relative_root.parts) == 2
+        run_name, side = relative_root.parts
+        assert run_name.startswith('liveness-primer-run-')
+        assert side in {'base', 'head'}
+        trusted_work_root = await asyncio.to_thread(contained_path, temporary_root, str(relative_root))
+        staged = await asyncio.to_thread(
+            contained_path,
+            trusted_work_root,
+            'invocation-env/SKYLOS_CONFIG_FILE/skylos_neutral_config.toml',
+        )
+        assert '[skylos]' in await asyncio.to_thread(read_small_text, staged, max_bytes=4096)
         return LaunchResult(
             argv=tuple(argv), returncode=0, stdout='{}', stderr='', duration_seconds=0.0, timed_out=False
         )
