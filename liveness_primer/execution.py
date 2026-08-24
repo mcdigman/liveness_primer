@@ -60,15 +60,19 @@ class LaunchPlan:
 class ExecutionBackend(Protocol):
     """Injectable strategy deciding where detector invocations run (contract §15).
 
-    ``workspace_parent`` names the directory side workspaces must be
+    ``workspace_parent`` names the directory one side's workspaces must be
     created under, when the backend can only reach a specific host location
-    (e.g. a container mount); ``None`` lets the runner use the default
-    temporary directory.
+    (e.g. that side's container mount); ``None`` lets the runner use the
+    default temporary directory.
     """
 
-    @property
-    def workspace_parent(self) -> Path | None:
-        """Report where side workspaces must be created.
+    def workspace_parent(self, side: str) -> Path | None:
+        """Report where one side's workspaces must be created.
+
+        Parameters
+        ----------
+        side : str
+            ``base`` or ``head``.
 
         Returns
         -------
@@ -130,15 +134,21 @@ class HostExecution:
     invocation_env: Mapping[str, str]
     passthrough_env: Mapping[str, str]
 
-    @property
-    def workspace_parent(self) -> Path | None:
-        """Report where side workspaces must be created.
+    @staticmethod
+    def workspace_parent(side: str) -> Path | None:
+        """Report where one side's workspaces must be created.
+
+        Parameters
+        ----------
+        side : str
+            ``base`` or ``head``; both sides use the default.
 
         Returns
         -------
         Path | None
             Always ``None``: the default temporary directory works.
         """
+        del side
         return None
 
     def launch_plan(self, *, side: str, argv: Sequence[str], workspace: SideWorkspace) -> LaunchPlan:

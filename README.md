@@ -260,11 +260,15 @@ liveness-primer run --tool vulture \
 Each revision is installed into a fingerprint-cached environment image built
 offline (`docker build --network none`) from dependencies prefetched during
 the fetch step, and each side of the run then executes inside its own
-container with networking disabled. Both containers are destroyed as soon as
-the analysis finishes — before the report or any `--json-out` artifact is
-written. Because the container runtime enforces the sandbox on every
-platform, container runs record enforced isolation even on hosts where the
-default host-venv path is best-effort (for example macOS).
+hardened container — networking disabled, running as the invoking user with
+all capabilities dropped, a PID limit, and a read-only root filesystem, with
+only its own side's workspaces mounted. Both containers are destroyed as
+soon as the analysis finishes — before the report or any `--json-out`
+artifact is written, and a removal Docker cannot confirm fails the run
+rather than letting output be written. Because the container runtime
+enforces the sandbox on every platform, container runs record enforced
+isolation even on hosts where the default host-venv path is best-effort
+(for example macOS).
 
 The mode requires a running Docker daemon, probed at run start; the `docker`
 CLI is a host requirement of this mode only, never a Python dependency.

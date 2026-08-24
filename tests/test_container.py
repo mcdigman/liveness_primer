@@ -22,6 +22,8 @@ from liveness_primer.container import (
     container_fingerprint,
     container_user,
     image_tag,
+    promote_prefetched,
+    stage_wheelhouse,
 )
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.execution import SideWorkspace
@@ -91,43 +93,71 @@ def test_build_image_fresh_bypasses_the_layer_cache(tmp_path: Path) -> None:
         DockerCli(launcher=RecordingLauncher(returncode=1)).build_image('t:1', tmp_path, fresh=True)
 
 
+def assert_hardened(argv: tuple[str, ...]) -> None:
+    assert argv[argv.index('--cap-drop') + 1] == 'ALL'
+    assert argv[argv.index('--security-opt') + 1] == 'no-new-privileges'
+    assert argv[argv.index('--pids-limit') + 1] == '4096'
+    assert '--read-only' in argv
+    assert argv[argv.index('--tmpfs') + 1] == '/tmp'
+
+
 def test_prefetch_runs_pip_download_in_the_base_image(tmp_path: Path) -> None:
     launcher = RecordingLauncher()
     DockerCli(launcher=launcher).prefetch('python:3.12-slim', ('tomli>=2',), tmp_path)
-    (argv,) = launcher.calls
-    assert argv[:3] == ('docker', 'run', '--rm')
-    assert (argv[3], argv[4]) == ('--user', container_user())
-    assert f'{tmp_path}:/liveness/wheelhouse' in argv
-    assert (argv[7], argv[8]) == ('--env', 'HOME=/tmp')
-    assert argv[-1] == 'tomli>=2'
-    assert 'python:3.12-slim' in argv
+    run_argv, rm_argv = launcher.calls
+    assert run_argv[:3] == ('docker', 'run', '--rm')
+    name = run_argv[run_argv.index('--name') + 1]
+    assert name.startswith('liveness-primer-fetch-')
+    # The fetch container is tracked: a client-side timeout cannot leave an
+    # anonymous container running.
+    assert rm_argv == ('docker', 'rm', '--force', name)
+    assert_hardened(run_argv)
+    assert run_argv[run_argv.index('--user') + 1] == container_user()
+    assert f'{tmp_path}:/liveness/wheelhouse' in run_argv
+    assert run_argv[run_argv.index('--env') + 1] == 'HOME=/tmp'
+    assert run_argv[-1] == 'tomli>=2'
+    assert 'python:3.12-slim' in run_argv
+    failing = RecordingLauncher(returncode=1)
     with pytest.raises(ContainerError, match='dependency prefetch'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).prefetch('python:3.12-slim', ('tomli>=2',), tmp_path)
+        DockerCli(launcher=failing).prefetch('python:3.12-slim', ('tomli>=2',), tmp_path)
+    # The tracked cleanup still runs on the failure path.
+    assert failing.calls[-1][:3] == ('docker', 'rm', '--force')
 
 
 def test_prefetch_without_posix_ids_omits_the_user_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delattr(os, 'getuid')
     launcher = RecordingLauncher()
     DockerCli(launcher=launcher).prefetch('python:3.12-slim', ('tomli>=2',), tmp_path)
-    (argv,) = launcher.calls
-    assert '--user' not in argv
+    run_argv = launcher.calls[0]
+    assert '--user' not in run_argv
 
 
 def test_freeze_parses_lines() -> None:
     launcher = RecordingLauncher(stdout='tomli==2.4.0\n\nvulture @ file:///x\n')
     assert DockerCli(launcher=launcher).freeze('t:1') == ('tomli==2.4.0', 'vulture @ file:///x')
-    (argv,) = launcher.calls
-    assert argv == ('docker', 'run', '--rm', '--network', 'none', 't:1', 'python', '-m', 'pip', 'freeze')
+    run_argv, rm_argv = launcher.calls
+    assert run_argv[:3] == ('docker', 'run', '--rm')
+    name = run_argv[run_argv.index('--name') + 1]
+    assert name.startswith('liveness-primer-freeze-')
+    assert rm_argv == ('docker', 'rm', '--force', name)
+    assert run_argv[run_argv.index('--network') + 1] == 'none'
+    assert_hardened(run_argv)
+    assert run_argv[-4:] == ('python', '-m', 'pip', 'freeze')
+    assert 't:1' in run_argv
     with pytest.raises(ContainerError, match='pip freeze failed'):
         DockerCli(launcher=RecordingLauncher(returncode=1)).freeze('t:1')
 
 
-def test_start_container_argv_is_network_less(tmp_path: Path) -> None:
+def test_start_container_argv_is_network_less_and_hardened(tmp_path: Path) -> None:
     launcher = RecordingLauncher()
     DockerCli(launcher=launcher).start_container('t:1', 'primer-base', work_root=tmp_path)
     (argv,) = launcher.calls
-    assert (argv[5], argv[6]) == ('--network', 'none')
-    assert (argv[7], argv[8]) == ('--name', 'primer-base')
+    assert argv[argv.index('--network') + 1] == 'none'
+    assert argv[argv.index('--name') + 1] == 'primer-base'
+    assert_hardened(argv)
+    # PID 1 (the untrusted image's own `sleep`) runs as the mapped host
+    # user, never as the image default.
+    assert argv[argv.index('--user') + 1] == container_user()
     assert f'{tmp_path}:{CONTAINER_WORK_ROOT}' in argv
     assert argv[-2:] == ('sleep', 'infinity')
     assert {'--detach', '--rm', '--init'} <= set(argv)
@@ -141,6 +171,9 @@ def test_remove_container_reports_the_outcome() -> None:
     (argv,) = launcher.calls
     assert argv == ('docker', 'rm', '--force', 'primer-base')
     assert DockerCli(launcher=RecordingLauncher(returncode=1)).remove_container('primer-base') is False
+    # An already-absent container counts as confirmed removal.
+    gone = RecordingLauncher(returncode=1, stderr_text='Error response from daemon: No such container: primer-base')
+    assert DockerCli(launcher=gone).remove_container('primer-base') is True
 
 
 def test_container_user_maps_posix_ids() -> None:
@@ -172,6 +205,8 @@ class FakeDocker:
 
     freezes: deque[tuple[str, ...]] = field(default_factory=deque)
     always_cached: bool = False
+    remove_ok: bool = True
+    wheel_symlink_target: Path | None = None
     events: list[str] = field(default_factory=list)
     existing_images: set[str] = field(default_factory=set)
     prefetches: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
@@ -212,12 +247,15 @@ class FakeDocker:
         self.built_contexts.append((names, read_small_text(context / 'Dockerfile')))
         self.existing_images.add(tag)
 
-    def prefetch(self, image: str, requirements: Sequence[str], wheelhouse: Path) -> None:
+    def prefetch(self, image: str, requirements: Sequence[str], destination: Path) -> None:
         """Record the request and materialize scripted wheel files."""
         self.events.append('prefetch')
         self.prefetches.append((image, tuple(requirements)))
         for wheel in self.wheel_names:
-            atomic_write_bytes(wheelhouse / wheel, b'payload-' + wheel.encode('utf-8'))
+            if self.wheel_symlink_target is None:
+                atomic_write_bytes(destination / wheel, b'payload-' + wheel.encode('utf-8'))
+            else:
+                (destination / wheel).symlink_to(self.wheel_symlink_target)
 
     def freeze(self, tag: str) -> tuple[str, ...]:
         """Pop the next scripted freeze.
@@ -246,11 +284,11 @@ class FakeDocker:
         Returns
         -------
         bool
-            Always True.
+            The scripted removal outcome.
         """
         self.events.append(f'rm:{name}')
         self.removed.append(name)
-        return True
+        return self.remove_ok
 
 
 def environments(
@@ -295,7 +333,12 @@ def test_cold_pair_builds_images_and_runs_ephemeral_containers(tmp_path: Path, d
         assert pair.base_container == f'{pair.work_root.name}-base'
         assert pair.head_container == f'{pair.work_root.name}-head'
         assert docker.started == [pair.base_container, pair.head_container]
-        assert docker.work_roots == [pair.work_root, pair.work_root]
+        # Each container mounts only its own side's workspace root, so
+        # neither side's untrusted code can reach the other's checkout copy.
+        assert docker.work_roots == [pair.base_work_root, pair.head_work_root]
+        assert pair.base_work_root != pair.head_work_root
+        assert pair.base_work_root.parent == pair.work_root
+        assert pair.head_work_root.parent == pair.work_root
         assert docker.removed == []
     assert docker.removed == [pair.base_container, pair.head_container]
     assert not pair.work_root.exists()
@@ -407,28 +450,97 @@ def test_dependency_free_detector_skips_the_prefetch(tmp_path: Path, detector_re
     assert docker.prefetches == []
 
 
+def test_prefetched_symlink_never_reaches_the_wheelhouse(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    # A build hook running inside the fetch container can plant a symlink
+    # whose target only resolves on the host; the staged download must be
+    # rejected before anything host-side dereferences it (contract §11).
+    secret = tmp_path / 'host-secret'
+    secret.write_text('credentials', encoding='utf-8')
+    docker = FakeDocker(wheel_symlink_target=secret)
+    with (
+        pytest.raises(ContainerError, match='prefetched distribution is not a regular file'),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+    ):
+        pass
+    assert docker.built == []
+    assert docker.started == []
+
+
+def test_promote_prefetched_reports_only_new_files(tmp_path: Path) -> None:
+    staging = tmp_path / 'staging'
+    wheelhouse = tmp_path / 'wheelhouse'
+    staging.mkdir()
+    wheelhouse.mkdir()
+    atomic_write_bytes(wheelhouse / 'cached.whl', b'old')
+    atomic_write_bytes(staging / 'cached.whl', b'replaced')
+    atomic_write_bytes(staging / 'fresh.whl', b'fresh')
+    assert promote_prefetched(staging, wheelhouse) == {'fresh.whl'}
+    assert (wheelhouse / 'cached.whl').read_bytes() == b'replaced'
+    assert (wheelhouse / 'fresh.whl').read_bytes() == b'fresh'
+
+
+def test_stage_wheelhouse_refuses_symlinked_cache_entries(tmp_path: Path) -> None:
+    # The persistent wheelhouse outlives runs: a symlink that slipped in
+    # must never be dereferenced while assembling a build context.
+    wheelhouse = tmp_path / 'wheelhouse'
+    wheelhouse.mkdir()
+    atomic_write_bytes(wheelhouse / 'good.whl', b'payload')
+    (wheelhouse / 'evil.whl').symlink_to(tmp_path / 'host-secret')
+    with pytest.raises(ContainerError, match='cached distribution is not a regular file'):
+        stage_wheelhouse(wheelhouse, tmp_path / 'context')
+    (wheelhouse / 'evil.whl').unlink()
+    stage_wheelhouse(wheelhouse, tmp_path / 'clean-context')
+    assert (tmp_path / 'clean-context' / 'good.whl').read_bytes() == b'payload'
+
+
+def test_unconfirmed_removal_fails_the_run(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    # Contract §3, §11: report output must never be written while an
+    # analysis container may still exist, so the success path fails closed.
+    docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]), remove_ok=False)
+    with (
+        pytest.raises(ContainerError, match='could not confirm removal of analysis container'),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+    ):
+        pass
+    assert docker.removed == docker.started
+
+
+def test_analysis_failure_is_not_masked_by_removal_failure(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    # On the failure path teardown stays best-effort: the in-flight error
+    # already prevents report output and must reach the caller unmasked.
+    docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]), remove_ok=False)
+    with pytest.raises(RuntimeError, match='analysis exploded'):
+        explode_during_analysis(environments(tmp_path, docker), detector_repo.url)
+    assert docker.removed == docker.started
+
+
 def workspace_under(work_root: Path) -> SideWorkspace:
     root = work_root / 'liveness-primer-side-x1'
     return SideWorkspace(root=root, checkout=root / 'checkout', home=root / 'home')
 
 
-def test_execution_workspaces_live_under_the_mounted_root(tmp_path: Path) -> None:
-    execution = ContainerExecution(
-        work_root=tmp_path,
+def side_execution(tmp_path: Path) -> ContainerExecution:
+    return ContainerExecution(
+        work_roots={'base': tmp_path / 'base', 'head': tmp_path / 'head'},
         containers={'base': 'primer-base', 'head': 'primer-head'},
         invocation_env={},
     )
-    assert execution.workspace_parent == tmp_path
+
+
+def test_execution_workspaces_live_under_the_side_mounted_root(tmp_path: Path) -> None:
+    execution = side_execution(tmp_path)
+    assert execution.workspace_parent('base') == tmp_path / 'base'
+    assert execution.workspace_parent('head') == tmp_path / 'head'
 
 
 def test_launch_plan_builds_a_docker_exec(tmp_path: Path) -> None:
     execution = ContainerExecution(
-        work_root=tmp_path,
+        work_roots={'base': tmp_path / 'base', 'head': tmp_path / 'head'},
         containers={'base': 'primer-base', 'head': 'primer-head'},
         invocation_env={'SKYLOS_GREP_BUDGET': '5'},
         user='501:20',
     )
-    workspace = workspace_under(tmp_path)
+    workspace = workspace_under(tmp_path / 'head')
     plan = execution.launch_plan(side='head', argv=('vulture', '.'), workspace=workspace)
     assert plan.cwd is None
     assert plan.env is None
@@ -450,21 +562,13 @@ def test_launch_plan_builds_a_docker_exec(tmp_path: Path) -> None:
 
 
 def test_launch_plan_without_a_user_mapping(tmp_path: Path) -> None:
-    execution = ContainerExecution(
-        work_root=tmp_path,
-        containers={'base': 'primer-base', 'head': 'primer-head'},
-        invocation_env={},
-    )
-    plan = execution.launch_plan(side='base', argv=('vulture', '.'), workspace=workspace_under(tmp_path))
+    execution = side_execution(tmp_path)
+    plan = execution.launch_plan(side='base', argv=('vulture', '.'), workspace=workspace_under(tmp_path / 'base'))
     assert '--user' not in plan.argv
     assert 'primer-base' in plan.argv
 
 
 def test_analysis_root_is_the_container_side_checkout(tmp_path: Path) -> None:
-    execution = ContainerExecution(
-        work_root=tmp_path,
-        containers={'base': 'primer-base', 'head': 'primer-head'},
-        invocation_env={},
-    )
-    root = execution.analysis_root(workspace_under(tmp_path))
+    execution = side_execution(tmp_path)
+    root = execution.analysis_root(workspace_under(tmp_path / 'base'))
     assert root == Path('/liveness/work/liveness-primer-side-x1/checkout')

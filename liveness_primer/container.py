@@ -5,12 +5,16 @@
 ``--container`` moves the build and execution of both detector refs into
 Docker. Each ref is installed into a fingerprint-keyed image by an offline
 ``docker build --network none`` fed from a wheelhouse prefetched during the
-fetch step; each side of the run then executes inside its own ephemeral
-container started from that image with networking disabled. Both containers
-are force-removed when the analysis context exits — before any report output
-is rendered or written. Docker is driven exclusively through the audited
-launcher via the ``docker`` CLI, and the runtime is injectable so the logic
-is testable without a daemon (contract §15).
+fetch step; each side of the run then executes inside its own ephemeral,
+hardened container (non-root, all capabilities dropped, no new privileges,
+PID-limited, read-only root filesystem) started from that image with
+networking disabled and with only its own side's workspace mounted. Both
+containers are force-removed when the analysis context exits, and a removal
+the daemon cannot confirm fails the run — so no report output is ever
+rendered or written while a container may still exist. Docker is driven
+exclusively through the audited launcher via the ``docker`` CLI, and the
+runtime is injectable so the logic is testable without a daemon (contract
+§15).
 """
 
 import contextlib
@@ -18,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
@@ -45,6 +50,27 @@ CONTAINER_ISOLATION = Isolation(enforced=True, description='container:docker-net
 CONTAINER_WORK_ROOT = PurePosixPath('/liveness/work')
 
 _DOCKER_TIMEOUT = 1800.0
+
+# Fork-bomb backstop for every container this module starts; generous enough
+# for any real detector or pip invocation.
+_PIDS_LIMIT = 4096
+
+# Privilege and resource hardening applied to every container: untrusted
+# detector code participates in the image build, so even the container's own
+# entrypoint binaries are untrusted (contract §11). Deliberately absent are
+# hard memory/CPU caps: the §3 per-(project, tool) timeout is the resource
+# bound, and a fixed cap would misfail legitimately large analyses.
+_HARDENING_FLAGS: tuple[str, ...] = (
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges',
+    '--pids-limit',
+    str(_PIDS_LIMIT),
+    '--read-only',
+    '--tmpfs',
+    '/tmp',
+)
 
 _IMAGE_REFERENCE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/@-]*$')
 
@@ -101,6 +127,84 @@ def container_user() -> str | None:
     if hasattr(os, 'getuid') and hasattr(os, 'getgid'):
         return f'{os.getuid()}:{os.getgid()}'
     return None
+
+
+def _user_flags() -> tuple[str, ...]:
+    """Build the ``--user`` argv flags for every container this module runs.
+
+    Returns
+    -------
+    tuple[str, ...]
+        ``('--user', 'uid:gid')``, or empty on platforms without POSIX ids.
+    """
+    user = container_user()
+    if user is None:
+        return ()
+    return ('--user', user)
+
+
+def promote_prefetched(staging: Path, wheelhouse: Path) -> set[str]:
+    """Validate staged downloads and move them into the cached wheelhouse (contract §11).
+
+    The download runs third-party build hooks inside a container that can
+    write anything into the staged directory — including a symlink whose
+    target only resolves on the host. Every entry must therefore be a
+    regular, non-symlink file before anything host-side dereferences it.
+
+    Parameters
+    ----------
+    staging : Path
+        Fresh staging directory the fetch container wrote into.
+    wheelhouse : Path
+        Cached wheelhouse the validated files move to (same filesystem).
+
+    Returns
+    -------
+    set[str]
+        Filenames that were not previously present in the wheelhouse.
+
+    Raises
+    ------
+    ContainerError
+        If a staged entry is a symlink or not a regular file.
+    """
+    before = {entry.name for entry in wheelhouse.iterdir()}
+    added: set[str] = set()
+    for entry in sorted(staging.iterdir()):
+        if entry.is_symlink() or not entry.is_file():
+            msg = f'prefetched distribution is not a regular file: {entry.name}'
+            raise ContainerError(msg)
+        entry.replace(wheelhouse / entry.name)
+        if entry.name not in before:
+            added.add(entry.name)
+    return added
+
+
+def stage_wheelhouse(wheelhouse: Path, destination: Path) -> None:
+    """Copy the wheelhouse into a build context without following symlinks (contract §11).
+
+    The cached wheelhouse persists across runs; a symlink that slipped into
+    it must never be dereferenced on the host while assembling an image
+    build context.
+
+    Parameters
+    ----------
+    wheelhouse : Path
+        Cached wheelhouse directory.
+    destination : Path
+        Build-context wheelhouse directory to create and fill.
+
+    Raises
+    ------
+    ContainerError
+        If a cached entry is a symlink or not a regular file.
+    """
+    destination.mkdir()
+    for entry in sorted(wheelhouse.iterdir()):
+        if entry.is_symlink() or not entry.is_file():
+            msg = f'cached distribution is not a regular file: {entry.name}'
+            raise ContainerError(msg)
+        shutil.copyfile(entry, destination / entry.name)
 
 
 def container_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, docker_identity: str, image: str) -> str:
@@ -197,11 +301,13 @@ class DockerRuntime(Protocol):
         """
         ...
 
-    def prefetch(self, image: str, requirements: Sequence[str], wheelhouse: Path) -> None:
-        """Download distributions into the wheelhouse (fetch step, §3).
+    def prefetch(self, image: str, requirements: Sequence[str], destination: Path) -> None:
+        """Download distributions into a staging directory (fetch step, §3).
 
         Runs pip inside the base image so the fetched wheels match the
-        container platform, not the host.
+        container platform, not the host. The destination is a fresh
+        staging directory, never the persistent cache: the caller validates
+        and promotes the results (contract §11).
 
         Parameters
         ----------
@@ -209,8 +315,8 @@ class DockerRuntime(Protocol):
             Base image whose pip performs the download.
         requirements : Sequence[str]
             Requirement strings to download, wheels preferred.
-        wheelhouse : Path
-            Host wheelhouse directory mounted into the fetch container.
+        destination : Path
+            Fresh host staging directory mounted into the fetch container.
         """
         ...
 
@@ -230,7 +336,7 @@ class DockerRuntime(Protocol):
         ...
 
     def start_container(self, tag: str, name: str, *, work_root: Path) -> None:
-        """Start one ephemeral, network-less analysis container.
+        """Start one ephemeral, network-less, hardened analysis container.
 
         Parameters
         ----------
@@ -239,12 +345,13 @@ class DockerRuntime(Protocol):
         name : str
             Container name used for ``docker exec`` and removal.
         work_root : Path
-            Host workspace root mounted at the container work root.
+            This side's host workspace root, mounted at the container work
+            root.
         """
         ...
 
     def remove_container(self, name: str) -> bool:
-        """Force-remove one analysis container, best effort.
+        """Force-remove one analysis container and confirm the outcome.
 
         Parameters
         ----------
@@ -254,7 +361,7 @@ class DockerRuntime(Protocol):
         Returns
         -------
         bool
-            True when the removal command succeeded.
+            True when the daemon confirmed the container no longer exists.
         """
         ...
 
@@ -337,8 +444,24 @@ class DockerCli:
         argv.append(str(context))
         _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='docker build')
 
-    def prefetch(self, image: str, requirements: Sequence[str], wheelhouse: Path) -> None:
+    def _remove_auxiliary(self, name: str) -> None:
+        """Force-remove one named helper container, tolerating absence.
+
+        A client-side launcher timeout kills the docker CLI but not the
+        container it started; the tracked name lets the cleanup reach it.
+
+        Parameters
+        ----------
+        name : str
+            Helper container name to remove.
+        """
+        self.launcher([self.binary, 'rm', '--force', name], timeout=_DOCKER_TIMEOUT)
+
+    def prefetch(self, image: str, requirements: Sequence[str], destination: Path) -> None:
         """Download distributions with the base image's pip (fetch step, §3).
+
+        The fetch container is named and force-removed afterwards, so a
+        client-side timeout cannot leak an untracked running container.
 
         Parameters
         ----------
@@ -346,32 +469,37 @@ class DockerCli:
             Base image whose pip performs the download.
         requirements : Sequence[str]
             Requirement strings to download, wheels preferred.
-        wheelhouse : Path
-            Host wheelhouse directory mounted into the fetch container.
+        destination : Path
+            Fresh host staging directory mounted into the fetch container.
         """
-        argv = [self.binary, 'run', '--rm']
-        user = container_user()
-        if user is not None:
-            argv.extend(['--user', user])
-        argv.extend(
-            [
-                '--volume',
-                f'{wheelhouse}:/liveness/wheelhouse',
-                '--env',
-                'HOME=/tmp',
-                image,
-                'python',
-                '-m',
-                'pip',
-                'download',
-                '--quiet',
-                '--dest',
-                '/liveness/wheelhouse',
-                '--prefer-binary',
-                *requirements,
-            ]
-        )
-        _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='dependency prefetch (pip download)')
+        name = f'liveness-primer-fetch-{secrets.token_hex(6)}'
+        argv = [
+            self.binary,
+            'run',
+            '--rm',
+            '--name',
+            name,
+            *_HARDENING_FLAGS,
+            *_user_flags(),
+            '--volume',
+            f'{destination}:/liveness/wheelhouse',
+            '--env',
+            'HOME=/tmp',
+            image,
+            'python',
+            '-m',
+            'pip',
+            'download',
+            '--quiet',
+            '--dest',
+            '/liveness/wheelhouse',
+            '--prefer-binary',
+            *requirements,
+        ]
+        try:
+            _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='dependency prefetch (pip download)')
+        finally:
+            self._remove_auxiliary(name)
 
     def freeze(self, tag: str) -> tuple[str, ...]:
         """Capture the freeze of an environment image, offline.
@@ -386,20 +514,40 @@ class DockerCli:
         tuple[str, ...]
             Freeze lines.
         """
-        result = _checked(
-            self.launcher(
-                [self.binary, 'run', '--rm', '--network', 'none', tag, 'python', '-m', 'pip', 'freeze'],
-                timeout=_DOCKER_TIMEOUT,
-            ),
-            action='pip freeze',
-        )
+        name = f'liveness-primer-freeze-{secrets.token_hex(6)}'
+        argv = [
+            self.binary,
+            'run',
+            '--rm',
+            '--name',
+            name,
+            '--network',
+            'none',
+            *_HARDENING_FLAGS,
+            *_user_flags(),
+            '--env',
+            'HOME=/tmp',
+            tag,
+            'python',
+            '-m',
+            'pip',
+            'freeze',
+        ]
+        try:
+            result = _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='pip freeze')
+        finally:
+            self._remove_auxiliary(name)
         return tuple(line for line in result.stdout.splitlines() if line.strip())
 
     def start_container(self, tag: str, name: str, *, work_root: Path) -> None:
-        """Start one ephemeral, network-less analysis container (contract §11).
+        """Start one ephemeral, network-less, hardened analysis container (contract §11).
 
         ``--rm`` backstops removal on daemon-side stops; ``--init`` reaps
-        detector children of the idle keep-alive process.
+        detector children of the idle keep-alive process. The untrusted
+        detector build shaped the image — including its ``sleep`` binary —
+        so PID 1 already runs as the mapped host user with all capabilities
+        dropped, no new privileges, a PID limit, and a read-only root
+        filesystem; only this side's workspace root is mounted writable.
 
         Parameters
         ----------
@@ -408,7 +556,8 @@ class DockerCli:
         name : str
             Container name used for ``docker exec`` and removal.
         work_root : Path
-            Host workspace root mounted at the container work root.
+            This side's host workspace root, mounted at the container work
+            root.
         """
         argv = [
             self.binary,
@@ -420,6 +569,8 @@ class DockerCli:
             'none',
             '--name',
             name,
+            *_HARDENING_FLAGS,
+            *_user_flags(),
             '--volume',
             f'{work_root}:{CONTAINER_WORK_ROOT}',
             tag,
@@ -429,7 +580,7 @@ class DockerCli:
         _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='container start')
 
     def remove_container(self, name: str) -> bool:
-        """Force-remove one analysis container, best effort.
+        """Force-remove one analysis container and confirm the outcome.
 
         Parameters
         ----------
@@ -439,9 +590,11 @@ class DockerCli:
         Returns
         -------
         bool
-            True when the removal command succeeded.
+            True when the daemon confirmed removal — the command succeeded,
+            or the container already no longer exists.
         """
-        return self.launcher([self.binary, 'rm', '--force', name], timeout=_DOCKER_TIMEOUT).ok
+        result = self.launcher([self.binary, 'rm', '--force', name], timeout=_DOCKER_TIMEOUT)
+        return result.ok or 'No such container' in result.stderr
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,7 +630,11 @@ class PreparedContainerPair:
     installer_identity : str
         Docker runtime and base image used for builds.
     work_root : Path
-        Host workspace root mounted into both containers.
+        Host directory holding both per-side workspace roots.
+    base_work_root : Path
+        Base-side workspace root; the only mount the base container sees.
+    head_work_root : Path
+        Head-side workspace root; the only mount the head container sees.
     base_container : str
         Name of the running base-side container.
     head_container : str
@@ -490,6 +647,8 @@ class PreparedContainerPair:
     fetches: tuple[FetchRecord, ...]
     installer_identity: str
     work_root: Path
+    base_work_root: Path
+    head_work_root: Path
     base_container: str
     head_container: str
 
@@ -548,6 +707,9 @@ class ContainerEnvironments:
         attribution temporal, never textual. The download runs inside the
         base image so the wheels match the container platform, not the host;
         the wheelhouse is keyed per pair so each build context stays bounded.
+        The fetch container only ever sees a fresh staging directory — every
+        staged entry is validated as a regular, non-symlink file before it
+        is promoted into the persistent cache (contract §11).
 
         Parameters
         ----------
@@ -576,9 +738,13 @@ class ContainerEnvironments:
         deduped = tuple(dict.fromkeys(requirements))
         if not deduped:
             return wheelhouse
-        before = {entry.name for entry in wheelhouse.iterdir()}
-        self._docker.prefetch(self._image, deduped, wheelhouse)
-        added = {entry.name for entry in wheelhouse.iterdir()} - before
+        # Same filesystem as the wheelhouse, so promotion is an atomic rename.
+        staging = Path(tempfile.mkdtemp(prefix='liveness-primer-fetch-', dir=wheelhouse.parent))
+        try:
+            self._docker.prefetch(self._image, deduped, staging)
+            added = promote_prefetched(staging, wheelhouse)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
         self._fetches.extend(fetch_records_for(wheelhouse, added))
         return wheelhouse
 
@@ -599,7 +765,7 @@ class ContainerEnvironments:
             # Symlinks are copied as symlinks: following them could pull
             # content from outside the untrusted checkout into the image.
             shutil.copytree(checkout, context / 'detector', symlinks=True, ignore=shutil.ignore_patterns('.git'))
-            shutil.copytree(wheelhouse, context / 'wheelhouse')
+            stage_wheelhouse(wheelhouse, context / 'wheelhouse')
             (context / 'Dockerfile').write_text(_DOCKERFILE.format(image=self._image), encoding='utf-8')
             self._docker.build_image(tag, context, fresh=self._fresh)
 
@@ -661,9 +827,12 @@ class ContainerEnvironments:
         used directly; any non-empty delta triggers an automatic paired
         same-run rebuild, so only a delta that survives it is
         ref-attributable. Both analysis containers start network-less before
-        the context yields and are force-removed when it exits — regardless
-        of analysis outcome, and before the caller can assemble or write any
-        report output.
+        the context yields, each seeing only its own side's workspace root,
+        and are force-removed when the context exits — regardless of
+        analysis outcome, and before the caller can assemble or write any
+        report output. When the analysis itself succeeded, a removal the
+        daemon cannot confirm fails the run rather than letting output be
+        written while a container may still exist.
 
         Parameters
         ----------
@@ -680,6 +849,12 @@ class ContainerEnvironments:
         ------
         PreparedContainerPair
             The two running containers, surviving delta, and fetch records.
+
+        Raises
+        ------
+        ContainerError
+            If an environment cannot be prepared, or teardown of a
+            container cannot be confirmed after a successful analysis.
         """
         base_sha = self._store.resolve_ref(repo, base_ref)
         head_sha = self._store.resolve_ref(repo, head_ref)
@@ -743,12 +918,23 @@ class ContainerEnvironments:
             )
             delta = dependency_delta(base.record.freeze, head.record.freeze, detector_distribution=adapter.distribution)
         work_root = Path(tempfile.mkdtemp(prefix='liveness-primer-run-'))
+        base_work_root = work_root / 'base'
+        head_work_root = work_root / 'head'
+        base_work_root.mkdir()
+        head_work_root.mkdir()
         base_container = f'{work_root.name}-base'
         head_container = f'{work_root.name}-head'
         started: list[str] = []
+        completed = False
         try:
-            for name, handle in ((base_container, base), (head_container, head)):
-                self._docker.start_container(handle.image, name, work_root=work_root)
+            # Each container mounts only its own side's root: the sides run
+            # concurrently, and a shared writable mount would let one side's
+            # untrusted code rewrite the other's checkout copy (contract §3).
+            for name, handle, side_root in (
+                (base_container, base, base_work_root),
+                (head_container, head, head_work_root),
+            ):
+                self._docker.start_container(handle.image, name, work_root=side_root)
                 started.append(name)
             yield PreparedContainerPair(
                 base=base,
@@ -757,17 +943,25 @@ class ContainerEnvironments:
                 fetches=tuple(self._fetches),
                 installer_identity=f'{docker_identity}; image {self._image}',
                 work_root=work_root,
+                base_work_root=base_work_root,
+                head_work_root=head_work_root,
                 base_container=base_container,
                 head_container=head_container,
             )
+            completed = True
         finally:
-            # The removal is unconditional and happens before the caller can
-            # continue past the analysis context — no report output exists
-            # while a container is still running. Removal is best-effort:
-            # `--rm` on the containers backstops a failed force-remove.
-            for name in started:
-                self._docker.remove_container(name)
+            leftovers = [name for name in started if not self._docker.remove_container(name)]
             shutil.rmtree(work_root, ignore_errors=True)
+            # The success path fails closed: report output must never be
+            # written while a container may still exist, so an unconfirmed
+            # removal fails the run (contract §3, §11). With an analysis
+            # error already in flight, teardown stays best-effort — raising
+            # here would mask that error, and the error itself already
+            # prevents any report output.
+            if completed and leftovers:
+                names = ', '.join(leftovers)
+                msg = f'could not confirm removal of analysis container(s) {names}; refusing to produce report output'
+                raise ContainerError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -776,9 +970,10 @@ class ContainerExecution:
 
     Attributes
     ----------
-    work_root : Path
-        Host workspace root mounted at the container work root; every side
-        workspace is created under it.
+    work_roots : dict[str, Path]
+        Host workspace root per side (``base``/``head``); each container
+        mounts only its own side's root, so one side's untrusted code can
+        never reach the other's workspaces.
     containers : dict[str, str]
         Container name per side (``base``/``head``).
     invocation_env : dict[str, str]
@@ -789,23 +984,27 @@ class ContainerExecution:
         ``uid:gid`` the detector runs as, or ``None`` for the image default.
     """
 
-    work_root: Path
+    work_roots: dict[str, Path]
     containers: dict[str, str]
     invocation_env: dict[str, str]
     binary: str = 'docker'
     user: str | None = None
 
-    @property
-    def workspace_parent(self) -> Path | None:
-        """Report where side workspaces must be created.
+    def workspace_parent(self, side: str) -> Path | None:
+        """Report where one side's workspaces must be created.
+
+        Parameters
+        ----------
+        side : str
+            ``base`` or ``head``.
 
         Returns
         -------
         Path | None
-            The mounted workspace root — only paths under it exist inside
-            the containers.
+            That side's mounted workspace root — only paths under it exist
+            inside that side's container.
         """
-        return self.work_root
+        return self.work_roots[side]
 
     @staticmethod
     def _container_side_root(workspace: SideWorkspace) -> PurePosixPath:

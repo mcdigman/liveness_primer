@@ -131,10 +131,13 @@ liveness-primer run --tool vulture \
 
 Each revision installs into a fingerprint-cached environment image built
 offline (`docker build --network none`) from dependencies prefetched during
-the fetch step; each side of the run then executes inside its own container
-with networking disabled. Both containers are destroyed when the analysis
-finishes, before the report or any `--json-out` artifact is written, and the
-run records enforced isolation on every host platform.
+the fetch step; each side of the run then executes inside its own hardened
+container — networking disabled, running as the invoking user with all
+capabilities dropped, a PID limit, and a read-only root filesystem, with
+only its own side's workspaces mounted. Both containers are destroyed when
+the analysis finishes, before the report or any `--json-out` artifact is
+written — a removal Docker cannot confirm fails the run — and the run
+records enforced isolation on every host platform.
 
 The mode requires a running Docker daemon, probed at run start.
 `--container-image IMAGE` overrides the default `python:3.12-slim` base

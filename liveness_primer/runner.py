@@ -580,7 +580,7 @@ class PrimerRunner:
             # Each side analyzes its own disposable copy of the pinned
             # checkout in a sandboxed, credential-free environment prepared
             # by the execution backend (contract §3, §11).
-            workspace = await asyncio.to_thread(self._materialize_side, item.checkout, execution.workspace_parent)
+            workspace = await asyncio.to_thread(self._materialize_side, item.checkout, execution.workspace_parent(side))
             try:
                 plan = execution.launch_plan(side=side, argv=argv, workspace=workspace)
                 try:
@@ -961,7 +961,7 @@ class PrimerRunner:
             raise RunnerError(msg)
         with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
             execution = ContainerExecution(
-                work_root=pair.work_root,
+                work_roots={'base': pair.base_work_root, 'head': pair.head_work_root},
                 containers={'base': pair.base_container, 'head': pair.head_container},
                 invocation_env=dict(self._adapter.invocation_env),
                 user=container_user(),

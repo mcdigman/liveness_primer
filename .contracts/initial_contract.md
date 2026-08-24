@@ -36,11 +36,18 @@ point*: pre-triage, triage, or post-triage (§10).
   environment image (repository, resolved SHA, adapter build-recipe hash, base image
   reference, Docker runtime identity) built offline (`docker build --network none`) from
   a per-pair wheelhouse prefetched during the fetch step by the base image's own pip, so
-  wheels match the container platform rather than the host. Each side of the run then
-  executes inside its own **ephemeral** container started from its image with networking
-  disabled (`docker exec` per invocation, per-invocation workspaces under one bind
-  mount); both containers are force-removed when the analysis context exits — before the
-  manifest is assembled and before any report output is rendered or written. Images are
+  wheels match the container platform rather than the host. The fetch container writes
+  only into a fresh staging directory whose every entry is validated as a regular,
+  non-symlink file before promotion into the persistent wheelhouse, and build-context
+  assembly re-validates and never follows symlinks — a build hook must not be able to
+  make the host dereference a planted link (§11). Each side of the run then executes
+  inside its own **ephemeral** container started from its image with networking disabled
+  (`docker exec` per invocation, per-invocation workspaces under a per-side bind mount —
+  each container sees only its own side's workspaces, so neither side's untrusted code
+  can reach the other's checkout copies); both containers are force-removed when the
+  analysis context exits — before the manifest is assembled and before any report output
+  is rendered or written — and, when the analysis itself succeeded, a removal the daemon
+  cannot confirm fails the run instead of letting output be written. Images are
   cached by the Docker image store (which also serializes concurrent builds of a tag);
   `--fresh` forces `--no-cache` rebuilds, and paired same-run delta resolution applies
   unchanged. The `docker` CLI is a host requirement of this mode only, probed at run
@@ -259,7 +266,14 @@ point*: pre-triage, triage, or post-triage (§10).
   parser bug. In `--container` mode (§3) the runtime itself enforces `--network none` on
   builds, containers, and every exec, on every host platform — the netns probe is not
   used, and the mode records enforced isolation everywhere, including hosts where the
-  host-venv path is best-effort.
+  host-venv path is best-effort. Every container the mode starts (fetch, freeze, and
+  analysis) is additionally hardened: it runs as the invoking host user (PID 1 included —
+  the untrusted detector build shaped the image, so even its entrypoint binaries are
+  untrusted), with all capabilities dropped, `no-new-privileges`, a PID limit, and a
+  read-only root filesystem with a tmpfs `/tmp`; helper containers are named and
+  force-removed so a client-side timeout cannot leak one. Hard memory/CPU caps are
+  deliberately not imposed: the §3 per-(project, tool) timeout is the resource bound,
+  and a fixed cap would misfail legitimately large analyses.
 - Corpus code execution: the core (Phases 1–2) never executes corpus code — detectors only
   parse it. Any workflow that executes corpus code (coverage evidence, runner files,
   distillation; Phases 3–4) runs only inside an isolated container: no network, read-only
