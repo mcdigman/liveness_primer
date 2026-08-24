@@ -20,10 +20,16 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from liveness_primer.config import CorpusProject, ToolSettings
-from liveness_primer.container import ContainerEnvironments, ContainerExecution, PreparedContainerPair, container_user
+from liveness_primer.container import (
+    ContainerEnvironments,
+    ContainerExecution,
+    PreparedContainerPair,
+    container_user,
+    stage_invocation_env_files,
+)
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.diffing import diff_findings, merge_rollups
 from liveness_primer.envcache import DetectorEnvironments, PreparedPair
@@ -489,7 +495,7 @@ class PrimerRunner:
             )
         return work, tuple(fetches.values())
 
-    def _parse_outcome(self, item: _ProjectWork, *, side: str, result: LaunchResult, root: Path) -> _SideOutcome:
+    def _parse_outcome(self, item: _ProjectWork, *, side: str, result: LaunchResult, root: PurePath) -> _SideOutcome:
         """Turn one captured detector invocation into a side outcome.
 
         Parameters
@@ -500,8 +506,8 @@ class PrimerRunner:
             ``base`` or ``head``.
         result : LaunchResult
             The captured launch.
-        root : Path
-            Checkout copy the detector analyzed, for path normalization.
+        root : PurePath
+            Checkout copy as the detector saw it, for path normalization.
 
         Returns
         -------
@@ -750,9 +756,10 @@ class PrimerRunner:
         HostExecution
             Sandboxed host execution (contract §3, §11).
         """
+        env_files = {name: str(path) for name, path in self._adapter.invocation_env_files.items()}
         return HostExecution(
             isolation=self._isolation,
-            invocation_env=self._adapter.invocation_env,
+            invocation_env={**self._adapter.invocation_env, **env_files},
             passthrough_env=self._passthrough_env,
         )
 
@@ -765,6 +772,8 @@ class PrimerRunner:
         head_cmd: tuple[str, ...] | None,
         fetches: tuple[FetchRecord, ...],
         pins: tuple[CorpusPinRecord, ...],
+        isolation: Isolation,
+        python_version: str | None = None,
     ) -> RunManifest:
         """Assemble the run manifest (contract §2, §3).
 
@@ -782,6 +791,12 @@ class PrimerRunner:
             Every fetch performed during the run.
         pins : tuple[CorpusPinRecord, ...]
             Resolved corpus pins.
+        isolation : Isolation
+            The isolation of the execution backend that ran the detectors,
+            so record and enforcement can never diverge.
+        python_version : str | None
+            Interpreter version that ran the detectors, when it is not the
+            host interpreter (container mode); host version when ``None``.
 
         Returns
         -------
@@ -800,9 +815,9 @@ class PrimerRunner:
             head_cmd=head_cmd,
             comparable=pair is not None,
             environment_delta=pair.environment_delta if pair is not None else (),
-            isolation_enforced=self._isolation.enforced,
+            isolation_enforced=isolation.enforced,
             platform=sysconfig.get_platform(),
-            python_version=platform.python_version(),
+            python_version=python_version if python_version is not None else platform.python_version(),
             installer=pair.installer_identity if pair is not None else None,
             native_tools=self._native_tools,
             fetches=fetches,
@@ -849,6 +864,7 @@ class PrimerRunner:
         # The pair's environment locks stay held until analysis completes,
         # so a concurrent --fresh rebuild cannot delete an environment in
         # use (contract §3).
+        execution = self._host_execution()
         with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
             work, corpus_fetches = self._fetch_corpus(projects)
             project_reports = asyncio.run(
@@ -856,7 +872,7 @@ class PrimerRunner:
                     work,
                     base_command=(pair.base.executable,),
                     head_command=(pair.head.executable,),
-                    execution=self._host_execution(),
+                    execution=execution,
                 )
             )
         manifest = self._manifest(
@@ -866,6 +882,7 @@ class PrimerRunner:
             head_cmd=None,
             fetches=(*pair.fetches, *corpus_fetches),
             pins=tuple(item.pin for item in work),
+            isolation=execution.isolation,
         )
         return _assemble_report(manifest, project_reports)
 
@@ -895,13 +912,14 @@ class PrimerRunner:
         Report
             The blast radius.
         """
+        execution = self._host_execution()
         work, corpus_fetches = self._fetch_corpus(projects)
         project_reports = asyncio.run(
             self._analyze_all(
                 work,
                 base_command=tuple(base_cmd),
                 head_command=tuple(head_cmd),
-                execution=self._host_execution(),
+                execution=execution,
             )
         )
         manifest = self._manifest(
@@ -911,6 +929,7 @@ class PrimerRunner:
             head_cmd=tuple(head_cmd),
             fetches=corpus_fetches,
             pins=tuple(item.pin for item in work),
+            isolation=execution.isolation,
         )
         return _assemble_report(manifest, project_reports)
 
@@ -960,10 +979,16 @@ class PrimerRunner:
             msg = f'native helper passthrough ({names}) is not supported in --container mode'
             raise RunnerError(msg)
         with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
+            # Declared env files exist only on the host; each side gets an
+            # identical copy under its mount, at one container-side path.
+            env_files = stage_invocation_env_files(
+                self._adapter.invocation_env_files, (pair.base_work_root, pair.head_work_root)
+            )
             execution = ContainerExecution(
                 work_roots={'base': pair.base_work_root, 'head': pair.head_work_root},
                 containers={'base': pair.base_container, 'head': pair.head_container},
-                invocation_env=dict(self._adapter.invocation_env),
+                invocation_env={**self._adapter.invocation_env, **env_files},
+                binary=pair.binary,
                 user=container_user(),
             )
             work, corpus_fetches = self._fetch_corpus(projects)
@@ -984,6 +1009,8 @@ class PrimerRunner:
             head_cmd=None,
             fetches=(*pair.fetches, *corpus_fetches),
             pins=tuple(item.pin for item in work),
+            isolation=execution.isolation,
+            python_version=pair.python_version,
         )
         return _assemble_report(manifest, project_reports)
 

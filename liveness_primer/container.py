@@ -25,13 +25,20 @@ import re
 import secrets
 import shutil
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Protocol, runtime_checkable
 
+from filelock import BaseFileLock, FileLock, Timeout
+
 from liveness_primer.corpus import CheckoutStore
-from liveness_primer.envcache import dependency_delta, fetch_records_for, parse_static_metadata
+from liveness_primer.envcache import (
+    fetch_records_for,
+    parse_static_metadata,
+    resolve_pair_refs,
+    resolve_paired_delta,
+)
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.execution import LaunchPlan, SideWorkspace
 from liveness_primer.findings import DependencyDelta, EnvironmentRecord, FetchRecord
@@ -182,16 +189,19 @@ def promote_prefetched(staging: Path, wheelhouse: Path, *, exclude: frozenset[st
     Raises
     ------
     ContainerError
-        If a promoted staged entry is a symlink or not a regular file.
+        If any non-excluded staged entry is a symlink or not a regular
+        file; nothing is promoted in that case.
     """
-    before = {entry.name for entry in wheelhouse.iterdir()}
-    added: set[str] = set()
-    for entry in sorted(staging.iterdir()):
-        if entry.name in exclude:
-            continue
+    staged = [entry for entry in sorted(staging.iterdir()) if entry.name not in exclude]
+    # Validate every entry before promoting any: a rejected fetch must
+    # leave the persistent wheelhouse without unrecorded artifacts.
+    for entry in staged:
         if entry.is_symlink() or not entry.is_file():
             msg = f'prefetched distribution is not a regular file: {entry.name}'
             raise ContainerError(msg)
+    before = {entry.name for entry in wheelhouse.iterdir()}
+    added: set[str] = set()
+    for entry in staged:
         entry.replace(wheelhouse / entry.name)
         if entry.name not in before:
             added.add(entry.name)
@@ -232,6 +242,35 @@ def stage_wheelhouses(sources: Sequence[Path], destination: Path) -> None:
                 msg = f'wheelhouse name appears in more than one source: {entry.name}'
                 raise ContainerError(msg)
             shutil.copyfile(entry, target)
+
+
+def stage_invocation_env_files(files: Mapping[str, Path], work_roots: Iterable[Path]) -> dict[str, str]:
+    """Stage adapter-declared environment files into each side's mount (contract §3).
+
+    A declared file lives on the host, which the containers cannot see; a
+    copy under every side's mounted work root gives both sides the identical
+    file at the identical container path.
+
+    Parameters
+    ----------
+    files : Mapping[str, Path]
+        Adapter-declared variables mapped to packaged host files.
+    work_roots : Iterable[Path]
+        Host work roots mounted at the container work root, one per side.
+
+    Returns
+    -------
+    dict[str, str]
+        Each variable mapped to the staged file's container-side path.
+    """
+    staged: dict[str, str] = {}
+    for name, source in files.items():
+        for root in work_roots:
+            target_dir = root / 'invocation-env' / name
+            target_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target_dir / source.name)
+        staged[name] = str(CONTAINER_WORK_ROOT / 'invocation-env' / name / source.name)
+    return staged
 
 
 def container_fingerprint(repo: str, sha: str, adapter: DetectorAdapter, docker_identity: str, image: str) -> str:
@@ -290,6 +329,20 @@ def image_tag(fingerprint: str) -> str:
 @runtime_checkable
 class DockerRuntime(Protocol):
     """Injectable Docker runtime operations (contract §15)."""
+
+    @property
+    def binary(self) -> str:
+        """Client binary spawning every container-mode argv.
+
+        The per-invocation ``docker exec`` calls are composed outside this
+        protocol and must spawn the same client, so the runtime names it.
+
+        Returns
+        -------
+        str
+            E.g. ``docker`` or ``podman``.
+        """
+        ...
 
     def identity(self) -> str:
         """Report the runtime name and version for the fingerprint.
@@ -369,6 +422,21 @@ class DockerRuntime(Protocol):
         -------
         tuple[str, ...]
             Freeze lines.
+        """
+        ...
+
+    def python_version(self, tag: str) -> str:
+        """Report the interpreter version inside an environment image.
+
+        Parameters
+        ----------
+        tag : str
+            Environment image to inspect.
+
+        Returns
+        -------
+        str
+            The container-side ``platform.python_version()``.
         """
         ...
 
@@ -494,6 +562,54 @@ class DockerCli:
         """
         self.launcher([self.binary, 'rm', '--force', name], timeout=_DOCKER_TIMEOUT)
 
+    def _run_auxiliary(
+        self,
+        kind: str,
+        image: str,
+        command: Sequence[str],
+        *,
+        action: str,
+        offline: bool,
+        volumes: Sequence[str] = (),
+    ) -> LaunchResult:
+        """Run one named, hardened helper container and force-remove it (contract §11).
+
+        Every helper shares the hardening, user mapping, tmpfs ``HOME``, and
+        tracked-name cleanup; only the fetch step may reach the network.
+
+        Parameters
+        ----------
+        kind : str
+            Helper kind embedded in the tracked container name.
+        image : str
+            Image to run.
+        command : Sequence[str]
+            Command executed inside the container.
+        action : str
+            Description for error messages.
+        offline : bool
+            Disable networking (every helper except the fetch step).
+        volumes : Sequence[str]
+            ``--volume`` specifications to mount.
+
+        Returns
+        -------
+        LaunchResult
+            The successful result.
+        """
+        name = f'liveness-primer-{kind}-{secrets.token_hex(6)}'
+        argv = [self.binary, 'run', '--rm', '--name', name]
+        if offline:
+            argv.extend(('--network', 'none'))
+        argv.extend((*_HARDENING_FLAGS, *_user_flags()))
+        for volume in volumes:
+            argv.extend(('--volume', volume))
+        argv.extend(('--env', 'HOME=/tmp', image, *command))
+        try:
+            return _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action=action)
+        finally:
+            self._remove_auxiliary(name)
+
     def prefetch(
         self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
     ) -> None:
@@ -516,42 +632,21 @@ class DockerCli:
             Base-side wheelhouse mounted read-only as an extra resolver
             source, or ``None`` for the base fetch itself.
         """
-        name = f'liveness-primer-fetch-{secrets.token_hex(6)}'
-        argv = [
-            self.binary,
-            'run',
-            '--rm',
-            '--name',
-            name,
-            *_HARDENING_FLAGS,
-            *_user_flags(),
-            '--volume',
-            f'{destination}:/liveness/wheelhouse',
-            '--env',
-            'HOME=/tmp',
-        ]
+        volumes = [f'{destination}:/liveness/wheelhouse']
         download_flags = ['--prefer-binary']
         if find_links is not None:
-            argv.extend(['--volume', f'{find_links}:/liveness/base-links:ro'])
+            volumes.append(f'{find_links}:/liveness/base-links:ro')
             download_flags.extend(['--find-links', '/liveness/base-links'])
-        argv.extend(
-            [
-                image,
-                'python',
-                '-m',
-                'pip',
-                'download',
-                '--quiet',
-                '--dest',
-                '/liveness/wheelhouse',
-                *download_flags,
-                *requirements,
-            ]
+        command = ['python', '-m', 'pip', 'download', '--quiet', '--dest', '/liveness/wheelhouse', *download_flags]
+        command.extend(requirements)
+        self._run_auxiliary(
+            'fetch',
+            image,
+            command,
+            action='dependency prefetch (pip download)',
+            offline=False,
+            volumes=volumes,
         )
-        try:
-            _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='dependency prefetch (pip download)')
-        finally:
-            self._remove_auxiliary(name)
 
     def freeze(self, tag: str) -> tuple[str, ...]:
         """Capture the freeze of an environment image, offline.
@@ -566,30 +661,26 @@ class DockerCli:
         tuple[str, ...]
             Freeze lines.
         """
-        name = f'liveness-primer-freeze-{secrets.token_hex(6)}'
-        argv = [
-            self.binary,
-            'run',
-            '--rm',
-            '--name',
-            name,
-            '--network',
-            'none',
-            *_HARDENING_FLAGS,
-            *_user_flags(),
-            '--env',
-            'HOME=/tmp',
-            tag,
-            'python',
-            '-m',
-            'pip',
-            'freeze',
-        ]
-        try:
-            result = _checked(self.launcher(argv, timeout=_DOCKER_TIMEOUT), action='pip freeze')
-        finally:
-            self._remove_auxiliary(name)
+        command = ('python', '-m', 'pip', 'freeze')
+        result = self._run_auxiliary('freeze', tag, command, action='pip freeze', offline=True)
         return tuple(line for line in result.stdout.splitlines() if line.strip())
+
+    def python_version(self, tag: str) -> str:
+        """Report the interpreter version inside an environment image, offline.
+
+        Parameters
+        ----------
+        tag : str
+            Environment image to inspect.
+
+        Returns
+        -------
+        str
+            The container-side ``platform.python_version()``.
+        """
+        command = ('python', '-c', 'import platform; print(platform.python_version())')
+        result = self._run_auxiliary('pyver', tag, command, action='container python version', offline=True)
+        return result.stdout.strip()
 
     def start_container(self, tag: str, name: str, *, work_root: Path) -> None:
         """Start one ephemeral, network-less, hardened analysis container (contract §11).
@@ -681,6 +772,10 @@ class PreparedContainerPair:
         Every fetch performed while preparing the pair.
     installer_identity : str
         Docker runtime and base image used for builds.
+    binary : str
+        Client binary the per-invocation execs must spawn.
+    python_version : str
+        Interpreter version inside the environment images.
     work_root : Path
         Host directory holding both per-side workspace roots.
     base_work_root : Path
@@ -698,6 +793,8 @@ class PreparedContainerPair:
     environment_delta: tuple[DependencyDelta, ...]
     fetches: tuple[FetchRecord, ...]
     installer_identity: str
+    binary: str
+    python_version: str
     work_root: Path
     base_work_root: Path
     head_work_root: Path
@@ -710,7 +807,8 @@ class ContainerEnvironments:
 
     Environment images are keyed by the container fingerprint and cached by
     the Docker image store, which also serializes concurrent builds of the
-    same tag; no host filelock is needed. The analysis containers themselves
+    same tag; the persistent per-pair wheelhouses are guarded by a
+    cross-process ``filelock`` instead. The analysis containers themselves
     are ephemeral: started when the pair context is entered and force-removed
     when it exits, before any report output is rendered or written.
 
@@ -726,11 +824,15 @@ class ContainerEnvironments:
         Base image both environments build from.
     fresh : bool
         Force same-run image rebuilds (``--fresh``).
+    lock_timeout : float
+        Seconds to wait for the pair wheelhouse lock.
 
     Raises
     ------
     ContainerError
-        If the base image reference is malformed.
+        If the base image reference is malformed, or the host has no POSIX
+        user ids — the §11 run-as-host-user hardening cannot be enforced,
+        and the mode refuses rather than silently degrading.
     """
 
     def __init__(
@@ -741,16 +843,56 @@ class ContainerEnvironments:
         docker: DockerRuntime,
         image: str = DEFAULT_CONTAINER_IMAGE,
         fresh: bool = False,
+        lock_timeout: float = _DOCKER_TIMEOUT,
     ) -> None:
         if not _IMAGE_REFERENCE.match(image):
             msg = f'malformed container image reference: {image!r}'
+            raise ContainerError(msg)
+        if container_user() is None:
+            msg = '--container requires POSIX user ids to enforce the run-as-host-user hardening (§11)'
             raise ContainerError(msg)
         self._store = store
         self._cache_dir = cache_dir
         self._docker = docker
         self._image = image
         self._fresh = fresh
+        self._lock_timeout = lock_timeout
         self._fetches: list[FetchRecord] = []
+
+    @contextlib.contextmanager
+    def _pair_lock(self, pair_dir: Path) -> Iterator[None]:
+        """Hold the cross-process lock of one pair's wheelhouses (contract §3).
+
+        The Docker image store serializes builds of a tag, but the
+        persistent wheelhouses are fetched into, snapshotted, and reset by
+        this process; without the lock a concurrent run of the same pair
+        could corrupt or delete them mid-use.
+
+        Parameters
+        ----------
+        pair_dir : Path
+            The pair's wheelhouse directory.
+
+        Yields
+        ------
+        None
+            While the lock is held.
+
+        Raises
+        ------
+        ContainerError
+            If the lock cannot be acquired in time.
+        """
+        lock: BaseFileLock = FileLock(str(pair_dir) + '.lock')
+        try:
+            lock.acquire(timeout=self._lock_timeout)
+        except Timeout as exc:
+            msg = f'timed out waiting for the container wheelhouse lock at {pair_dir}'
+            raise ContainerError(msg) from exc
+        try:
+            yield
+        finally:
+            lock.release()
 
     def _side_requirements(self, repo: str, sha: str) -> tuple[str, ...]:
         """Statically resolve one ref's fetch requirements (fetch step, §3).
@@ -937,11 +1079,8 @@ class ContainerEnvironments:
             If an environment cannot be prepared, or teardown of a
             container cannot be confirmed after a successful analysis.
         """
-        base_sha = self._store.resolve_ref(repo, base_ref)
-        head_sha = self._store.resolve_ref(repo, head_ref)
-        self._fetches.append(FetchRecord(kind='git', name=repo, resolved=base_sha))
-        if head_sha != base_sha:
-            self._fetches.append(FetchRecord(kind='git', name=repo, resolved=head_sha))
+        base_sha, head_sha, ref_fetches = resolve_pair_refs(self._store, repo, base_ref, head_ref)
+        self._fetches.extend(ref_fetches)
         docker_identity = self._docker.identity()
         base_fingerprint = container_fingerprint(repo, base_sha, adapter, docker_identity, self._image)
         head_fingerprint = container_fingerprint(repo, head_sha, adapter, docker_identity, self._image)
@@ -949,20 +1088,33 @@ class ContainerEnvironments:
         pair_dir = self._cache_dir / 'wheelhouse-container' / Path(pair_key).name
         base_house = pair_dir / 'base'
         head_house = pair_dir / 'head'
-        base_house.mkdir(parents=True, exist_ok=True)
-        head_house.mkdir(parents=True, exist_ok=True)
+
+        def reset_house(house: Path) -> None:
+            """Restore one persistent wheelhouse to an empty state.
+
+            Parameters
+            ----------
+            house : Path
+                The wheelhouse directory to empty.
+            """
+            shutil.rmtree(house, ignore_errors=True)
+            house.mkdir(parents=True, exist_ok=True)
 
         def base_wheelhouses() -> Sequence[Path]:
             """Fetch the base closure, then serve the base wheelhouse.
 
-            Called once per build of the base side (``_ensure`` fetches only
-            when it actually builds, and a paired rebuild resets first).
+            Called only when the base side builds. Both houses are emptied
+            first: which names each side owns depends on which sides were
+            cached when they were last filled, so state persisted by an
+            earlier run would otherwise collide with this fetch.
 
             Returns
             -------
             Sequence[Path]
                 The base side's single wheelhouse.
             """
+            reset_house(base_house)
+            reset_house(head_house)
             self._fetch_into(repo, base_sha, base_house, find_links=None, exclude=frozenset())
             return (base_house,)
 
@@ -973,68 +1125,45 @@ class ContainerEnvironments:
             fetch (base ``_ensure`` runs first), so ``base_house`` already
             holds the shared closure the head fetch reuses and excludes; when
             the base side is cached, ``base_house`` is empty and the head
-            fetch downloads its own full closure.
+            fetch downloads its own full closure. The head house is emptied
+            first so names a previous run promoted under a different base
+            state cannot collide with ``base_house``.
 
             Returns
             -------
             Sequence[Path]
                 The base wheelhouse followed by the head-extras wheelhouse.
             """
+            reset_house(head_house)
             owned = frozenset(entry.name for entry in base_house.iterdir())
             self._fetch_into(repo, head_sha, head_house, find_links=base_house, exclude=owned)
             return (base_house, head_house)
 
-        base = self._ensure(
-            repo=repo,
-            ref=base_ref,
-            sha=base_sha,
-            fingerprint=base_fingerprint,
-            wheelhouses=base_wheelhouses,
-            force_rebuild=self._fresh,
-        )
-        head = self._ensure(
-            repo=repo,
-            ref=head_ref,
-            sha=head_sha,
-            fingerprint=head_fingerprint,
-            wheelhouses=head_wheelhouses,
-            force_rebuild=self._fresh,
-        )
-
-        def reset_fetches() -> None:
-            """Discard partial fetch state before a forced two-phase re-fetch.
-
-            A cached side leaves its wheelhouse empty while the other side
-            fetched a full closure; forcing both to build must re-fetch
-            cleanly base-first, or the head wheelhouse would overlap the
-            now-populated base one.
-            """
-            for house in (base_house, head_house):
-                shutil.rmtree(house, ignore_errors=True)
-                house.mkdir(parents=True, exist_ok=True)
-
-        delta = dependency_delta(base.record.freeze, head.record.freeze, detector_distribution=adapter.distribution)
-        if delta and not (base.record.rebuilt and head.record.rebuilt):
-            # Attribution is temporal, never textual: rebuild both sides in
-            # this run before attributing the delta to the refs (§3).
-            reset_fetches()
-            base = self._ensure(
-                repo=repo,
-                ref=base_ref,
-                sha=base_sha,
-                fingerprint=base_fingerprint,
-                wheelhouses=base_wheelhouses,
-                force_rebuild=True,
+        pair_dir.parent.mkdir(parents=True, exist_ok=True)
+        with self._pair_lock(pair_dir):
+            base_house.mkdir(parents=True, exist_ok=True)
+            head_house.mkdir(parents=True, exist_ok=True)
+            base, head, delta = resolve_paired_delta(
+                lambda force: self._ensure(
+                    repo=repo,
+                    ref=base_ref,
+                    sha=base_sha,
+                    fingerprint=base_fingerprint,
+                    wheelhouses=base_wheelhouses,
+                    force_rebuild=force,
+                ),
+                lambda force: self._ensure(
+                    repo=repo,
+                    ref=head_ref,
+                    sha=head_sha,
+                    fingerprint=head_fingerprint,
+                    wheelhouses=head_wheelhouses,
+                    force_rebuild=force,
+                ),
+                fresh=self._fresh,
+                detector_distribution=adapter.distribution,
             )
-            head = self._ensure(
-                repo=repo,
-                ref=head_ref,
-                sha=head_sha,
-                fingerprint=head_fingerprint,
-                wheelhouses=head_wheelhouses,
-                force_rebuild=True,
-            )
-            delta = dependency_delta(base.record.freeze, head.record.freeze, detector_distribution=adapter.distribution)
+            python_version = self._docker.python_version(base.image)
         work_root = Path(tempfile.mkdtemp(prefix='liveness-primer-run-'))
         base_work_root = work_root / 'base'
         head_work_root = work_root / 'head'
@@ -1060,6 +1189,8 @@ class ContainerEnvironments:
                 environment_delta=delta,
                 fetches=tuple(self._fetches),
                 installer_identity=f'{docker_identity}; image {self._image}',
+                binary=self._docker.binary,
+                python_version=python_version,
                 work_root=work_root,
                 base_work_root=base_work_root,
                 head_work_root=head_work_root,
@@ -1096,6 +1227,9 @@ class ContainerExecution:
         Container name per side (``base``/``head``).
     invocation_env : dict[str, str]
         Adapter-declared side-identical variables set on every exec.
+    isolation : Isolation
+        The isolation this backend enforces, recorded in the manifest; the
+        container runtime disables networking on every exec.
     binary : str
         Docker client binary name.
     user : str | None
@@ -1105,6 +1239,7 @@ class ContainerExecution:
     work_roots: dict[str, Path]
     containers: dict[str, str]
     invocation_env: dict[str, str]
+    isolation: Isolation = CONTAINER_ISOLATION
     binary: str = 'docker'
     user: str | None = None
 
@@ -1172,8 +1307,12 @@ class ContainerExecution:
         plan.extend(argv)
         return LaunchPlan(argv=tuple(plan), cwd=None, env=None)
 
-    def analysis_root(self, workspace: SideWorkspace) -> Path:
+    def analysis_root(self, workspace: SideWorkspace) -> PurePosixPath:
         """Report the checkout root as the detector sees it.
+
+        A pure POSIX path, never a native host path: coercing it into a
+        host ``Path`` would lose absoluteness on Windows and break the
+        normalization of detector-reported paths (contract §7).
 
         Parameters
         ----------
@@ -1182,8 +1321,8 @@ class ContainerExecution:
 
         Returns
         -------
-        Path
+        PurePosixPath
             The container-side checkout path, used to normalize
             detector-reported absolute paths (contract §7).
         """
-        return Path(str(self._container_side_root(workspace)))
+        return self._container_side_root(workspace)

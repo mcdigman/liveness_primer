@@ -10,7 +10,7 @@ when a corpus config opts into the matching analysis (contract §4, §5).
 
 import json
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -155,10 +155,13 @@ class SkylosAdapter:
     analyses : Mapping[str, tuple[str, ...]]
         Opt-in analyses selectable in a corpus file, mapped to their flags.
     invocation_env : Mapping[str, str]
+        ``SKYLOS_GREP_BUDGET`` pinned so both sides run the grep-verify
+        post-pass under the same wall-clock allowance.
+    invocation_env_files : Mapping[str, Path]
         ``SKYLOS_CONFIG_FILE`` pinned to the packaged neutral config, so
-        the analyzed repository's own skylos policy never alters the run,
-        and ``SKYLOS_GREP_BUDGET`` pinned so both sides run the
-        grep-verify post-pass under the same wall-clock allowance.
+        the analyzed repository's own skylos policy never alters the run;
+        declared as a file so container mode stages it where the detector
+        can read it instead of forwarding a host-only path.
     passthrough_env : tuple[str, ...]
         ``SKYLOS_GO_BIN``, naming the prebuilt native Go engine. A project
         containing Go sources — skylos itself, notably — is analyzed
@@ -187,9 +190,8 @@ class SkylosAdapter:
             'ai-defects': ('--ai-defects',),
         }
     )
-    invocation_env: Mapping[str, str] = MappingProxyType(
-        {'SKYLOS_CONFIG_FILE': str(_NEUTRAL_CONFIG), 'SKYLOS_GREP_BUDGET': _GREP_BUDGET_SECONDS}
-    )
+    invocation_env: Mapping[str, str] = MappingProxyType({'SKYLOS_GREP_BUDGET': _GREP_BUDGET_SECONDS})
+    invocation_env_files: Mapping[str, Path] = MappingProxyType({'SKYLOS_CONFIG_FILE': _NEUTRAL_CONFIG})
     passthrough_env: tuple[str, ...] = ('SKYLOS_GO_BIN',)
     success_exit_codes: frozenset[int] = frozenset({0})
     capabilities: AdapterCapabilities = AdapterCapabilities(
@@ -200,7 +202,7 @@ class SkylosAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
-    def parse(output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()) -> list[Finding]:
+    def parse(output: RawToolOutput, *, project: str, root: PurePath, analyses: tuple[str, ...] = ()) -> list[Finding]:
         """Parse the skylos JSON document into findings.
 
         Parameters
@@ -209,7 +211,7 @@ class SkylosAdapter:
             Captured skylos output, possibly from a failed invocation.
         project : str
             Corpus project name to stamp onto findings.
-        root : Path
+        root : PurePath
             Checkout directory skylos analyzed.
         analyses : tuple[str, ...]
             Selected opt-in analyses; only their diagnostic arrays are
@@ -264,7 +266,7 @@ class SkylosAdapter:
         return findings
 
 
-def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
+def _parse_entry(raw: object, *, key: str, project: str, root: PurePath) -> Finding:
     """Convert one skylos array entry into a finding.
 
     Parameters
@@ -275,7 +277,7 @@ def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
         Array name the entry came from, for error context.
     project : str
         Corpus project name to stamp onto the finding.
-    root : Path
+    root : PurePath
         Checkout directory skylos analyzed.
 
     Returns
@@ -311,7 +313,7 @@ def _parse_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
     )
 
 
-def _parse_unused_file_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
+def _parse_unused_file_entry(raw: object, *, key: str, project: str, root: PurePath) -> Finding:
     """Convert one unused-file entry into a finding.
 
     Parameters
@@ -322,7 +324,7 @@ def _parse_unused_file_entry(raw: object, *, key: str, project: str, root: Path)
         Array name the entry came from, for error context.
     project : str
         Corpus project name to stamp onto the finding.
-    root : Path
+    root : PurePath
         Checkout directory skylos analyzed.
 
     Returns
@@ -356,7 +358,7 @@ def _parse_unused_file_entry(raw: object, *, key: str, project: str, root: Path)
     )
 
 
-def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) -> Finding:
+def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: PurePath) -> Finding:
     """Convert one skylos opt-in analysis diagnostic into a finding.
 
     Diagnostics carry a severity label and rule ID instead of a confidence
@@ -374,7 +376,7 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: Path) 
         Array name the entry came from, for error context.
     project : str
         Corpus project name to stamp onto the finding.
-    root : Path
+    root : PurePath
         Checkout directory skylos analyzed.
 
     Returns

@@ -2,17 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the container-backed detector environments (contract §3, §11, §15)."""
 
+import hashlib
 import os
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 import pytest
+from filelock import FileLock
 
 import liveness_primer.container as container_module
 from liveness_primer.container import (
+    CONTAINER_ISOLATION,
     CONTAINER_WORK_ROOT,
     DEFAULT_CONTAINER_IMAGE,
     ContainerEnvironments,
@@ -24,6 +27,7 @@ from liveness_primer.container import (
     container_user,
     image_tag,
     promote_prefetched,
+    stage_invocation_env_files,
     stage_wheelhouses,
 )
 from liveness_primer.corpus import CheckoutStore
@@ -159,6 +163,21 @@ def test_freeze_parses_lines() -> None:
         DockerCli(launcher=RecordingLauncher(returncode=1)).freeze('t:1')
 
 
+def test_python_version_queries_the_image_offline() -> None:
+    launcher = RecordingLauncher(stdout='3.12.5\n')
+    assert DockerCli(launcher=launcher).python_version('t:1') == '3.12.5'
+    run_argv, rm_argv = launcher.calls
+    assert run_argv[:3] == ('docker', 'run', '--rm')
+    assert run_argv[run_argv.index('--network') + 1] == 'none'
+    name = run_argv[run_argv.index('--name') + 1]
+    assert name.startswith('liveness-primer-pyver-')
+    assert rm_argv == ('docker', 'rm', '--force', name)
+    assert_hardened(run_argv)
+    assert 't:1' in run_argv
+    with pytest.raises(ContainerError, match='container python version failed'):
+        DockerCli(launcher=RecordingLauncher(returncode=1)).python_version('t:1')
+
+
 def test_start_container_argv_is_network_less_and_hardened(tmp_path: Path) -> None:
     launcher = RecordingLauncher()
     DockerCli(launcher=launcher).start_container('t:1', 'primer-base', work_root=tmp_path)
@@ -246,6 +265,7 @@ def requirement_wheel(requirement: str) -> str:
 class FakeDocker:
     """Scripted Docker runtime recording every operation (contract §15)."""
 
+    binary: str = 'docker'
     freezes: deque[tuple[str, ...]] = field(default_factory=deque)
     always_cached: bool = False
     remove_ok: bool = True
@@ -330,6 +350,18 @@ class FakeDocker:
             return ('vulture @ file:///fake',)
         return self.freezes.popleft()
 
+    def python_version(self, tag: str) -> str:
+        """Report a fixed interpreter version.
+
+        Returns
+        -------
+        str
+            ``3.12.99``.
+        """
+        del tag
+        self.events.append('pyver')
+        return '3.12.99'
+
     def start_container(self, tag: str, name: str, *, work_root: Path) -> None:
         """Record the started container and its mounted root."""
         del tag
@@ -375,12 +407,23 @@ def test_malformed_image_reference_is_rejected(tmp_path: Path) -> None:
         environments(tmp_path, FakeDocker(), image='python:3.12 --privileged')
 
 
+def test_container_mode_refuses_hosts_without_posix_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The §11 run-as-host-user hardening cannot be enforced without POSIX
+    # ids; the mode refuses instead of silently running as the untrusted
+    # image's default user while recording enforced isolation.
+    monkeypatch.delattr(os, 'getuid')
+    with pytest.raises(ContainerError, match='requires POSIX user ids'):
+        environments(tmp_path, FakeDocker())
+
+
 def test_cold_pair_builds_images_and_runs_ephemeral_containers(tmp_path: Path, detector_repo: DetectorRepo) -> None:
     docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]))
     with environments(tmp_path, docker).prepare_pair(
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
     ) as pair:
         assert pair.installer_identity == f'docker 99.9; image {DEFAULT_CONTAINER_IMAGE}'
+        assert pair.binary == 'docker'
+        assert pair.python_version == '3.12.99'
         assert pair.base.record.rebuilt
         assert not pair.base.record.from_cache
         assert pair.head.record.rebuilt
@@ -564,6 +607,21 @@ def test_promote_prefetched_drops_excluded_names(tmp_path: Path) -> None:
     assert (wheelhouse / 'head-extra.whl').read_bytes() == b'real'
 
 
+def test_promote_prefetched_validates_before_any_promotion(tmp_path: Path) -> None:
+    # A symlink sorting after a good wheel must not leave already-promoted
+    # files behind: a rejected fetch would otherwise plant unrecorded
+    # artifacts that later builds silently stage into images.
+    staging = tmp_path / 'staging'
+    wheelhouse = tmp_path / 'wheelhouse'
+    staging.mkdir()
+    wheelhouse.mkdir()
+    atomic_write_bytes(staging / 'aaa-good.whl', b'payload')
+    (staging / 'zzz-evil.whl').symlink_to(tmp_path / 'host-secret')
+    with pytest.raises(ContainerError, match='prefetched distribution is not a regular file'):
+        promote_prefetched(staging, wheelhouse)
+    assert list(wheelhouse.iterdir()) == []
+
+
 def test_stage_wheelhouses_refuses_symlinked_cache_entries(tmp_path: Path) -> None:
     # The persistent wheelhouse outlives runs: a symlink that slipped in
     # must never be dereferenced while assembling a build context.
@@ -613,6 +671,94 @@ def test_head_fetch_cannot_poison_the_base_image(tmp_path: Path, detector_repo: 
     assert head_links is not None
     # The sneaky extra is confined to the head image, never the base one.
     assert 'wheelhouse/sneaky-9.9-py3-none-any.whl' in head_names
+
+
+def pair_dir_and_base_tag(tmp_path: Path, repo_url: str) -> tuple[Path, str]:
+    """Compute the pair wheelhouse directory and base image tag of the fixture refs.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Test directory holding the cache.
+    repo_url : str
+        Fixture detector repository URL.
+
+    Returns
+    -------
+    tuple[Path, str]
+        The persistent pair wheelhouse directory and the base image tag.
+    """
+    store = CheckoutStore(tmp_path / 'cache')
+    adapter = VultureAdapter()
+    fingerprints = [
+        container_fingerprint(
+            repo_url, store.resolve_ref(repo_url, ref), adapter, 'docker 99.9', DEFAULT_CONTAINER_IMAGE
+        )
+        for ref in ('base-branch', 'head-branch')
+    ]
+    pair_key = hashlib.sha256(f'{fingerprints[0]}:{fingerprints[1]}'.encode()).hexdigest()[:24]
+    return tmp_path / 'cache' / 'wheelhouse-container' / pair_key, image_tag(fingerprints[0])
+
+
+def test_stale_wheelhouses_from_a_cached_base_run_are_reset(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    # Run 1: only the base image is cached, so the head fetch owns the full
+    # shared closure and persists it in the head wheelhouse.
+    pair_dir, base_tag = pair_dir_and_base_tag(tmp_path, detector_repo.url)
+    docker = FakeDocker(existing_images={base_tag})
+    with environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()):
+        pass
+    assert sorted(entry.name for entry in (pair_dir / 'head').iterdir()) == [
+        'setuptools-1.0-py3-none-any.whl',
+        'tomli-1.0-py3-none-any.whl',
+    ]
+    # Run 2 after image eviction (or --fresh): both sides rebuild and the
+    # base fetch now owns the closure; the persisted head wheelhouse must be
+    # reset, not collide with the base one as a duplicate name.
+    evicted = FakeDocker()
+    with environments(tmp_path, evicted).prepare_pair(
+        detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
+    ):
+        pass
+    assert len(evicted.built) == 2
+    assert sorted(entry.name for entry in (pair_dir / 'base').iterdir()) == [
+        'setuptools-1.0-py3-none-any.whl',
+        'tomli-1.0-py3-none-any.whl',
+    ]
+    assert list((pair_dir / 'head').iterdir()) == []
+
+
+def test_pair_wheelhouse_lock_timeout_fails_the_run(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    # The persistent pair wheelhouses are mutated, snapshotted, and reset
+    # during preparation; a concurrent run of the same pair must wait on the
+    # cross-process lock rather than corrupt them (contract §3, §11).
+    pair_dir, _base_tag = pair_dir_and_base_tag(tmp_path, detector_repo.url)
+    pair_dir.parent.mkdir(parents=True, exist_ok=True)
+    impatient = ContainerEnvironments(
+        CheckoutStore(tmp_path / 'cache'),
+        tmp_path / 'cache',
+        docker=FakeDocker(),
+        lock_timeout=0.05,
+    )
+    with (
+        FileLock(str(pair_dir) + '.lock'),
+        pytest.raises(ContainerError, match='timed out waiting for the container wheelhouse lock'),
+        impatient.prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+    ):
+        pass
+
+
+def test_stage_invocation_env_files_copies_into_every_side(tmp_path: Path) -> None:
+    config = tmp_path / 'neutral.toml'
+    config.write_text('[tool]\n', encoding='utf-8')
+    base_root = tmp_path / 'base'
+    head_root = tmp_path / 'head'
+    base_root.mkdir()
+    head_root.mkdir()
+    staged = stage_invocation_env_files({'TOOL_CONFIG': config}, (base_root, head_root))
+    # Both sides hold an identical copy at one container-side path.
+    assert staged == {'TOOL_CONFIG': '/liveness/work/invocation-env/TOOL_CONFIG/neutral.toml'}
+    for root in (base_root, head_root):
+        assert (root / 'invocation-env' / 'TOOL_CONFIG' / 'neutral.toml').read_text(encoding='utf-8') == '[tool]\n'
 
 
 def test_unconfirmed_removal_fails_the_run(tmp_path: Path, detector_repo: DetectorRepo) -> None:
@@ -693,4 +839,12 @@ def test_launch_plan_without_a_user_mapping(tmp_path: Path) -> None:
 def test_analysis_root_is_the_container_side_checkout(tmp_path: Path) -> None:
     execution = side_execution(tmp_path)
     root = execution.analysis_root(workspace_under(tmp_path / 'base'))
-    assert root == Path('/liveness/work/liveness-primer-side-x1/checkout')
+    assert root == PurePosixPath('/liveness/work/liveness-primer-side-x1/checkout')
+    # A pure POSIX path, never a native host path: it must stay absolute on
+    # every host platform so path normalization strips the prefix (§7).
+    assert not isinstance(root, Path)
+    assert root.is_absolute()
+
+
+def test_execution_records_the_container_isolation(tmp_path: Path) -> None:
+    assert side_execution(tmp_path).isolation is CONTAINER_ISOLATION

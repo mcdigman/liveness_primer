@@ -123,7 +123,13 @@ point*: pre-triage, triage, or post-triage (§10).
   discovery to a packaged neutral file via `SKYLOS_CONFIG_FILE`, so an analyzed
   repository's `[tool.skylos]` policy cannot alter which analyses execute, and pins
   `SKYLOS_GREP_BUDGET` so both sides run the grep-verify post-pass under the same
-  wall-clock allowance rather than the ambient default. Skylos still
+  wall-clock allowance rather than the ambient default. A variable whose value is a
+  packaged file is declared as such, so container mode stages the file where the
+  detector can read it instead of forwarding a host-only path. Adapters may also declare
+  `passthrough_env`: names of operator-supplied environment variables carrying native
+  helper executables the detector needs (skylos's `SKYLOS_GO_BIN`); the runner resolves,
+  validates, and hashes each supplied binary into the manifest, and both sides receive
+  the identical helper. Skylos still
   merges a target `.skylos/config.yaml`, which can enable unselected analyses and affect
   execution cost, exit status, timeouts, and run completeness; revisions predating the
   variable can likewise discover target configuration. Parse-side gating protects report
@@ -279,7 +285,9 @@ point*: pre-triage, triage, or post-triage (§10).
   the untrusted detector build shaped the image, so even its entrypoint binaries are
   untrusted), with all capabilities dropped, `no-new-privileges`, a PID limit, and a
   read-only root filesystem with a tmpfs `/tmp`; helper containers are named and
-  force-removed so a client-side timeout cannot leak one. Hard memory/CPU caps are
+  force-removed so a client-side timeout cannot leak one. A host that cannot supply
+  POSIX user ids cannot honor the user mapping, and `--container` refuses to run there
+  rather than silently degrading to the untrusted image's default user. Hard memory/CPU caps are
   deliberately not imposed: the §3 per-(project, tool) timeout is the resource bound,
   and a fixed cap would misfail legitimately large analyses.
 - Corpus code execution: the core (Phases 1–2) never executes corpus code — detectors only

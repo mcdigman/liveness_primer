@@ -1109,7 +1109,9 @@ def test_runner_reads_the_process_environment_by_default(tmp_path: Path, monkeyp
 
 
 def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject, fake_detector_repo: str) -> None:
-    docker = FakeDocker()
+    # A non-default client binary must reach every per-invocation exec, not
+    # only the image builds (contract §15).
+    docker = FakeDocker(binary='podman')
     environments = ContainerEnvironments(CheckoutStore(tmp_path / 'cache'), tmp_path / 'cache', docker=docker)
     events = docker.events
     exec_argvs: list[tuple[str, ...]] = []
@@ -1163,6 +1165,8 @@ def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject,
     assert manifest.comparable is True
     assert manifest.isolation_enforced is True
     assert manifest.installer == f'docker 99.9; image {DEFAULT_CONTAINER_IMAGE}'
+    # The manifest records the container interpreter, not the host's.
+    assert manifest.python_version == '3.12.99'
     assert manifest.base is not None
     assert manifest.head is not None
     assert manifest.base.sha != manifest.head.sha
@@ -1171,7 +1175,7 @@ def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject,
     # shared mount, running the console script from the container's PATH.
     assert len(exec_argvs) == 2
     for argv in exec_argvs:
-        assert argv[:2] == ('docker', 'exec')
+        assert argv[:2] == ('podman', 'exec')
         workdir = argv[argv.index('--workdir') + 1]
         assert workdir.startswith('/liveness/work/liveness-primer-side-')
         assert workdir.endswith('/checkout')
@@ -1183,6 +1187,55 @@ def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject,
     assert len(removals) == 2
     assert removals == [len(events) - 2, len(events) - 1]
     assert max(execs) < min(removals)
+
+
+def test_container_run_stages_the_skylos_neutral_config(
+    tmp_path: Path, corpus_project: CorpusProject, fake_detector_repo: str
+) -> None:
+    # The packaged neutral config is a host file the containers cannot see:
+    # each side gets an identical staged copy under its own mount, and every
+    # exec points SKYLOS_CONFIG_FILE at the container-side path (§3, §11).
+    docker = FakeDocker()
+    environments = ContainerEnvironments(CheckoutStore(tmp_path / 'cache'), tmp_path / 'cache', docker=docker)
+    exec_argvs: list[tuple[str, ...]] = []
+
+    async def docker_exec_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        del cwd, env
+        await asyncio.sleep(0)
+        exec_argvs.append(tuple(argv))
+        # The staged copy exists under both side mounts while execs run.
+        for work_root in docker.work_roots:
+            staged = work_root / 'invocation-env' / 'SKYLOS_CONFIG_FILE' / 'skylos_neutral_config.toml'
+            assert '[skylos]' in staged.read_text(encoding='utf-8')
+        return LaunchResult(
+            argv=tuple(argv), returncode=0, stdout='{}', stderr='', duration_seconds=0.0, timed_out=False
+        )
+
+    runner = PrimerRunner(
+        adapter=get_adapter('skylos'),
+        store=CheckoutStore(tmp_path / 'cache'),
+        isolation=CONTAINER_ISOLATION,
+        options=DEFAULT_OPTIONS,
+        async_launcher=docker_exec_launcher,
+    )
+    report = runner.run_container(
+        [corpus_project],
+        detector_repo=fake_detector_repo,
+        base_ref='base-branch',
+        head_ref='head-branch',
+        environments=environments,
+    )
+    assert not report_has_failures(report)
+    container_path = '/liveness/work/invocation-env/SKYLOS_CONFIG_FILE/skylos_neutral_config.toml'
+    assert len(exec_argvs) == 2
+    for argv in exec_argvs:
+        assert f'SKYLOS_CONFIG_FILE={container_path}' in argv
+        assert 'SKYLOS_GREP_BUDGET=150' in argv
 
 
 def test_container_run_refuses_native_helper_passthrough(tmp_path: Path) -> None:

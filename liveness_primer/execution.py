@@ -12,7 +12,7 @@ testable without real sandboxes or containers (contract §15).
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Protocol, runtime_checkable
 
 from liveness_primer.isolation import Isolation, scrubbed_environment
@@ -66,6 +66,20 @@ class ExecutionBackend(Protocol):
     default temporary directory.
     """
 
+    @property
+    def isolation(self) -> Isolation:
+        """The isolation this backend enforces around invocations.
+
+        The manifest records it from here, so the recorded isolation is
+        always the one paired with the backend that ran the detectors.
+
+        Returns
+        -------
+        Isolation
+            The backend's isolation.
+        """
+        ...
+
     def workspace_parent(self, side: str) -> Path | None:
         """Report where one side's workspaces must be created.
 
@@ -100,7 +114,7 @@ class ExecutionBackend(Protocol):
         """
         ...
 
-    def analysis_root(self, workspace: SideWorkspace) -> Path:
+    def analysis_root(self, workspace: SideWorkspace) -> PurePath:
         """Report the checkout root as the detector sees it.
 
         Parameters
@@ -110,8 +124,10 @@ class ExecutionBackend(Protocol):
 
         Returns
         -------
-        Path
-            Root used to normalize detector-reported paths (contract §7).
+        PurePath
+            Root used to normalize detector-reported paths (contract §7) —
+            a host ``Path``, or a pure POSIX path for container-side
+            roots, which stay absolute on every host platform.
         """
         ...
 
