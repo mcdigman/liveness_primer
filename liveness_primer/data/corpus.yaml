@@ -341,3 +341,170 @@ projects:
     tools:
       vulture:
         cost: 3.0
+
+  # Metadata-discovered cloud provider and service-check registries;
+  # blocking vulture workflow enforces confidence 100.
+  - name: prowler-sdk
+    repo: https://github.com/prowler-cloud/prowler
+    license: Apache-2.0
+    pin: 3e000faa3109230b748e4418a13c11c9e59f5cfb
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        args:
+          - --exclude
+          - .venv,contrib,api,ui
+          - --min-confidence
+          - "100"
+          - --ignore-names
+          - mock_*,view
+        targets:
+          - .
+        expected_clean: true
+        cost: 14.0
+
+  # Dynamically selected visualization backends, observer-decorated
+  # callbacks, maintained Vulture allowlist; mirrors [tool.vulture].
+  - name: mne-python
+    repo: https://github.com/mne-tools/mne-python
+    license: BSD-3-Clause
+    pin: 58002a0960583014c4885185388c1c135b7f34c6
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        args:
+          - --exclude
+          - conftest.py,constants.py,mne/viz/backends/_abstract.py,mne/viz/backends/_notebook.py,mne/viz/backends/_qt.py
+          - --ignore-decorators
+          - "@observe"
+          - --min-confidence
+          - "60"
+        targets:
+          - mne
+          - tools/vulture_allowlist.py
+        expected_clean: true
+        cost: 6.0
+
+  # Gateway plus plugin architecture with dynamically registered MCP tools
+  - name: mcp-context-forge
+    repo: https://github.com/IBM/mcp-context-forge
+    license: Apache-2.0
+    pin: ecba50e4828ae0c83f8ef7b1d6d485b3cf39ce66
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        args:
+          - --exclude
+          - "*_pb2.py,*_pb2_grpc.py"
+          - --min-confidence
+          - "80"
+        targets:
+          - mcpgateway
+          - plugins
+        expected_clean: true
+        cost: 16.0
+
+  # OS-selected modules, extension-backed public APIs, registered exit
+  # handlers; vulture target is maintained but non-blocking
+  - name: psutil
+    repo: https://github.com/giampaolo/psutil
+    license: BSD-3-Clause
+    pin: d77cf39abb5b423bde4bb0420eba78203281376b
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        args:
+          - --exclude
+          - docs/conf.py,tests/
+          - --ignore-decorators
+          - "@_common.deprecated_method,@atexit.register,@pytest.fixture"
+        targets:
+          - .
+        cost: 1.0
+
+  # Scale target: ~1,500 tracked Python files.
+  - name: pandas
+    repo: https://github.com/pandas-dev/pandas
+    license: BSD-3-Clause
+    pin: 73ec06dfb2ac95b19f7920d581d1050bf3861217
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        args:
+          - --min-confidence=100
+        cost: 13.0
+
+  # Widgets, layouts, and hooks wired through @expose_command and
+  # hook.subscribe rather than direct calls. Has [tool.vulture]
+  - name: qtile
+    repo: https://github.com/qtile/qtile
+    license: MIT
+    pin: 287dcec7a6dc99dab9344af5b83a3cdb883894bc
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        args:
+          - --min-confidence=100
+          - --exclude=test/configs/syntaxerr.py
+        targets:
+          - libqtile
+        cost: 2.0
+
+  # Whitelist-module semantics.
+  # Mirrored sync/async hierarchies and command-table dispatch.
+  - name: redis-py
+    repo: https://github.com/redis/redis-py
+    license: MIT
+    pin: 081923b8a202f9481e8f46357c8bbf99cc322cae
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        args:
+          - --min-confidence=80
+        targets:
+          - redis
+          - whitelist.py
+        cost: 3.0
+
+  # Self-hosting: Vulture's own AST visitor, config, reporting, built-in
+  # whitelists, and the tests encoding its supported Python constructs.
+  # Upstream requires this scan to report clean.
+  - name: vulture
+    repo: https://github.com/jendrikseipp/vulture
+    license: MIT
+    pin: 2c21cb0ae2afa657e36f6a397cb573608a65d79e
+    include_tools:
+      - vulture
+    tools:
+      vulture:
+        targets:
+          - vulture/
+          - tests/
+        expected_clean: true
+        cost: 1.0
+
+  # Self-hosting liveness_primer itself: invocation builder,
+  # detector parsers, diffing, runner backends, reporting, and their tests.
+  - name: liveness-primer
+    repo: https://github.com/mcdigman/liveness_primer
+    license: Apache-2.0
+    pin: 8ce55f42ab196f45368e23cb556860246125cc2b
+    tools:
+      vulture:
+        targets:
+          - liveness_primer
+          - tests
+        cost: 1.0
+      skylos:
+        targets:
+          - liveness_primer
+          - tests
+        expected_clean: true
+        cost: 12.0
