@@ -12,7 +12,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath, PurePosixPath
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from liveness_primer.config import CorpusConfigError, ToolSettings
 from liveness_primer.errors import LivenessPrimerError
@@ -25,6 +25,10 @@ class AdapterError(LivenessPrimerError):
 
 class UnknownToolError(LivenessPrimerError):
     """Raised when no adapter provides a requested tool name."""
+
+
+# Static executable a detector requires in a minimal container runtime.
+RuntimeBinary = Literal['rg']
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +154,9 @@ class DetectorAdapter(Protocol):
         them); the runner validates and hashes each value and records it in
         the manifest. A detector may still locate a helper by its own
         means — bundled in its install, or on the surviving ``PATH``.
+    runtime_binaries : tuple[RuntimeBinary, ...]
+        Static executables staged into a minimal container runtime. Empty for
+        a pure-Python detector.
     success_exit_codes : frozenset[int]
         Exit codes that mean the run completed (findings or clean).
     capabilities : AdapterCapabilities
@@ -166,6 +173,7 @@ class DetectorAdapter(Protocol):
     invocation_env: Mapping[str, str]
     invocation_env_files: Mapping[str, Path]
     passthrough_env: tuple[str, ...]
+    runtime_binaries: tuple[RuntimeBinary, ...]
     success_exit_codes: frozenset[int]
     capabilities: AdapterCapabilities
     build_recipe: BuildRecipe

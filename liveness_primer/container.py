@@ -27,7 +27,7 @@ import stat
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from functools import partial
+from functools import cache, partial
 from pathlib import Path, PurePosixPath
 from typing import Literal, Protocol, runtime_checkable
 
@@ -45,7 +45,7 @@ from liveness_primer.execution import LaunchPlan, SideWorkspace
 from liveness_primer.findings import DependencyDelta, EnvironmentRecord, FetchRecord
 from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
-from liveness_primer.tools.base import DetectorAdapter
+from liveness_primer.tools.base import DetectorAdapter, RuntimeBinary
 
 # The public Chainguard tags are mutable daily-build pointers. Pin the
 # multi-platform OCI indexes so a cache fingerprint names exact builder and
@@ -64,6 +64,10 @@ class StaticBinaryArtifact:
 
     Attributes
     ----------
+    name : str
+        Upstream utility name used in provenance records.
+    executable : RuntimeBinary
+        Filename installed into the runtime image.
     version : str
         Upstream release version.
     architecture : Literal['x86_64', 'aarch64']
@@ -80,6 +84,8 @@ class StaticBinaryArtifact:
         Expected extracted executable SHA-256.
     """
 
+    name: str
+    executable: RuntimeBinary
     version: str
     architecture: Literal['x86_64', 'aarch64']
     filename: str
@@ -92,6 +98,8 @@ class StaticBinaryArtifact:
 _RIPGREP_VERSION = '15.2.0'
 _RIPGREP_ARTIFACTS: Mapping[str, StaticBinaryArtifact] = {
     'x86_64': StaticBinaryArtifact(
+        name='ripgrep',
+        executable='rg',
         version=_RIPGREP_VERSION,
         architecture='x86_64',
         filename=f'ripgrep-{_RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz',
@@ -104,6 +112,8 @@ _RIPGREP_ARTIFACTS: Mapping[str, StaticBinaryArtifact] = {
         binary_digest='e62198eb19b136b88c330af83647b5a962cb99b6b1f066758568f12de1974849',
     ),
     'aarch64': StaticBinaryArtifact(
+        name='ripgrep',
+        executable='rg',
         version=_RIPGREP_VERSION,
         architecture='aarch64',
         filename=f'ripgrep-{_RIPGREP_VERSION}-aarch64-unknown-linux-musl.tar.gz',
@@ -117,10 +127,10 @@ _RIPGREP_ARTIFACTS: Mapping[str, StaticBinaryArtifact] = {
     ),
 }
 
-# Download and extract the one expected release member inside the hardened,
+# Download and extract one expected release member inside the hardened,
 # network-enabled fetch container. Both the archive and extracted binary are
 # bounded and digest-checked before the host-visible output is created.
-_RIPGREP_FETCH_SCRIPT = """\
+_STATIC_BINARY_FETCH_SCRIPT = """\
 import hashlib
 import io
 from pathlib import Path
@@ -128,26 +138,28 @@ import sys
 import tarfile
 import urllib.request
 
-url, archive_digest, member_name, binary_digest = sys.argv[1:]
+url, archive_digest, member_name, binary_digest, executable = sys.argv[1:]
 with urllib.request.urlopen(url, timeout=300) as response:
     payload = response.read(8_388_609)
 if len(payload) > 8_388_608:
-    raise RuntimeError("ripgrep archive exceeds 8 MiB")
+    raise RuntimeError("static binary archive exceeds 8 MiB")
 if hashlib.sha256(payload).hexdigest() != archive_digest:
-    raise RuntimeError("ripgrep archive digest mismatch")
+    raise RuntimeError("static binary archive digest mismatch")
 with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
     member = archive.getmember(member_name)
     if not member.isfile():
-        raise RuntimeError("ripgrep archive member is not a regular file")
+        raise RuntimeError("static binary archive member is not a regular file")
     source = archive.extractfile(member)
     if source is None:
-        raise RuntimeError("ripgrep archive member cannot be read")
+        raise RuntimeError("static binary archive member cannot be read")
     binary = source.read(16_777_217)
 if len(binary) > 16_777_216:
-    raise RuntimeError("ripgrep binary exceeds 16 MiB")
+    raise RuntimeError("static binary exceeds 16 MiB")
 if hashlib.sha256(binary).hexdigest() != binary_digest:
-    raise RuntimeError("ripgrep binary digest mismatch")
-target = Path("/liveness/tool/rg")
+    raise RuntimeError("static binary digest mismatch")
+if Path(executable).name != executable or executable in {".", ".."}:
+    raise RuntimeError("invalid static binary executable name")
+target = Path("/liveness/tool") / executable
 target.write_bytes(binary)
 target.chmod(0o555)
 """
@@ -174,7 +186,9 @@ _DOCKER_TIMEOUT = 1800.0
 #   2: container hardening + per-side isolated fetch/build wheelhouses.
 #   3: separate builder/runtime images + pip-free distroless runtime with a
 #      pinned static ripgrep utility for Skylos verification.
-_CONTAINER_CACHE_FORMAT = 3
+#   4: compatible-image preflight, non-root detector builds, and
+#      adapter-declared runtime binaries.
+_CONTAINER_CACHE_FORMAT = 4
 
 # Fork-bomb backstop for every container this module starts; generous enough
 # for any real detector or pip invocation.
@@ -199,12 +213,19 @@ _HARDENING_FLAGS: tuple[str, ...] = (
 
 _IMAGE_REFERENCE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/@-]*$')
 
+# Chainguard's non-root UID/GID. A numeric identity also works in custom
+# builder images without requiring a matching passwd entry.
+_BUILD_USER = '65532:65532'
+
 _DOCKERFILE = """\
 FROM {builder_image} AS builder
 USER 0
+RUN mkdir -p /liveness/home && chown -R {build_user} /liveness
+ENV HOME=/liveness/home
+USER {build_user}
 RUN ["/usr/bin/python", "-m", "venv", "/liveness/venv"]
-COPY wheelhouse /liveness/wheelhouse
-COPY detector /liveness/detector
+COPY --chown={build_user} wheelhouse /liveness/wheelhouse
+COPY --chown={build_user} detector /liveness/detector
 RUN /liveness/venv/bin/python -m pip install --quiet --no-index \
     --find-links /liveness/wheelhouse /liveness/detector
 RUN /liveness/venv/bin/python -m pip freeze > /liveness/freeze.txt
@@ -213,7 +234,7 @@ RUN ["/liveness/venv/bin/python", "-m", "pip", "uninstall", "--yes", "pip"]
 FROM {runtime_image}
 COPY --from=builder /liveness/venv /liveness/venv
 COPY --from=builder /liveness/freeze.txt /liveness/freeze.txt
-COPY tools/rg /usr/bin/rg
+{runtime_binary_copies}
 ENV PATH="/liveness/venv/bin:$PATH"
 ENTRYPOINT []
 """
@@ -425,7 +446,7 @@ def container_fingerprint(
     docker_identity: str,
     builder_image: str,
     runtime_image: str,
-    ripgrep_identity: str,
+    runtime_binary_identities: tuple[str, ...],
 ) -> str:
     """Compute the environment fingerprint of one containerized ref (contract §3).
 
@@ -443,9 +464,9 @@ def container_fingerprint(
         Development image that fetches and installs distributions.
     runtime_image : str
         Minimal image that runs the installed detector.
-    ripgrep_identity : str
-        Version, architecture, and exact binary digest of the runtime search
-        utility.
+    runtime_binary_identities : tuple[str, ...]
+        Version, architecture, and exact binary digest of every
+        adapter-declared runtime utility.
 
     Returns
     -------
@@ -464,7 +485,7 @@ def container_fingerprint(
             'builder_image': builder_image,
             'runtime': docker_identity,
             'runtime_image': runtime_image,
-            'ripgrep': ripgrep_identity,
+            'runtime_binaries': runtime_binary_identities,
         },
         sort_keys=True,
     )
@@ -487,6 +508,22 @@ def image_tag(fingerprint: str) -> str:
     return f'liveness-primer/env:{fingerprint}'
 
 
+def _normalized_architecture(machine: str) -> str:
+    """Normalize common container architecture aliases.
+
+    Parameters
+    ----------
+    machine : str
+        Architecture reported inside an image.
+
+    Returns
+    -------
+    str
+        Canonical architecture name used for compatibility checks.
+    """
+    return {'amd64': 'x86_64', 'arm64': 'aarch64'}.get(machine, machine)
+
+
 def ripgrep_artifact_for(machine: str) -> StaticBinaryArtifact:
     """Select the pinned ripgrep artifact for one container architecture.
 
@@ -505,7 +542,7 @@ def ripgrep_artifact_for(machine: str) -> StaticBinaryArtifact:
     ContainerError
         If the architecture has no pinned artifact.
     """
-    normalized = {'amd64': 'x86_64', 'arm64': 'aarch64'}.get(machine, machine)
+    normalized = _normalized_architecture(machine)
     try:
         return _RIPGREP_ARTIFACTS[normalized]
     except KeyError as error:
@@ -513,8 +550,34 @@ def ripgrep_artifact_for(machine: str) -> StaticBinaryArtifact:
         raise ContainerError(msg) from error
 
 
-def _ripgrep_identity(artifact: StaticBinaryArtifact) -> str:
-    """Describe exact ripgrep runtime bytes for fingerprints and manifests.
+def _runtime_binary_artifact(binary: RuntimeBinary, machine: str) -> StaticBinaryArtifact:
+    """Select the pinned artifact for one adapter-declared runtime binary.
+
+    Parameters
+    ----------
+    binary : RuntimeBinary
+        Executable declared by the detector adapter.
+    machine : str
+        Runtime image architecture.
+
+    Returns
+    -------
+    StaticBinaryArtifact
+        Matching pinned release artifact.
+
+    Raises
+    ------
+    ContainerError
+        If the declared executable has no pinned artifact implementation.
+    """
+    if binary != 'rg':
+        msg = f'container runtime binary {binary!r} has no pinned artifact'
+        raise ContainerError(msg)
+    return ripgrep_artifact_for(machine)
+
+
+def _static_binary_identity(artifact: StaticBinaryArtifact) -> str:
+    """Describe exact runtime-utility bytes for fingerprints and manifests.
 
     Parameters
     ----------
@@ -526,7 +589,10 @@ def _ripgrep_identity(artifact: StaticBinaryArtifact) -> str:
     str
         Stable version, architecture, and binary-digest identity.
     """
-    return f'ripgrep {artifact.version} ({artifact.architecture}) sha256:{artifact.binary_digest}'
+    return (
+        f'{artifact.name} {artifact.version} ({artifact.architecture}; executable {artifact.executable}) '
+        f'sha256:{artifact.binary_digest}'
+    )
 
 
 def stage_static_binary(source: Path, destination: Path) -> None:
@@ -552,7 +618,7 @@ def stage_static_binary(source: Path, destination: Path) -> None:
     if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
         msg = f'prefetched static binary is not a regular file: {source.name}'
         raise ContainerError(msg)
-    destination.parent.mkdir()
+    destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
     destination.chmod(0o555)
 
@@ -575,14 +641,14 @@ def _validate_prefetched_binary(path: Path, expected_digest: str) -> None:
     try:
         status = path.lstat()
     except FileNotFoundError as error:
-        msg = 'ripgrep fetch did not produce rg'
+        msg = f'static binary fetch did not produce {path.name}'
         raise ContainerError(msg) from error
     if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
-        msg = 'ripgrep fetch produced a non-regular rg'
+        msg = f'static binary fetch produced a non-regular {path.name}'
         raise ContainerError(msg)
     actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if actual_digest != expected_digest:
-        msg = f'ripgrep binary digest mismatch: expected {expected_digest}, got {actual_digest}'
+        msg = f'static binary {path.name} digest mismatch: expected {expected_digest}, got {actual_digest}'
         raise ContainerError(msg)
     path.chmod(0o555)
 
@@ -659,6 +725,21 @@ class DockerRuntime(Protocol):
         """
         ...
 
+    def platform(self, image: str) -> str:
+        """Report the Python platform tag inside an image.
+
+        Parameters
+        ----------
+        image : str
+            Runtime image to inspect.
+
+        Returns
+        -------
+        str
+            Container-side ``sysconfig.get_platform()``.
+        """
+        ...
+
     def prefetch(
         self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
     ) -> None:
@@ -686,8 +767,8 @@ class DockerRuntime(Protocol):
         """
         ...
 
-    def prefetch_ripgrep(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
-        """Fetch and verify a pinned static ripgrep binary.
+    def prefetch_static_binary(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
+        """Fetch and verify one pinned static runtime binary.
 
         Parameters
         ----------
@@ -696,7 +777,7 @@ class DockerRuntime(Protocol):
         artifact : StaticBinaryArtifact
             Architecture-specific release metadata and digests.
         destination : Path
-            Fresh directory that receives an executable named ``rg``.
+            Fresh directory that receives ``artifact.executable``.
         """
         ...
 
@@ -727,6 +808,21 @@ class DockerRuntime(Protocol):
         -------
         str
             The container-side ``platform.python_version()``.
+        """
+        ...
+
+    def environment_python_version(self, tag: str) -> str:
+        """Report the exact managed interpreter version in an environment.
+
+        Parameters
+        ----------
+        tag : str
+            Built or cached environment image to inspect.
+
+        Returns
+        -------
+        str
+            ``/liveness/venv/bin/python``'s Python version.
         """
         ...
 
@@ -902,6 +998,23 @@ class DockerCli:
         result = self._run_auxiliary('arch', image, command, action='container architecture probe', offline=True)
         return result.stdout.strip()
 
+    def platform(self, image: str) -> str:
+        """Report the Python platform tag inside an image, offline.
+
+        Parameters
+        ----------
+        image : str
+            Runtime image to inspect.
+
+        Returns
+        -------
+        str
+            Container-side ``sysconfig.get_platform()``.
+        """
+        command = ('python', '-c', 'import sysconfig; print(sysconfig.get_platform())')
+        result = self._run_auxiliary('platform', image, command, action='container platform probe', offline=True)
+        return result.stdout.strip()
+
     def prefetch(
         self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
     ) -> None:
@@ -940,8 +1053,8 @@ class DockerCli:
             volumes=volumes,
         )
 
-    def prefetch_ripgrep(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
-        """Fetch and digest-verify one static ripgrep release binary.
+    def prefetch_static_binary(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
+        """Fetch and digest-verify one static runtime release binary.
 
         Parameters
         ----------
@@ -950,26 +1063,27 @@ class DockerCli:
         artifact : StaticBinaryArtifact
             Architecture-specific release metadata and digests.
         destination : Path
-            Fresh directory that receives an executable named ``rg``.
+            Fresh directory that receives ``artifact.executable``.
         """
         command = (
             'python',
             '-c',
-            _RIPGREP_FETCH_SCRIPT,
+            _STATIC_BINARY_FETCH_SCRIPT,
             artifact.url,
             artifact.archive_digest,
             artifact.member,
             artifact.binary_digest,
+            artifact.executable,
         )
         self._run_auxiliary(
-            'ripgrep-fetch',
+            'static-binary-fetch',
             image,
             command,
-            action='ripgrep prefetch',
+            action=f'{artifact.name} prefetch',
             offline=False,
             volumes=(f'{destination}:/liveness/tool',),
         )
-        _validate_prefetched_binary(destination / 'rg', artifact.binary_digest)
+        _validate_prefetched_binary(destination / artifact.executable, artifact.binary_digest)
 
     def freeze(self, tag: str) -> tuple[str, ...]:
         """Capture the freeze of an environment image, offline.
@@ -1009,6 +1123,32 @@ class DockerCli:
         result = self._run_auxiliary('pyver', tag, command, action='container python version', offline=True)
         return result.stdout.strip()
 
+    def environment_python_version(self, tag: str) -> str:
+        """Report the exact managed interpreter version, offline.
+
+        The absolute interpreter path prevents a dangling virtual-environment
+        symlink from silently falling through to the runtime image's Python.
+
+        Parameters
+        ----------
+        tag : str
+            Built or cached environment image to inspect.
+
+        Returns
+        -------
+        str
+            Managed interpreter's ``platform.python_version()``.
+        """
+        command = ('/liveness/venv/bin/python', '-c', 'import platform; print(platform.python_version())')
+        result = self._run_auxiliary(
+            'env-pyver',
+            tag,
+            command,
+            action='environment interpreter probe',
+            offline=True,
+        )
+        return result.stdout.strip()
+
     def remove_container(self, name: str) -> bool:
         """Force-remove one analysis container and confirm the outcome.
 
@@ -1044,6 +1184,17 @@ class ContainerEnvHandle:
 
 
 @dataclass(frozen=True, slots=True)
+class _ImagePairProbe:
+    """Compatible builder/runtime image properties used by preparation."""
+
+    docker_identity: str
+    python_version: str
+    platform: str
+    artifacts: dict[RuntimeBinary, StaticBinaryArtifact]
+    runtime_binary_identities: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedContainerPair:
     """The prepared base/head container pair of one run (contract §3).
 
@@ -1058,9 +1209,12 @@ class PreparedContainerPair:
     fetches : tuple[FetchRecord, ...]
         Every fetch performed while preparing the pair.
     installer_identity : str
-        Docker runtime, exact builder/runtime images, and exact ripgrep bytes.
+        Docker runtime, exact builder/runtime images, and exact declared
+        runtime-utility bytes.
     python_version : str
         Interpreter version inside the environment images.
+    platform : str
+        Python platform tag inside the runtime image.
     work_root : Path
         Host directory holding both per-side workspace roots.
     base_work_root : Path
@@ -1077,6 +1231,7 @@ class PreparedContainerPair:
     fetches: tuple[FetchRecord, ...]
     installer_identity: str
     python_version: str
+    platform: str
     work_root: Path
     base_work_root: Path
     head_work_root: Path
@@ -1212,6 +1367,53 @@ class ContainerEnvironments:
         metadata = parse_static_metadata(checkout)
         return tuple(dict.fromkeys((*metadata.dependencies, *metadata.build_requires)))
 
+    def _probe_images(self, adapter: DetectorAdapter) -> _ImagePairProbe:
+        """Validate and describe the configured builder/runtime image pair.
+
+        Parameters
+        ----------
+        adapter : DetectorAdapter
+            Adapter declaring any minimal-runtime executables.
+
+        Returns
+        -------
+        _ImagePairProbe
+            Compatible image properties and selected runtime artifacts.
+
+        Raises
+        ------
+        ContainerError
+            If the images have different architectures or Python versions.
+        """
+        docker_identity = self._docker.identity()
+        builder_architecture = self._docker.architecture(self._builder_image)
+        runtime_architecture = self._docker.architecture(self._runtime_image)
+        if _normalized_architecture(builder_architecture) != _normalized_architecture(runtime_architecture):
+            msg = (
+                'container builder/runtime architecture mismatch: '
+                f'builder {builder_architecture}; runtime {runtime_architecture}'
+            )
+            raise ContainerError(msg)
+        builder_python_version = self._docker.python_version(self._builder_image)
+        runtime_python_version = self._docker.python_version(self._runtime_image)
+        if builder_python_version != runtime_python_version:
+            msg = (
+                'container builder/runtime Python version mismatch: '
+                f'builder {builder_python_version}; runtime {runtime_python_version}'
+            )
+            raise ContainerError(msg)
+        artifacts: dict[RuntimeBinary, StaticBinaryArtifact] = {
+            binary: _runtime_binary_artifact(binary, runtime_architecture) for binary in adapter.runtime_binaries
+        }
+        identities = tuple(_static_binary_identity(artifact) for artifact in artifacts.values())
+        return _ImagePairProbe(
+            docker_identity=docker_identity,
+            python_version=runtime_python_version,
+            platform=self._docker.platform(self._runtime_image),
+            artifacts=artifacts,
+            runtime_binary_identities=identities,
+        )
+
     def _fetch_into(
         self, repo: str, sha: str, wheelhouse: Path, *, find_links: Path | None, exclude: frozenset[str]
     ) -> None:
@@ -1253,12 +1455,56 @@ class ContainerEnvironments:
             added = promote_prefetched(staging, wheelhouse, exclude=exclude)
         self._fetches.extend(fetch_records_for(wheelhouse, added))
 
+    def _prefetch_runtime_binary(
+        self,
+        binary: RuntimeBinary,
+        artifact: StaticBinaryArtifact,
+        tool_dir: Path,
+    ) -> Path:
+        """Fetch one declared runtime binary and record its provenance.
+
+        Parameters
+        ----------
+        binary : RuntimeBinary
+            Executable requested by the adapter.
+        artifact : StaticBinaryArtifact
+            Pinned artifact selected for the runtime architecture.
+        tool_dir : Path
+            Fresh tool cache receiving the executable.
+
+        Returns
+        -------
+        Path
+            Verified executable in ``tool_dir``.
+
+        Raises
+        ------
+        ContainerError
+            If registry metadata names a different executable.
+        """
+        if artifact.executable != binary:
+            msg = (
+                f'container runtime binary registry mismatch: requested {binary!r}, '
+                f'artifact provides {artifact.executable!r}'
+            )
+            raise ContainerError(msg)
+        self._docker.prefetch_static_binary(self._builder_image, artifact, tool_dir)
+        self._fetches.append(
+            FetchRecord(
+                kind='binary',
+                name=artifact.filename,
+                resolved=artifact.version,
+                digest=artifact.archive_digest,
+            )
+        )
+        return tool_dir / artifact.executable
+
     def _build(
         self,
         tag: str,
         checkout: Path,
         wheelhouses: Sequence[Path],
-        ripgrep: Callable[[], Path],
+        runtime_binaries: Mapping[RuntimeBinary, Callable[[], Path]],
     ) -> None:
         """Build one environment image from an offline context (build step, §3, §11).
 
@@ -1272,9 +1518,9 @@ class ContainerEnvironments:
             This side's wheelhouse directories, staged into one offline
             context (base side: its own; head side: base's plus its own
             extras).
-        ripgrep : Callable[[], Path]
-            Lazy provider of the verified static search binary shared by both
-            side builds.
+        runtime_binaries : Mapping[RuntimeBinary, Callable[[], Path]]
+            Lazy providers of the adapter-declared, verified static binaries
+            shared by both side builds.
 
         Raises
         ------
@@ -1291,10 +1537,14 @@ class ContainerEnvironments:
             # content from outside the untrusted checkout into the image.
             shutil.copytree(source, context / 'detector', symlinks=True, ignore=shutil.ignore_patterns('.git'))
             stage_wheelhouses(wheelhouses, context / 'wheelhouse')
-            stage_static_binary(ripgrep(), context / 'tools' / 'rg')
+            for binary, provider in runtime_binaries.items():
+                stage_static_binary(provider(), context / 'tools' / binary)
+            runtime_binary_copies = '\n'.join(f'COPY tools/{binary} /usr/bin/{binary}' for binary in runtime_binaries)
             dockerfile = _DOCKERFILE.format(
                 builder_image=self._builder_image,
                 runtime_image=self._runtime_image,
+                build_user=_BUILD_USER,
+                runtime_binary_copies=runtime_binary_copies,
             )
             (context / 'Dockerfile').write_text(dockerfile, encoding='utf-8')
             self._docker.build_image(tag, context, fresh=self._fresh)
@@ -1307,7 +1557,8 @@ class ContainerEnvironments:
         sha: str,
         fingerprint: str,
         wheelhouses: Callable[[], Sequence[Path]],
-        ripgrep: Callable[[], Path],
+        runtime_binaries: Mapping[RuntimeBinary, Callable[[], Path]],
+        expected_python_version: str,
         force_rebuild: bool,
     ) -> ContainerEnvHandle:
         """Return a cached environment image or build it.
@@ -1325,8 +1576,10 @@ class ContainerEnvironments:
         wheelhouses : Callable[[], Sequence[Path]]
             Lazy provider of this side's wheelhouse directories, triggering
             its fetch on first build.
-        ripgrep : Callable[[], Path]
-            Lazy provider of the verified static search binary.
+        runtime_binaries : Mapping[RuntimeBinary, Callable[[], Path]]
+            Lazy providers of the verified static runtime binaries.
+        expected_python_version : str
+            Version the builder and runtime image preflight both reported.
         force_rebuild : bool
             Skip cache reuse and rebuild.
 
@@ -1334,13 +1587,26 @@ class ContainerEnvironments:
         -------
         ContainerEnvHandle
             The ready environment image.
+
+        Raises
+        ------
+        ContainerError
+            If the built or cached image lacks the expected managed
+            interpreter.
         """
         tag = image_tag(fingerprint)
         cached = not force_rebuild and self._docker.image_exists(tag)
         if not cached:
             houses = wheelhouses()
             checkout = self._store.materialize(repo, sha)
-            self._build(tag, checkout, houses, ripgrep)
+            self._build(tag, checkout, houses, runtime_binaries)
+        environment_python_version = self._docker.environment_python_version(tag)
+        if environment_python_version != expected_python_version:
+            msg = (
+                'container environment interpreter mismatch: '
+                f'expected Python {expected_python_version}, got {environment_python_version} in {tag}'
+            )
+            raise ContainerError(msg)
         record = EnvironmentRecord(
             ref=ref,
             sha=sha,
@@ -1400,28 +1666,26 @@ class ContainerEnvironments:
             If an environment cannot be prepared, or teardown of a
             container cannot be confirmed after a successful analysis.
         """
+        image_pair = self._probe_images(adapter)
         base_sha, head_sha, ref_fetches = resolve_pair_refs(self._store, repo, base_ref, head_ref)
         self._fetches.extend(ref_fetches)
-        docker_identity = self._docker.identity()
-        ripgrep_artifact = ripgrep_artifact_for(self._docker.architecture(self._builder_image))
-        ripgrep_id = _ripgrep_identity(ripgrep_artifact)
         base_fingerprint = container_fingerprint(
             repo,
             base_sha,
             adapter,
-            docker_identity,
+            image_pair.docker_identity,
             self._builder_image,
             self._runtime_image,
-            ripgrep_id,
+            image_pair.runtime_binary_identities,
         )
         head_fingerprint = container_fingerprint(
             repo,
             head_sha,
             adapter,
-            docker_identity,
+            image_pair.docker_identity,
             self._builder_image,
             self._runtime_image,
-            ripgrep_id,
+            image_pair.runtime_binary_identities,
         )
         pair_key = hashlib.sha256(f'{base_fingerprint}:{head_fingerprint}'.encode()).hexdigest()[:24]
         wheelhouse_root = self._cache_dir / 'wheelhouse-container'
@@ -1496,10 +1760,16 @@ class ContainerEnvironments:
         wheelhouse_root.mkdir(parents=True, exist_ok=True)
         _validate_cache_directory(wheelhouse_root)
         with self._pair_lock(pair_dir):
-            ripgrep_path: Path | None = None
+            tool_cache_ready = False
 
-            def fetch_ripgrep() -> Path:
-                """Fetch the shared pinned runtime search binary once.
+            @cache
+            def fetch_runtime_binary(binary: RuntimeBinary) -> Path:
+                """Fetch one shared pinned runtime binary once.
+
+                Parameters
+                ----------
+                binary : RuntimeBinary
+                    Adapter-declared executable to fetch.
 
                 Returns
                 -------
@@ -1511,8 +1781,8 @@ class ContainerEnvironments:
                 ContainerError
                     If the tool cache cannot be reset or the fetch fails.
                 """
-                nonlocal ripgrep_path
-                if ripgrep_path is None:
+                nonlocal tool_cache_ready
+                if not tool_cache_ready:
                     _validate_cache_directory(tool_dir)
                     try:
                         shutil.rmtree(tool_dir)
@@ -1520,17 +1790,13 @@ class ContainerEnvironments:
                     except OSError as error:
                         msg = f'cannot reset the container tool cache: {error}'
                         raise ContainerError(msg) from error
-                    self._docker.prefetch_ripgrep(self._builder_image, ripgrep_artifact, tool_dir)
-                    ripgrep_path = tool_dir / 'rg'
-                    self._fetches.append(
-                        FetchRecord(
-                            kind='binary',
-                            name=ripgrep_artifact.filename,
-                            resolved=ripgrep_artifact.version,
-                            digest=ripgrep_artifact.archive_digest,
-                        )
-                    )
-                return ripgrep_path
+                    tool_cache_ready = True
+                artifact = image_pair.artifacts[binary]
+                return self._prefetch_runtime_binary(binary, artifact, tool_dir)
+
+            runtime_binary_providers: dict[RuntimeBinary, Callable[[], Path]] = {
+                binary: partial(fetch_runtime_binary, binary) for binary in adapter.runtime_binaries
+            }
 
             _validate_cache_directory(pair_dir)
             pair_dir.mkdir(exist_ok=True)
@@ -1549,7 +1815,8 @@ class ContainerEnvironments:
                     sha=base_sha,
                     fingerprint=base_fingerprint,
                     wheelhouses=base_wheelhouses,
-                    ripgrep=fetch_ripgrep,
+                    runtime_binaries=runtime_binary_providers,
+                    expected_python_version=image_pair.python_version,
                     force_rebuild=force,
                 ),
                 lambda force: self._ensure(
@@ -1558,13 +1825,13 @@ class ContainerEnvironments:
                     sha=head_sha,
                     fingerprint=head_fingerprint,
                     wheelhouses=head_wheelhouses,
-                    ripgrep=fetch_ripgrep,
+                    runtime_binaries=runtime_binary_providers,
+                    expected_python_version=image_pair.python_version,
                     force_rebuild=force,
                 ),
                 fresh=self._fresh,
                 detector_distribution=adapter.distribution,
             )
-            python_version = self._docker.python_version(base.image)
         work_root = Path(tempfile.mkdtemp(prefix='liveness-primer-run-'))
         base_work_root = work_root / 'base'
         head_work_root = work_root / 'head'
@@ -1578,10 +1845,16 @@ class ContainerEnvironments:
                 head=head,
                 environment_delta=delta,
                 fetches=tuple(self._fetches),
-                installer_identity=(
-                    f'{docker_identity}; builder {self._builder_image}; runtime {self._runtime_image}; {ripgrep_id}'
+                installer_identity='; '.join(
+                    (
+                        image_pair.docker_identity,
+                        f'builder {self._builder_image}',
+                        f'runtime {self._runtime_image}',
+                        *image_pair.runtime_binary_identities,
+                    )
                 ),
-                python_version=python_version,
+                python_version=image_pair.python_version,
+                platform=image_pair.platform,
                 work_root=work_root,
                 base_work_root=base_work_root,
                 head_work_root=head_work_root,

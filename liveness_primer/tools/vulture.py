@@ -18,6 +18,7 @@ from liveness_primer.tools.base import (
     AdapterError,
     BuildRecipe,
     RawToolOutput,
+    RuntimeBinary,
     normalize_finding_path,
 )
 
@@ -48,6 +49,8 @@ class VultureAdapter:
         Empty: vulture reads no packaged files.
     passthrough_env : tuple[str, ...]
         Empty: vulture is pure Python and needs no native helper.
+    runtime_binaries : tuple[RuntimeBinary, ...]
+        Empty: vulture needs no runtime utility.
     success_exit_codes : frozenset[int]
         0 (clean) and 3 (findings).
     capabilities : AdapterCapabilities
@@ -64,6 +67,7 @@ class VultureAdapter:
     invocation_env: Mapping[str, str] = MappingProxyType({})
     invocation_env_files: Mapping[str, Path] = MappingProxyType({})
     passthrough_env: tuple[str, ...] = ()
+    runtime_binaries: tuple[RuntimeBinary, ...] = ()
     success_exit_codes: frozenset[int] = frozenset({0, 3})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,

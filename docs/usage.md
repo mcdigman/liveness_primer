@@ -132,12 +132,15 @@ liveness-primer run --tool vulture \
 Each revision installs into a fingerprint-cached environment image built
 offline (`docker build --network none`) with digest-pinned Chainguard Python
 images: `latest-dev` fetches dependencies and builds a virtual environment,
-then that environment, its captured package freeze, and a digest-verified
-static ripgrep binary enter the minimal `latest` runtime. Ripgrep preserves
-Skylos's safe grep-verification pass; its architecture-specific official
-release archive and extracted executable are both SHA-256 checked during the
-network-enabled fetch phase. `pip` is removed before the copy, and the runtime
-contains no shell or package manager from the builder. The two revisions are
+then that environment and its captured package freeze enter the minimal
+`latest` runtime. Adapters declare additional runtime executables: Skylos adds
+a digest-verified static ripgrep binary for its safe grep-verification pass,
+while Vulture adds none. Ripgrep's architecture-specific official release
+archive and extracted executable are both SHA-256 checked during the
+network-enabled fetch phase. After the initial `/liveness` setup, detector
+installation and untrusted build hooks run as UID/GID 65532 rather than root.
+`pip` is removed before the copy, and the runtime contains no shell or package
+manager from the builder. The two revisions are
 fetched into separate wheelhouses — base first, then head reusing the base
 wheelhouse read-only so the shared dependencies download only once — and the
 base image builds from the base wheelhouse alone, so an untrusted head-side
@@ -153,9 +156,12 @@ on every host platform.
 The mode requires a running Docker daemon, probed at run start.
 `--container-builder-image IMAGE` and `--container-image IMAGE` override the
 builder and runtime respectively and require `--container`; custom images must
-provide matching Python and platform ABIs. The runtime platform must be
-`x86_64` or `aarch64`, for which pinned static ripgrep release artifacts are
-available. `--fresh` forces image rebuilds.
+provide matching Python versions and architectures. Both are probed before a
+cached environment is accepted or built, and every result must expose the
+exact managed virtual-environment interpreter. The manifest records the
+runtime's platform tag rather than the host's. For Skylos, the runtime
+architecture must be `x86_64` or `aarch64`, for which pinned static ripgrep
+release artifacts are available. `--fresh` forces image rebuilds.
 The mode cannot combine with `--old-cmd`/`--new-cmd`, and operator-supplied
 native helper executables (such as `SKYLOS_GO_BIN`) are refused: a host binary
 cannot run inside the container.

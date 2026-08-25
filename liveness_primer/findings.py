@@ -819,7 +819,7 @@ class RunManifest(_FrozenModel):
     isolation_enforced : bool
         Whether build/analysis sandboxing was enforced.
     platform : str
-        Platform tag of the run host.
+        Platform tag where the detectors ran.
     python_version : str
         Python version running the detectors.
     installer : str | None

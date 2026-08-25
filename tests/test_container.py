@@ -9,7 +9,7 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 from filelock import FileLock
@@ -41,6 +41,7 @@ from liveness_primer.execution import SideWorkspace
 from liveness_primer.filesystem import atomic_write_bytes, atomic_write_text, read_small_text
 from liveness_primer.findings import DependencyDelta
 from liveness_primer.launcher import LauncherError, SyncLauncher, run_async
+from liveness_primer.tools.skylos import SkylosAdapter
 from liveness_primer.tools.vulture import VultureAdapter
 from tests.test_envcache import (
     FREEZE_A,
@@ -53,6 +54,9 @@ from tests.test_envcache import (
 )
 
 __all__ = ['detector_repo']
+
+if TYPE_CHECKING:
+    from liveness_primer.tools.base import RuntimeBinary
 
 
 def test_default_container_images_are_digest_pinned_chainguard_pair() -> None:
@@ -123,6 +127,20 @@ def test_architecture_queries_the_builder_image_offline() -> None:
         DockerCli(launcher=RecordingLauncher(returncode=1)).architecture('builder:1')
 
 
+def test_platform_queries_the_runtime_image_offline() -> None:
+    launcher = RecordingLauncher(stdout='linux-aarch64\n')
+    assert DockerCli(launcher=launcher).platform('runtime:1') == 'linux-aarch64'
+    run_argv, rm_argv = launcher.calls
+    assert run_argv[run_argv.index('--network') + 1] == 'none'
+    assert 'runtime:1' in run_argv
+    assert 'sysconfig.get_platform()' in run_argv[-1]
+    name = run_argv[run_argv.index('--name') + 1]
+    assert name.startswith('liveness-primer-platform-')
+    assert rm_argv == ('docker', 'rm', '--force', name)
+    with pytest.raises(ContainerError, match='container platform probe failed'):
+        DockerCli(launcher=RecordingLauncher(returncode=1)).platform('runtime:1')
+
+
 def assert_hardened(argv: tuple[str, ...]) -> None:
     assert argv[argv.index('--cap-drop') + 1] == 'ALL'
     assert argv[argv.index('--security-opt') + 1] == 'no-new-privileges'
@@ -173,36 +191,42 @@ def test_prefetch_mounts_find_links_read_only(tmp_path: Path) -> None:
     assert run_argv[run_argv.index('--find-links') + 1] == '/liveness/base-links'
 
 
-def test_prefetch_ripgrep_verifies_and_hardens_the_binary(tmp_path: Path) -> None:
-    payload = b'static-ripgrep'
+def test_prefetch_static_binary_uses_artifact_executable_name(tmp_path: Path) -> None:
+    payload = b'static-helper'
+    executable = cast('RuntimeBinary', 'helper')
     artifact = StaticBinaryArtifact(
+        name='helper-tool',
+        executable=executable,
         version='1.2.3',
         architecture='aarch64',
-        filename='ripgrep.tar.gz',
-        url='https://example.invalid/ripgrep.tar.gz',
+        filename='helper.tar.gz',
+        url='https://example.invalid/helper.tar.gz',
         archive_digest='a' * 64,
-        member='ripgrep/rg',
+        member='helper/bin/helper',
         binary_digest=hashlib.sha256(payload).hexdigest(),
     )
-    target = tmp_path / 'rg'
+    target = tmp_path / executable
     atomic_write_bytes(target, payload)
     launcher = RecordingLauncher()
-    DockerCli(launcher=launcher).prefetch_ripgrep('builder:1', artifact, tmp_path)
+    DockerCli(launcher=launcher).prefetch_static_binary('builder:1', artifact, tmp_path)
     run_argv, rm_argv = launcher.calls
     assert f'{tmp_path}:/liveness/tool' in run_argv
     assert '--network' not in run_argv
     assert artifact.url in run_argv
     assert artifact.archive_digest in run_argv
     assert artifact.binary_digest in run_argv
+    assert executable in run_argv
     name = run_argv[run_argv.index('--name') + 1]
-    assert name.startswith('liveness-primer-ripgrep-fetch-')
+    assert name.startswith('liveness-primer-static-binary-fetch-')
     assert rm_argv == ('docker', 'rm', '--force', name)
     assert target.stat().st_mode & 0o777 == 0o555
 
 
-def test_prefetch_ripgrep_rejects_failed_or_invalid_output(tmp_path: Path) -> None:
+def test_prefetch_static_binary_rejects_failed_or_invalid_output(tmp_path: Path) -> None:
     payload = b'static-ripgrep'
     artifact = StaticBinaryArtifact(
+        name='ripgrep',
+        executable='rg',
         version='1.2.3',
         architecture='aarch64',
         filename='ripgrep.tar.gz',
@@ -212,23 +236,23 @@ def test_prefetch_ripgrep_rejects_failed_or_invalid_output(tmp_path: Path) -> No
         binary_digest=hashlib.sha256(payload).hexdigest(),
     )
     with pytest.raises(ContainerError, match='ripgrep prefetch failed'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).prefetch_ripgrep('builder:1', artifact, tmp_path)
+        DockerCli(launcher=RecordingLauncher(returncode=1)).prefetch_static_binary('builder:1', artifact, tmp_path)
     with pytest.raises(ContainerError, match='did not produce rg'):
-        DockerCli(launcher=RecordingLauncher()).prefetch_ripgrep('builder:1', artifact, tmp_path)
+        DockerCli(launcher=RecordingLauncher()).prefetch_static_binary('builder:1', artifact, tmp_path)
     target = tmp_path / 'rg'
     atomic_write_bytes(target, b'tampered')
-    with pytest.raises(ContainerError, match='ripgrep binary digest mismatch'):
-        DockerCli(launcher=RecordingLauncher()).prefetch_ripgrep('builder:1', artifact, tmp_path)
+    with pytest.raises(ContainerError, match='static binary rg digest mismatch'):
+        DockerCli(launcher=RecordingLauncher()).prefetch_static_binary('builder:1', artifact, tmp_path)
     target.unlink()
     target.mkdir()
     with pytest.raises(ContainerError, match='non-regular rg'):
-        DockerCli(launcher=RecordingLauncher()).prefetch_ripgrep('builder:1', artifact, tmp_path)
+        DockerCli(launcher=RecordingLauncher()).prefetch_static_binary('builder:1', artifact, tmp_path)
     target.rmdir()
     payload_path = tmp_path / 'payload'
     atomic_write_bytes(payload_path, payload)
     target.symlink_to(payload_path)
     with pytest.raises(ContainerError, match='non-regular rg'):
-        DockerCli(launcher=RecordingLauncher()).prefetch_ripgrep('builder:1', artifact, tmp_path)
+        DockerCli(launcher=RecordingLauncher()).prefetch_static_binary('builder:1', artifact, tmp_path)
 
 
 def test_freeze_parses_lines() -> None:
@@ -263,6 +287,19 @@ def test_python_version_queries_the_image_offline() -> None:
         DockerCli(launcher=RecordingLauncher(returncode=1)).python_version('t:1')
 
 
+def test_environment_python_version_uses_the_exact_venv_interpreter() -> None:
+    launcher = RecordingLauncher(stdout='3.14.7\n')
+    assert DockerCli(launcher=launcher).environment_python_version('t:1') == '3.14.7'
+    run_argv, rm_argv = launcher.calls
+    assert run_argv[run_argv.index('--network') + 1] == 'none'
+    assert run_argv[-3] == '/liveness/venv/bin/python'
+    name = run_argv[run_argv.index('--name') + 1]
+    assert name.startswith('liveness-primer-env-pyver-')
+    assert rm_argv == ('docker', 'rm', '--force', name)
+    with pytest.raises(ContainerError, match='environment interpreter probe failed'):
+        DockerCli(launcher=RecordingLauncher(returncode=1)).environment_python_version('t:1')
+
+
 def test_remove_container_reports_the_outcome() -> None:
     launcher = RecordingLauncher()
     assert DockerCli(launcher=launcher).remove_container('primer-base') is True
@@ -285,27 +322,27 @@ def test_container_user_without_posix_ids(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_container_fingerprint_varies_by_inputs() -> None:
     adapter = VultureAdapter()
-    base = container_fingerprint('https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', 'ripgrep:1')
+    base = container_fingerprint('https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:1',))
     assert base == container_fingerprint(
-        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', 'ripgrep:1'
+        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:1',)
     )
     assert base != container_fingerprint(
-        'https://other', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', 'ripgrep:1'
+        'https://other', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:1',)
     )
     assert base != container_fingerprint(
-        'https://r', 'b' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', 'ripgrep:1'
+        'https://r', 'b' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:1',)
     )
     assert base != container_fingerprint(
-        'https://r', 'a' * 40, adapter, 'docker 28', 'builder:1', 'runtime:1', 'ripgrep:1'
+        'https://r', 'a' * 40, adapter, 'docker 28', 'builder:1', 'runtime:1', ('ripgrep:1',)
     )
     assert base != container_fingerprint(
-        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:2', 'runtime:1', 'ripgrep:1'
+        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:2', 'runtime:1', ('ripgrep:1',)
     )
     assert base != container_fingerprint(
-        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:2', 'ripgrep:1'
+        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:2', ('ripgrep:1',)
     )
     assert base != container_fingerprint(
-        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', 'ripgrep:2'
+        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:2',)
     )
 
 
@@ -313,10 +350,12 @@ def test_container_fingerprint_tracks_the_cache_format(monkeypatch: pytest.Monke
     # A cache-format / security revision must make every prior image miss the
     # cache and rebuild, so it participates in the fingerprint material.
     adapter = VultureAdapter()
-    before = container_fingerprint('https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', 'ripgrep:1')
+    before = container_fingerprint(
+        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:1',)
+    )
     monkeypatch.setattr(container_module, '_CONTAINER_CACHE_FORMAT', 999)
     assert before != container_fingerprint(
-        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', 'ripgrep:1'
+        'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:1',)
     )
 
 
@@ -361,6 +400,20 @@ def test_stage_static_binary_copies_only_a_regular_file(tmp_path: Path) -> None:
         stage_static_binary(directory, tmp_path / 'unused' / 'rg')
 
 
+def test_stage_static_binaries_share_one_tools_directory(tmp_path: Path) -> None:
+    first = tmp_path / 'source' / 'first'
+    second = tmp_path / 'source' / 'second'
+    first.parent.mkdir()
+    atomic_write_bytes(first, b'first')
+    atomic_write_bytes(second, b'second')
+    tools = tmp_path / 'context' / 'tools'
+    tools.parent.mkdir()
+    stage_static_binary(first, tools / 'first')
+    stage_static_binary(second, tools / 'second')
+    assert (tools / 'first').read_bytes() == b'first'
+    assert (tools / 'second').read_bytes() == b'second'
+
+
 def requirement_wheel(requirement: str) -> str:
     """Map a requirement string to the wheel filename the fake resolves it to.
 
@@ -394,6 +447,10 @@ class FakeDocker:
     remove_ok: bool = True
     wheel_symlink_target: Path | None = None
     ripgrep_symlink_target: Path | None = None
+    architectures: dict[str, str] = field(default_factory=dict)
+    python_versions: dict[str, str] = field(default_factory=dict)
+    environment_python_version_value: str = '3.14.99'
+    platform_value: str = 'linux-aarch64'
     # Files a head-side build hook fabricates during the head fetch (the
     # fetch with a find_links source); each maps a filename to its bytes.
     fabricate: dict[str, bytes] = field(default_factory=dict)
@@ -437,9 +494,20 @@ class FakeDocker:
         str
             ``aarch64``.
         """
-        del image
         self.events.append('arch')
-        return 'aarch64'
+        return self.architectures.get(image, 'aarch64')
+
+    def platform(self, image: str) -> str:
+        """Report a fixed container platform tag.
+
+        Returns
+        -------
+        str
+            ``linux-aarch64`` unless scripted otherwise.
+        """
+        del image
+        self.events.append('platform')
+        return self.platform_value
 
     def build_image(self, tag: str, context: Path, *, fresh: bool) -> None:
         """Record the build and remember the context contents."""
@@ -474,12 +542,12 @@ class FakeDocker:
             for name, payload in self.fabricate.items():
                 atomic_write_bytes(destination / name, payload)
 
-    def prefetch_ripgrep(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
+    def prefetch_static_binary(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
         """Record the request and materialize a scripted static binary."""
         self.events.append('ripgrep-prefetch')
         self.ripgrep_prefetches.append((image, artifact))
         self.ripgrep_destinations.append(destination)
-        target = destination / 'rg'
+        target = destination / artifact.executable
         if self.ripgrep_symlink_target is None:
             atomic_write_bytes(target, b'fake-ripgrep')
             target.chmod(0o555)
@@ -508,9 +576,20 @@ class FakeDocker:
         str
             ``3.14.99``.
         """
-        del tag
         self.events.append('pyver')
-        return '3.14.99'
+        return self.python_versions.get(tag, '3.14.99')
+
+    def environment_python_version(self, tag: str) -> str:
+        """Report the scripted managed-environment interpreter version.
+
+        Returns
+        -------
+        str
+            Scripted environment version.
+        """
+        del tag
+        self.events.append('env-pyver')
+        return self.environment_python_version_value
 
     def remove_container(self, name: str) -> bool:
         """Record the removal.
@@ -563,6 +642,59 @@ def test_container_mode_refuses_hosts_without_posix_ids(tmp_path: Path, monkeypa
         environments(tmp_path, FakeDocker())
 
 
+def test_image_pair_python_mismatch_fails_before_cache_or_build(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    docker = FakeDocker(
+        python_versions={
+            DEFAULT_CONTAINER_BUILDER_IMAGE: '3.14.7',
+            DEFAULT_CONTAINER_IMAGE: '3.12.14',
+        }
+    )
+    with (
+        pytest.raises(
+            ContainerError,
+            match=r'builder/runtime Python version mismatch: builder 3\.14\.7; runtime 3\.12\.14',
+        ),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+    ):
+        pass
+    assert 'inspect' not in docker.events
+    assert 'build' not in docker.events
+    assert 'freeze' not in docker.events
+    assert docker.prefetches == []
+
+
+def test_image_pair_architecture_mismatch_fails_before_cache_or_build(
+    tmp_path: Path, detector_repo: DetectorRepo
+) -> None:
+    docker = FakeDocker(
+        architectures={
+            DEFAULT_CONTAINER_BUILDER_IMAGE: 'aarch64',
+            DEFAULT_CONTAINER_IMAGE: 'x86_64',
+        }
+    )
+    with (
+        pytest.raises(
+            ContainerError,
+            match='builder/runtime architecture mismatch: builder aarch64; runtime x86_64',
+        ),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+    ):
+        pass
+    assert 'inspect' not in docker.events
+    assert 'build' not in docker.events
+
+
+def test_cached_environment_requires_the_exact_managed_interpreter(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    docker = FakeDocker(always_cached=True, environment_python_version_value='3.12.14')
+    with (
+        pytest.raises(ContainerError, match=r'environment interpreter mismatch: expected Python 3\.14\.99'),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+    ):
+        pass
+    assert docker.built == []
+    assert 'freeze' not in docker.events
+
+
 def test_build_refuses_checkout_outside_the_cache(
     tmp_path: Path,
     detector_repo: DetectorRepo,
@@ -591,11 +723,10 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()
     ) as pair:
         assert pair.installer_identity == (
-            f'docker 99.9; builder {DEFAULT_CONTAINER_BUILDER_IMAGE}; runtime {DEFAULT_CONTAINER_IMAGE}; '
-            'ripgrep 15.2.0 (aarch64) '
-            'sha256:c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a'
+            f'docker 99.9; builder {DEFAULT_CONTAINER_BUILDER_IMAGE}; runtime {DEFAULT_CONTAINER_IMAGE}'
         )
         assert pair.python_version == '3.14.99'
+        assert pair.platform == 'linux-aarch64'
         assert pair.base.record.rebuilt
         assert not pair.base.record.from_cache
         assert pair.head.record.rebuilt
@@ -633,15 +764,9 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         'tomli-1.0-py3-none-any.whl',
     ]
     assert all(not path.exists() for path in docker.staging_paths)
-    assert len(docker.ripgrep_prefetches) == 1
+    assert docker.ripgrep_prefetches == []
     tool_fetches = [record for record in pair.fetches if record.kind == 'binary']
-    assert [(record.name, record.resolved, record.digest) for record in tool_fetches] == [
-        (
-            'ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz',
-            '15.2.0',
-            '800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915',
-        )
-    ]
+    assert tool_fetches == []
     # Build contexts are offline and self-contained: Dockerfile, the
     # .git-less checkout, and the shared wheelhouse (contract §3, §11).
     for names, dockerfile in docker.built_contexts:
@@ -651,12 +776,17 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         assert '/liveness/venv/bin:$PATH' in runtime_stage
         assert 'pip' not in runtime_stage
         assert '/liveness/detector' not in runtime_stage
-        assert 'COPY tools/rg /usr/bin/rg' in runtime_stage
+        assert 'COPY tools/rg /usr/bin/rg' not in runtime_stage
         assert '"pip", "uninstall"' in dockerfile
+        assert dockerfile.index('USER 0') < dockerfile.index('RUN mkdir -p /liveness/home')
+        assert dockerfile.index('USER 65532:65532') < dockerfile.index('/liveness/venv/bin/python -m pip install')
+        assert dockerfile.count('USER 0') == 1
+        assert 'COPY --chown=65532:65532 wheelhouse /liveness/wheelhouse' in dockerfile
+        assert 'COPY --chown=65532:65532 detector /liveness/detector' in dockerfile
         assert 'detector/pyproject.toml' in names
         assert 'wheelhouse/tomli-1.0-py3-none-any.whl' in names
         assert 'wheelhouse/setuptools-1.0-py3-none-any.whl' in names
-        assert 'tools/rg' in names
+        assert 'tools/rg' not in names
         assert not any(name.startswith('detector/.git') for name in names)
 
 
@@ -766,7 +896,103 @@ def test_dependency_free_detector_skips_the_prefetch(tmp_path: Path, detector_re
     with environments(tmp_path, docker).prepare_pair(detector_repo.url, 'head-branch', 'head-branch', VultureAdapter()):
         pass
     assert docker.prefetches == []
+    assert docker.ripgrep_prefetches == []
+
+
+def test_skylos_declared_runtime_binary_is_fetched_and_staged(tmp_path: Path, detector_repo: DetectorRepo) -> None:
+    docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_B]))
+    with environments(tmp_path, docker).prepare_pair(
+        detector_repo.url, 'base-branch', 'head-branch', SkylosAdapter()
+    ) as pair:
+        pass
     assert len(docker.ripgrep_prefetches) == 1
+    binary_fetches = [record for record in pair.fetches if record.kind == 'binary']
+    assert [(record.name, record.resolved, record.digest) for record in binary_fetches] == [
+        (
+            'ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz',
+            '15.2.0',
+            '800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915',
+        )
+    ]
+    for names, dockerfile in docker.built_contexts:
+        assert 'tools/rg' in names
+        assert 'COPY tools/rg /usr/bin/rg' in dockerfile
+    assert pair.installer_identity.endswith(
+        'ripgrep 15.2.0 (aarch64; executable rg) '
+        'sha256:c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a'
+    )
+
+
+def test_adapter_can_stage_two_distinct_runtime_binaries(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = cast('RuntimeBinary', 'helper')
+    adapter = VultureAdapter()
+    adapter.runtime_binaries = cast('tuple[RuntimeBinary, ...]', ('rg', helper))
+
+    def artifact_for(binary: 'RuntimeBinary', machine: str) -> StaticBinaryArtifact:
+        """Return the real rg artifact or a second scripted utility.
+
+        Returns
+        -------
+        StaticBinaryArtifact
+            Architecture-specific test artifact.
+        """
+        if binary == 'rg':
+            return ripgrep_artifact_for(machine)
+        return StaticBinaryArtifact(
+            name='helper-tool',
+            executable=binary,
+            version='1.0',
+            architecture='aarch64',
+            filename='helper-tool.tar.gz',
+            url='https://example.invalid/helper-tool.tar.gz',
+            archive_digest='b' * 64,
+            member='helper-tool/helper',
+            binary_digest='c' * 64,
+        )
+
+    monkeypatch.setattr(container_module, '_runtime_binary_artifact', artifact_for)
+    docker = FakeDocker(freezes=deque([FREEZE_A, FREEZE_A]))
+    with environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'base-branch', adapter) as pair:
+        pass
+    assert [artifact.executable for _image, artifact in docker.ripgrep_prefetches] == ['rg', helper]
+    ((names, dockerfile),) = docker.built_contexts
+    assert 'tools/rg' in names
+    assert 'tools/helper' in names
+    assert 'COPY tools/rg /usr/bin/rg' in dockerfile
+    assert 'COPY tools/helper /usr/bin/helper' in dockerfile
+    assert 'helper-tool 1.0 (aarch64; executable helper)' in pair.installer_identity
+
+
+def test_runtime_binary_registry_rejects_a_mismatched_executable(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = cast('RuntimeBinary', 'helper')
+    mismatched = StaticBinaryArtifact(
+        name='helper-tool',
+        executable=helper,
+        version='1.0',
+        architecture='aarch64',
+        filename='helper-tool.tar.gz',
+        url='https://example.invalid/helper-tool.tar.gz',
+        archive_digest='b' * 64,
+        member='helper-tool/helper',
+        binary_digest='c' * 64,
+    )
+    monkeypatch.setattr(container_module, '_runtime_binary_artifact', lambda _binary, _machine: mismatched)
+    docker = FakeDocker()
+    with (
+        pytest.raises(ContainerError, match="registry mismatch: requested 'rg', artifact provides 'helper'"),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', SkylosAdapter()),
+    ):
+        pass
+    assert docker.ripgrep_prefetches == []
+    assert docker.built == []
 
 
 def test_prefetched_symlink_never_reaches_the_wheelhouse(tmp_path: Path, detector_repo: DetectorRepo) -> None:
@@ -778,7 +1004,7 @@ def test_prefetched_symlink_never_reaches_the_wheelhouse(tmp_path: Path, detecto
     docker = FakeDocker(wheel_symlink_target=secret)
     with (
         pytest.raises(ContainerError, match='prefetched distribution is not a regular file'),
-        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', SkylosAdapter()),
     ):
         pass
     assert docker.built == []
@@ -792,7 +1018,7 @@ def test_prefetched_ripgrep_symlink_never_reaches_the_build(tmp_path: Path, dete
     docker = FakeDocker(ripgrep_symlink_target=secret)
     with (
         pytest.raises(ContainerError, match='prefetched static binary is not a regular file'),
-        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', SkylosAdapter()),
     ):
         pass
     assert docker.built == []
@@ -919,7 +1145,7 @@ def pair_dir_and_base_tag(tmp_path: Path, repo_url: str) -> tuple[Path, str]:
             'docker 99.9',
             DEFAULT_CONTAINER_BUILDER_IMAGE,
             DEFAULT_CONTAINER_IMAGE,
-            ('ripgrep 15.2.0 (aarch64) sha256:c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a'),
+            (),
         )
         for ref in ('base-branch', 'head-branch')
     ]
@@ -1046,7 +1272,7 @@ def test_container_tool_cache_reset_failure_is_a_domain_error(
             detector_repo.url,
             'head-branch',
             'head-branch',
-            VultureAdapter(),
+            SkylosAdapter(),
         ),
     ):
         pass

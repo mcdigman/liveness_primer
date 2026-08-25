@@ -932,11 +932,7 @@ def test_container_run_destroys_containers_before_writing_output(
     report = Report.model_validate_json(read_small_text(json_out))
     assert report.manifest.comparable is True
     assert report.manifest.isolation_enforced is True
-    assert report.manifest.installer == (
-        'docker 99.9; builder python:3.13-slim; runtime python:3.13-slim; '
-        'ripgrep 15.2.0 (aarch64) '
-        'sha256:c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a'
-    )
+    assert report.manifest.installer == 'docker 99.9; builder python:3.13-slim; runtime python:3.13-slim'
     # Both ephemeral containers were force-removed strictly before the JSON
     # artifact (or any other output) was written (contract §3, §11).
     removals = [index for index, event in enumerate(events) if event.startswith('rm:')]

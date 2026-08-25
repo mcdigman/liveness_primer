@@ -1200,12 +1200,11 @@ def test_container_run_end_to_end(tmp_path: Path, corpus_project: CorpusProject,
     assert manifest.comparable is True
     assert manifest.isolation_enforced is True
     assert manifest.installer == (
-        f'docker 99.9; builder {DEFAULT_CONTAINER_BUILDER_IMAGE}; runtime {DEFAULT_CONTAINER_IMAGE}; '
-        'ripgrep 15.2.0 (aarch64) '
-        'sha256:c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a'
+        f'docker 99.9; builder {DEFAULT_CONTAINER_BUILDER_IMAGE}; runtime {DEFAULT_CONTAINER_IMAGE}'
     )
     # The manifest records the container interpreter, not the host's.
     assert manifest.python_version == '3.14.99'
+    assert manifest.platform == 'linux-aarch64'
     assert manifest.base is not None
     assert manifest.head is not None
     assert manifest.base.sha != manifest.head.sha
@@ -1343,6 +1342,7 @@ def test_container_run_stages_the_skylos_neutral_config(
         environments=environments,
     )
     assert not report_has_failures(report)
+    assert len(docker.ripgrep_prefetches) == 1
     container_path = '/liveness/work/invocation-env/SKYLOS_CONFIG_FILE/skylos_neutral_config.toml'
     assert len(exec_argvs) == 2
     for argv in exec_argvs:

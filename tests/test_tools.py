@@ -92,6 +92,11 @@ def test_skylos_declares_the_documented_analyses() -> None:
     assert dict(VultureAdapter.analyses) == {}
 
 
+def test_adapters_declare_minimal_runtime_binaries() -> None:
+    assert VultureAdapter.runtime_binaries == ()
+    assert SkylosAdapter.runtime_binaries == ('rg',)
+
+
 def test_normalize_finding_path_relative_and_absolute() -> None:
     assert normalize_finding_path('pkg/mod.py', ROOT) == 'pkg/mod.py'
     assert normalize_finding_path('./pkg/mod.py', ROOT) == 'pkg/mod.py'

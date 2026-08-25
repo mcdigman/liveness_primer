@@ -29,11 +29,20 @@ independently of the package version; `liveness-primer --version` prints both.
   timeout cannot leak one. Both analysis containers are
   force-removed when the analysis finishes, before the report or any
   `--json-out` artifact is written; an unconfirmed removal fails the run.
-  The final image copies the detector virtual environment, package freeze, and
-  a digest-verified static ripgrep binary into the matching minimal Chainguard
-  runtime after removing `pip`, so Skylos keeps its safe verification pass but
-  no builder shell or package manager remains. Both the architecture-specific
-  official ripgrep archive and extracted executable are SHA-256 checked.
+  The final image copies the detector virtual environment and package freeze
+  into the matching minimal Chainguard runtime after removing `pip`; adapters
+  declare additional runtime executables, so Skylos receives a
+  digest-verified static ripgrep binary while Vulture remains Python-only.
+  Static-artifact metadata carries the installed executable name through
+  fetching, verification, staging, fingerprinting, and Dockerfile generation,
+  so one adapter can declare multiple distinct runtime binaries.
+  Both the architecture-specific official ripgrep archive and extracted
+  executable are SHA-256 checked. Detector installation and untrusted build
+  hooks run as UID/GID 65532 after the initial root-owned directory setup.
+  Builder/runtime architecture and exact Python-version mismatches fail before
+  cache lookup or build, each cached or built image is checked through its
+  exact virtual-environment interpreter, and manifests record the container
+  platform rather than the host platform.
   `--container-builder-image IMAGE` and `--container-image IMAGE` override the
   builder and runtime respectively. The `docker` CLI is a host requirement of
   this mode only, driven through the audited launcher; it is never a Python

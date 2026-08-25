@@ -567,7 +567,7 @@ class PrimerRunner:
         ----------
         item : _ProjectWork
             The project inputs.
-        side : str
+        side : SideName
             ``base`` or ``head``.
         command : tuple[str, ...]
             Detector command prefix for this side.
@@ -793,6 +793,7 @@ class PrimerRunner:
         pins: tuple[CorpusPinRecord, ...],
         isolation: Isolation,
         python_version: str | None = None,
+        platform_tag: str | None = None,
     ) -> RunManifest:
         """Assemble the run manifest (contract §2, §3).
 
@@ -816,6 +817,9 @@ class PrimerRunner:
         python_version : str | None
             Interpreter version that ran the detectors, when it is not the
             host interpreter (container mode); host version when ``None``.
+        platform_tag : str | None
+            Platform where detectors ran, when it is not the host platform
+            (container mode); host platform when ``None``.
 
         Returns
         -------
@@ -835,7 +839,7 @@ class PrimerRunner:
             comparable=pair is not None,
             environment_delta=pair.environment_delta if pair is not None else (),
             isolation_enforced=isolation.enforced,
-            platform=sysconfig.get_platform(),
+            platform=platform_tag if platform_tag is not None else sysconfig.get_platform(),
             python_version=python_version if python_version is not None else platform.python_version(),
             installer=pair.installer_identity if pair is not None else None,
             native_tools=self._native_tools,
@@ -1030,6 +1034,7 @@ class PrimerRunner:
             pins=tuple(item.pin for item in work),
             isolation=execution.isolation,
             python_version=pair.python_version,
+            platform_tag=pair.platform,
         )
         return _assemble_report(manifest, project_reports)
 

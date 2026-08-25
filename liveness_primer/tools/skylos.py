@@ -21,6 +21,7 @@ from liveness_primer.tools.base import (
     AdapterError,
     BuildRecipe,
     RawToolOutput,
+    RuntimeBinary,
     normalize_finding_path,
 )
 
@@ -169,6 +170,8 @@ class SkylosAdapter:
         analysis error the invocation fails outright. Both sides receive
         the same operator-supplied binary, so the engine is a constant of
         the comparison rather than part of the diff.
+    runtime_binaries : tuple[RuntimeBinary, ...]
+        ``rg`` for grep verification in minimal container runtimes.
     success_exit_codes : frozenset[int]
         0 only; skylos exits 2 when analysis errors occurred.
     capabilities : AdapterCapabilities
@@ -193,6 +196,7 @@ class SkylosAdapter:
     invocation_env: Mapping[str, str] = MappingProxyType({'SKYLOS_GREP_BUDGET': _GREP_BUDGET_SECONDS})
     invocation_env_files: Mapping[str, Path] = MappingProxyType({'SKYLOS_CONFIG_FILE': _NEUTRAL_CONFIG})
     passthrough_env: tuple[str, ...] = ('SKYLOS_GO_BIN',)
+    runtime_binaries: tuple[RuntimeBinary, ...] = ('rg',)
     success_exit_codes: frozenset[int] = frozenset({0})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,
