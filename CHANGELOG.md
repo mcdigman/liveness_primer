@@ -25,6 +25,13 @@ independently of the package version; `liveness-primer --version` prints both.
 - **Container runtime tools** — adapters can declare pinned runtime
   executables. Skylos includes a digest-verified static ripgrep executable for
   grep verification; Vulture requires none.
+- **Vulture corpus** — Add prowler-sdk, mne-python, mcp-context-forge, psutil,
+  pandas, qtile, redis-py, and Vulture's own self-analysis. Each reproduces the
+  Vulture invocation its project commits upstream, so these are the first
+  entries to pass `args:` and to pin a confidence floor.
+- **Corpus self-analysis** — Add `liveness-primer` itself, under both Vulture
+  and Skylos, scoped to `liveness_primer` and `tests` to match the committed
+  Dead Code workflow. Skylos is `expected_clean` at the pin; Vulture is not.
 
 ## [0.1.1] - 2026-08-21
 
