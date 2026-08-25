@@ -11,8 +11,8 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from typing import Protocol, runtime_checkable
+from pathlib import Path, PurePath, PurePosixPath
+from typing import Literal, Protocol, runtime_checkable
 
 from liveness_primer.config import CorpusConfigError, ToolSettings
 from liveness_primer.errors import LivenessPrimerError
@@ -25,6 +25,10 @@ class AdapterError(LivenessPrimerError):
 
 class UnknownToolError(LivenessPrimerError):
     """Raised when no adapter provides a requested tool name."""
+
+
+# Static executable a detector requires in a minimal container runtime.
+RuntimeBinary = Literal['rg']
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +140,12 @@ class DetectorAdapter(Protocol):
         Static, side-identical environment variables layered over the
         scrubbed environment of every detector invocation (e.g. pinning a
         detector's config discovery, contract §3, §11).
+    invocation_env_files : Mapping[str, Path]
+        Side-identical environment variables whose value is a packaged
+        host file the detector must be able to read. The execution backend
+        supplies the path in the detector's own filesystem view: the host
+        path directly, or a copy staged into the container mounts
+        (contract §3, §11).
     passthrough_env : tuple[str, ...]
         Environment variables naming an operator-supplied native helper
         executable the detector needs. The §3 scrub drops everything
@@ -144,6 +154,9 @@ class DetectorAdapter(Protocol):
         them); the runner validates and hashes each value and records it in
         the manifest. A detector may still locate a helper by its own
         means — bundled in its install, or on the surviving ``PATH``.
+    runtime_binaries : tuple[RuntimeBinary, ...]
+        Static executables staged into a minimal container runtime. Empty for
+        a pure-Python detector.
     success_exit_codes : frozenset[int]
         Exit codes that mean the run completed (findings or clean).
     capabilities : AdapterCapabilities
@@ -158,13 +171,15 @@ class DetectorAdapter(Protocol):
     default_args: tuple[str, ...]
     analyses: Mapping[str, tuple[str, ...]]
     invocation_env: Mapping[str, str]
+    invocation_env_files: Mapping[str, Path]
     passthrough_env: tuple[str, ...]
+    runtime_binaries: tuple[RuntimeBinary, ...]
     success_exit_codes: frozenset[int]
     capabilities: AdapterCapabilities
     build_recipe: BuildRecipe
 
     def parse(
-        self, output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()
+        self, output: RawToolOutput, *, project: str, root: PurePath, analyses: tuple[str, ...] = ()
     ) -> list[Finding]:
         """Parse raw invocation output into normalized findings.
 
@@ -174,8 +189,9 @@ class DetectorAdapter(Protocol):
             Captured detector output, possibly from a failed invocation.
         project : str
             Corpus project name to stamp onto findings.
-        root : Path
-            Checkout directory the detector analyzed, for path normalization.
+        root : PurePath
+            Checkout root as the detector saw it (a container-side pure
+            POSIX path in container mode), for path normalization.
         analyses : tuple[str, ...]
             Selected opt-in analyses; only their categories are ingested,
             so the report never carries categories the run's provenance
@@ -240,22 +256,24 @@ def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settin
     return [*base, *settings.args, *targets]
 
 
-def _relative_to_root(path: Path, root: Path) -> Path | None:
+def _relative_to_root(path: PurePath, root: PurePath) -> PurePath | None:
     """Express an absolute reported path relative to the checkout root.
 
     Parameters
     ----------
-    path : Path
+    path : PurePath
         Absolute path as reported.
-    root : Path
-        Checkout directory the detector analyzed.
+    root : PurePath
+        Checkout root as the detector saw it; only a concrete host ``Path``
+        can also be resolved.
 
     Returns
     -------
-    Path | None
+    PurePath | None
         The relative path, or ``None`` when outside the root.
     """
-    for candidate_root in (root, root.resolve()):
+    candidates = (root, root.resolve()) if isinstance(root, Path) else (root,)
+    for candidate_root in candidates:
         try:
             return path.relative_to(candidate_root)
         except ValueError:
@@ -263,7 +281,7 @@ def _relative_to_root(path: Path, root: Path) -> Path | None:
     return None
 
 
-def normalize_finding_path(raw: str, root: Path, *, allow_root: bool = False) -> str:
+def normalize_finding_path(raw: str, root: PurePath, *, allow_root: bool = False) -> str:
     """Normalize a detector-reported path to repo-relative POSIX form (contract §7).
 
     Detector output is untrusted: paths resolving outside the analyzed
@@ -274,8 +292,9 @@ def normalize_finding_path(raw: str, root: Path, *, allow_root: bool = False) ->
     ----------
     raw : str
         Path exactly as the detector printed it (untrusted).
-    root : Path
-        Checkout directory the detector analyzed.
+    root : PurePath
+        Checkout root as the detector saw it: a host ``Path``, or a pure
+        POSIX path for container-side roots.
     allow_root : bool
         Whether a path naming the checkout root itself normalizes to
         ``.`` (repository-level findings) instead of failing.
@@ -292,7 +311,9 @@ def normalize_finding_path(raw: str, root: Path, *, allow_root: bool = False) ->
         If the path escapes the checkout root, or names no file while
         ``allow_root`` is unset.
     """
-    path = Path(raw)
+    # A pure root is container-side: parse the reported path in the same
+    # POSIX flavor so absolute-path detection is host-independent.
+    path: PurePath = Path(raw) if isinstance(root, Path) else PurePosixPath(raw)
     if path.is_absolute():
         relative = _relative_to_root(path, root)
         if relative is None:

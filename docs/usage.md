@@ -115,6 +115,49 @@ For a new feature, leaving finding-diff gates off makes the run an
 evidence-producing review job. For a semantics-preserving refactor,
 `--fail-on any` turns it into a strict regression gate.
 
+## Run inside Docker containers
+
+For stronger containment of untrusted detector revisions,
+`--container` moves the build and execution of both detector revisions into
+separate ephemeral Docker containers:
+
+```bash
+liveness-primer run --tool vulture \
+  --repo https://github.com/jendrikseipp/vulture \
+  --old v2.15 \
+  --new v2.16 \
+  -k pluggy \
+  --container
+```
+
+Container mode uses digest-pinned Chainguard Python images in a
+[multi-stage build](https://edu.chainguard.dev/chainguard/containers/about/differences-development-production/).
+A development image fetches dependencies and builds the detector environment;
+the resulting virtual environment is then copied into a minimal distroless
+runtime. With the default images, detector invocations run without network
+access, `pip`, a shell, or a package manager, and with a read-only root
+filesystem.
+
+Base and head dependencies are kept separate so an untrusted head build cannot
+alter the base environment. Shared dependencies may still be reused read-only.
+Each invocation sees only its revision's workspace and runs in a named
+container that is force-removed before output is written, including after a
+timeout. If Docker cannot confirm removal, the run fails.
+
+Container mode requires the Docker CLI and a running Docker daemon. The
+following compatibility rules apply:
+
+- `--container-builder-image IMAGE` and `--container-image IMAGE` select custom
+  images and require `--container`. The images must provide matching Python
+  versions and architectures. They still use the multi-stage build, but a
+  custom runtime may include tools omitted from the default distroless image.
+- Skylos container runs support `x86_64` and `aarch64`, the architectures for
+  which its pinned ripgrep executable is available.
+- `--fresh` forces image rebuilds.
+- `--old-cmd` and `--new-cmd` cannot be combined with `--container`.
+- Host executables supplied through variables such as `SKYLOS_GO_BIN` are not
+  supported because they cannot run inside the container.
+
 ## Use pre-built detector commands
 
 The escape hatch compares commands you have already built:

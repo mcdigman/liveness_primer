@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Report and manifest payloads carry their own `schema_version`, versioned
 independently of the package version; `liveness-primer --version` prints both.
 
+## [Unreleased]
+
+### Added
+
+- **Container mode** — `run --container` builds and runs each detector revision
+  in a separate ephemeral Docker container. With the default digest-pinned
+  Chainguard images, detector invocations have no network access and use a
+  read-only, distroless runtime. Base and head dependency artifacts are kept
+  separate, and containers are removed before results are written; an
+  unconfirmed removal fails the run.
+- **Container image overrides** — `--container-builder-image` and
+  `--container-image` select a custom image pair with matching Python versions
+  and architectures. Container mode requires the Docker CLI and a running
+  Docker daemon.
+- **Container runtime tools** — adapters can declare pinned runtime
+  executables. Skylos includes a digest-verified static ripgrep executable for
+  grep verification; Vulture requires none.
+
 ## [0.1.1] - 2026-08-21
 
 ### Added

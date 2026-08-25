@@ -6,7 +6,7 @@ Adapters are tested against recorded raw-output fixtures.
 """
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -92,11 +92,27 @@ def test_skylos_declares_the_documented_analyses() -> None:
     assert dict(VultureAdapter.analyses) == {}
 
 
+def test_adapters_declare_minimal_runtime_binaries() -> None:
+    assert VultureAdapter.runtime_binaries == ()
+    assert SkylosAdapter.runtime_binaries == ('rg',)
+
+
 def test_normalize_finding_path_relative_and_absolute() -> None:
     assert normalize_finding_path('pkg/mod.py', ROOT) == 'pkg/mod.py'
     assert normalize_finding_path('./pkg/mod.py', ROOT) == 'pkg/mod.py'
     assert normalize_finding_path('/checkout/pkg/mod.py', ROOT) == 'pkg/mod.py'
     assert normalize_finding_path('pkg/../mod.py', ROOT) == 'mod.py'
+
+
+def test_normalize_finding_path_with_a_container_side_root() -> None:
+    # A container-side root is a pure POSIX path; reported paths parse in
+    # the same flavor, so prefix stripping works on every host platform —
+    # including Windows, where PurePosixPath is not a native Path (§7).
+    root = PurePosixPath('/liveness/work/side-x1/checkout')
+    assert normalize_finding_path('/liveness/work/side-x1/checkout/pkg/mod.py', root) == 'pkg/mod.py'
+    assert normalize_finding_path('pkg/mod.py', root) == 'pkg/mod.py'
+    with pytest.raises(AdapterError, match='outside the checkout'):
+        normalize_finding_path('/somewhere/else.py', root)
 
 
 def test_normalize_finding_path_resolves_symlinked_roots(tmp_path: Path) -> None:
@@ -422,8 +438,10 @@ def test_skylos_danger_name_is_a_rule_marker_not_a_symbol() -> None:
 
 def test_adapters_declare_invocation_environments() -> None:
     env = dict(SkylosAdapter.invocation_env)
-    assert set(env) == {'SKYLOS_CONFIG_FILE', 'SKYLOS_GREP_BUDGET'}
-    neutral_config = Path(env['SKYLOS_CONFIG_FILE'])
+    assert set(env) == {'SKYLOS_GREP_BUDGET'}
+    # The neutral config is declared as a file, so container mode can stage
+    # it where the detector reads it instead of forwarding a host-only path.
+    neutral_config = SkylosAdapter.invocation_env_files['SKYLOS_CONFIG_FILE']
     assert neutral_config.is_absolute()
     assert neutral_config.is_file()
     assert '[skylos]' in neutral_config.read_text(encoding='utf-8')
@@ -431,6 +449,7 @@ def test_adapters_declare_invocation_environments() -> None:
     # the default per-(project, tool) timeout to leave room for the run.
     assert 0 < float(env['SKYLOS_GREP_BUDGET']) < 300
     assert dict(VultureAdapter.invocation_env) == {}
+    assert dict(VultureAdapter.invocation_env_files) == {}
 
 
 def test_adapters_declare_native_helper_variables() -> None:
@@ -438,7 +457,8 @@ def test_adapters_declare_native_helper_variables() -> None:
     # its own — and the scrubbed environment admits it only by declaration.
     assert SkylosAdapter.passthrough_env == ('SKYLOS_GO_BIN',)
     # A declared variable must not collide with the pinned static ones.
-    assert not set(SkylosAdapter.passthrough_env) & set(SkylosAdapter.invocation_env)
+    pinned = set(SkylosAdapter.invocation_env) | set(SkylosAdapter.invocation_env_files)
+    assert not set(SkylosAdapter.passthrough_env) & pinned
     assert VultureAdapter.passthrough_env == ()
 
 

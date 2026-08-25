@@ -9,7 +9,7 @@ findings exist, 1 on invalid input, and 2 on invalid arguments.
 
 import re
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import MappingProxyType
 
 from liveness_primer.findings import Finding
@@ -18,6 +18,7 @@ from liveness_primer.tools.base import (
     AdapterError,
     BuildRecipe,
     RawToolOutput,
+    RuntimeBinary,
     normalize_finding_path,
 )
 
@@ -44,8 +45,12 @@ class VultureAdapter:
         Empty: vulture offers no opt-in analyses.
     invocation_env : Mapping[str, str]
         Empty: vulture needs no invocation environment.
+    invocation_env_files : Mapping[str, Path]
+        Empty: vulture reads no packaged files.
     passthrough_env : tuple[str, ...]
         Empty: vulture is pure Python and needs no native helper.
+    runtime_binaries : tuple[RuntimeBinary, ...]
+        Empty: vulture needs no runtime utility.
     success_exit_codes : frozenset[int]
         0 (clean) and 3 (findings).
     capabilities : AdapterCapabilities
@@ -60,7 +65,9 @@ class VultureAdapter:
     default_args: tuple[str, ...] = ()
     analyses: Mapping[str, tuple[str, ...]] = MappingProxyType({})
     invocation_env: Mapping[str, str] = MappingProxyType({})
+    invocation_env_files: Mapping[str, Path] = MappingProxyType({})
     passthrough_env: tuple[str, ...] = ()
+    runtime_binaries: tuple[RuntimeBinary, ...] = ()
     success_exit_codes: frozenset[int] = frozenset({0, 3})
     capabilities: AdapterCapabilities = AdapterCapabilities(
         has_confidence=True,
@@ -70,7 +77,7 @@ class VultureAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
-    def parse(output: RawToolOutput, *, project: str, root: Path, analyses: tuple[str, ...] = ()) -> list[Finding]:
+    def parse(output: RawToolOutput, *, project: str, root: PurePath, analyses: tuple[str, ...] = ()) -> list[Finding]:
         """Parse vulture stdout lines into findings.
 
         Reachability messages (``unreachable code after 'return'``,
@@ -83,7 +90,7 @@ class VultureAdapter:
             Captured vulture output, possibly from a failed invocation.
         project : str
             Corpus project name to stamp onto findings.
-        root : Path
+        root : PurePath
             Checkout directory vulture analyzed.
         analyses : tuple[str, ...]
             Must be empty: vulture declares no opt-in analyses.

@@ -27,6 +27,13 @@ from liveness_primer.config import (
     load_corpus,
     select_projects,
 )
+from liveness_primer.container import (
+    CONTAINER_ISOLATION,
+    DEFAULT_CONTAINER_BUILDER_IMAGE,
+    DEFAULT_CONTAINER_IMAGE,
+    ContainerEnvironments,
+    DockerCli,
+)
 from liveness_primer.corpus import CheckoutStore, cache_root
 from liveness_primer.envcache import DetectorEnvironments, choose_installer
 from liveness_primer.errors import LivenessPrimerError
@@ -236,6 +243,22 @@ def _add_run_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentPa
         '--timeout', type=_positive_float, default=300.0, help='default per-(project, tool) timeout'
     )
     run_parser.add_argument('--fresh', action='store_true', help='force same-run environment rebuilds')
+    run_parser.add_argument(
+        '--container',
+        action='store_true',
+        help='build both detector refs and run each invocation in an ephemeral Docker container (§3, §11)',
+    )
+    run_parser.add_argument(
+        '--container-image',
+        help=f'distroless runtime image for --container environments (default: {DEFAULT_CONTAINER_IMAGE})',
+    )
+    run_parser.add_argument(
+        '--container-builder-image',
+        help=(
+            'matching development image for --container dependency fetching and installation '
+            f'(default: {DEFAULT_CONTAINER_BUILDER_IMAGE})'
+        ),
+    )
 
 
 def _add_corpus_parser(subcommands: 'argparse._SubParsersAction[argparse.ArgumentParser]') -> None:
@@ -334,8 +357,17 @@ def _check_run_mode(args: argparse.Namespace) -> bool:
         if args.fail_on:
             msg = '--fail-on refuses to act on a non-comparable (escape-hatch) run (§3)'
             raise RunnerError(msg)
+        if args.container:
+            msg = '--container manages both detector builds; it cannot combine with --old-cmd/--new-cmd'
+            raise RunnerError(msg)
     elif args.repo is None or args.old is None or args.new is None:
         msg = 'a managed run requires --repo, --old, and --new (or use --old-cmd/--new-cmd)'
+        raise RunnerError(msg)
+    if args.container_image is not None and not args.container:
+        msg = '--container-image requires --container'
+        raise RunnerError(msg)
+    if args.container_builder_image is not None and not args.container:
+        msg = '--container-builder-image requires --container'
         raise RunnerError(msg)
     return escape
 
@@ -574,15 +606,45 @@ def _command_run(args: argparse.Namespace) -> int:
     )
     store = CheckoutStore(cache_root())
     # Managed runs execute untrusted detector refs and fail closed on Linux
-    # without an enforced sandbox; escape-hatch commands are trusted user
-    # code, so unenforced isolation is recorded and flagged instead (§11).
-    isolation = detect_isolation() if escape else require_isolation()
+    # without an enforced sandbox; container runs are sandboxed by the
+    # runtime itself (`--network none`), so no host netns probe is needed;
+    # escape-hatch commands are trusted user code, so unenforced isolation
+    # is recorded and flagged instead (§11).
+    if escape:
+        isolation = detect_isolation()
+    elif args.container:
+        isolation = CONTAINER_ISOLATION
+    else:
+        isolation = require_isolation()
     runner = PrimerRunner(adapter=adapter, store=store, isolation=isolation, options=options)
     if escape:
         report = runner.run_escape_hatch(
             projects,
             base_cmd=shlex.split(args.old_cmd),
             head_cmd=shlex.split(args.new_cmd),
+        )
+    elif args.container:
+        container_environments = ContainerEnvironments(
+            store,
+            cache_root(),
+            docker=DockerCli(),
+            builder_image=(
+                args.container_builder_image
+                if args.container_builder_image is not None
+                else DEFAULT_CONTAINER_BUILDER_IMAGE
+            ),
+            runtime_image=args.container_image if args.container_image is not None else DEFAULT_CONTAINER_IMAGE,
+            fresh=args.fresh,
+        )
+        # Both ephemeral containers are destroyed inside run_container,
+        # before the report exists — and therefore before --json-out or any
+        # other output below is written (§3, §11).
+        report = runner.run_container(
+            projects,
+            detector_repo=args.repo,
+            base_ref=args.old,
+            head_ref=args.new,
+            environments=container_environments,
         )
     else:
         environments = DetectorEnvironments(

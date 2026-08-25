@@ -31,6 +31,33 @@ point*: pre-triage, triage, or post-triage (§10).
 - The detector is obtained by cloning its repository and installing the base and head refs
   into two isolated cached virtualenvs (`uv pip` when on `PATH`, stdlib `venv` + `pip`
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
+- Container mode (`--container`, opt-in) moves the same managed build and analysis into
+  Docker:
+  - **Images:** each ref installs into a fingerprint-keyed environment image. The key
+    covers the repository and resolved SHA, adapter build recipe, exact builder and
+    runtime image references, adapter-declared runtime artifacts, and Docker identity.
+    Builder and runtime images must report matching Python versions and architectures,
+    and the result must expose the managed virtual-environment interpreter. An offline
+    multi-stage `docker build --network none` installs the detector as a non-root user,
+    captures its package freeze, removes `pip`, and copies the environment into the
+    runtime. The default builder and distroless runtime are digest-pinned Chainguard
+    images. Adapter-declared runtime executables come from pinned artifacts whose archive
+    and extracted executable are SHA-256 checked before the build.
+  - **Dependency provenance:** base and head use separate wheelhouses. The head fetch may
+    reuse the base wheelhouse read-only, but the base image consumes only base-owned
+    artifacts and the head wheelhouse cannot replace their names. Fetch promotion and
+    build-context assembly accept only regular, non-symlink files and never follow a
+    planted link into the host filesystem (§11).
+  - **Execution and cleanup:** each invocation runs without networking in a named,
+    hardened container with only its side's workspace mounted (§11). The container is
+    force-removed after completion or timeout and before its workspace is deleted. All
+    tracked containers must be reaped before output; if Docker cannot confirm removal
+    after otherwise successful analysis, the run fails closed.
+  - **Caching and compatibility:** Docker images are cached; `--fresh` bypasses the build
+    cache, while paired same-run dependency resolution is unchanged. The Docker CLI and
+    image-override requirements are specified in §12 and §17. Operator-supplied native
+    helper executables (§4 `passthrough_env`) are refused because host binaries cannot run
+    inside the container.
 - Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
   statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and
@@ -92,7 +119,13 @@ point*: pre-triage, triage, or post-triage (§10).
   discovery to a packaged neutral file via `SKYLOS_CONFIG_FILE`, so an analyzed
   repository's `[tool.skylos]` policy cannot alter which analyses execute, and pins
   `SKYLOS_GREP_BUDGET` so both sides run the grep-verify post-pass under the same
-  wall-clock allowance rather than the ambient default. Skylos still
+  wall-clock allowance rather than the ambient default. A variable whose value is a
+  packaged file is declared as such, so container mode stages the file where the
+  detector can read it instead of forwarding a host-only path. Adapters may also declare
+  `passthrough_env`: names of operator-supplied environment variables carrying native
+  helper executables the detector needs (skylos's `SKYLOS_GO_BIN`); the runner resolves,
+  validates, and hashes each supplied binary into the manifest, and both sides receive
+  the identical helper. Skylos still
   merges a target `.skylos/config.yaml`, which can enable unselected analyses and affect
   execution cost, exit status, timeouts, and run completeness; revisions predating the
   variable can likewise discover target configuration. Parse-side gating protects report
@@ -240,7 +273,19 @@ point*: pre-triage, triage, or post-triage (§10).
   — build-backend hooks can open arbitrary sockets; the sandbox is the guarantee. The
   manifest records whether isolation was enforced, and reports flag unenforced runs. This
   also limits the blast radius of a malicious corpus repository exploiting a detector
-  parser bug.
+  parser bug. In `--container` mode (§3) the runtime itself enforces `--network none` on
+  builds and every container, on every host platform — the netns probe is not
+  used, and the mode records enforced isolation everywhere, including hosts where the
+  host-venv path is best-effort. Every container the mode starts (fetch, freeze, and
+  analysis) is additionally hardened: it runs as the invoking host user (PID 1 included —
+  the untrusted detector build shaped the image, so even its entrypoint binaries are
+  untrusted), with all capabilities dropped, `no-new-privileges`, a PID limit, and a
+  read-only root filesystem with a tmpfs `/tmp`; helper and analysis containers are named
+  and force-removed so a client-side timeout cannot leak one. A host that cannot supply
+  POSIX user ids cannot honor the user mapping, and `--container` refuses to run there
+  rather than silently degrading to the untrusted image's default user. Hard memory/CPU caps are
+  deliberately not imposed: the §3 per-(project, tool) timeout is the resource bound,
+  and a fixed cap would misfail legitimately large analyses.
 - Corpus code execution: the core (Phases 1–2) never executes corpus code — detectors only
   parse it. Any workflow that executes corpus code (coverage evidence, runner files,
   distillation; Phases 3–4) runs only inside an isolated container: no network, read-only
@@ -258,7 +303,12 @@ printing the package version and `SCHEMA_VERSION`. Commands:
   [--ignore-include-tools] [--max-results N] [--excerpt-lines N]
   [--output text|json|github] [--fail-on ...]
   [--jobs N] [--timeout S] [--fresh] [--old-cmd CMD --new-cmd CMD] [--project URL]
-  [--analyses NAME[,NAME...]]`
+  [--analyses NAME[,NAME...]] [--container] [--container-image IMAGE]
+  [--container-builder-image IMAGE]` —
+  `--container` selects the Docker-backed managed mode (§3) and cannot combine with the
+  escape hatch; `--container-image` overrides its runtime image and
+  `--container-builder-image` overrides its matching development image. Both overrides
+  require `--container`.
 - `corpus validate` — parse and validate the corpus YAML.
 - `corpus license-check` — §6, locally or in CI.
 - `bisect --report REPORT.json --finding ID [--line N] [--occurrence N] --good REF
@@ -330,6 +380,9 @@ design intentionally blocks it, but it is not gated in CI initially.
 - Stdlib elsewhere: `tomllib`, `argparse`, `subprocess`/`venv`, `asyncio`. Git via
   subprocess; `uv` used opportunistically, never required. Detectors are never dependencies
   of this package.
+- Container mode (§3): the `docker` CLI is a host requirement of `--container` runs only,
+  probed at run time and driven via the audited launcher; it is never a Python dependency,
+  and no Docker SDK is used.
 
 ## 18. Package layout (informative)
 

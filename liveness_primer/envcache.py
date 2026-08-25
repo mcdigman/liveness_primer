@@ -750,7 +750,93 @@ def dependency_delta(
     return tuple(delta)
 
 
-def _fetch_records_for(wheelhouse: Path, added: Iterable[str]) -> tuple[FetchRecord, ...]:
+class PairedHandle(Protocol):
+    """One side's prepared environment handle, whatever backend built it."""
+
+    @property
+    def record(self) -> EnvironmentRecord:
+        """Manifest record of the side.
+
+        Returns
+        -------
+        EnvironmentRecord
+            Ref, SHA, fingerprint, freeze, and rebuild provenance.
+        """
+        ...
+
+
+def resolve_pair_refs(
+    store: CheckoutStore, repo: str, base_ref: str, head_ref: str
+) -> tuple[str, str, tuple[FetchRecord, ...]]:
+    """Resolve both detector refs and record their deduplicated git fetches.
+
+    Parameters
+    ----------
+    store : CheckoutStore
+        Checkout store resolving the refs.
+    repo : str
+        Detector repository URL.
+    base_ref : str
+        Base ref as requested on the CLI.
+    head_ref : str
+        Head ref as requested on the CLI.
+
+    Returns
+    -------
+    tuple[str, str, tuple[FetchRecord, ...]]
+        Base SHA, head SHA, and the git fetch records — one record when
+        both refs resolve to the same commit.
+    """
+    base_sha = store.resolve_ref(repo, base_ref)
+    head_sha = store.resolve_ref(repo, head_ref)
+    records = [FetchRecord(kind='git', name=repo, resolved=base_sha)]
+    if head_sha != base_sha:
+        records.append(FetchRecord(kind='git', name=repo, resolved=head_sha))
+    return base_sha, head_sha, tuple(records)
+
+
+def resolve_paired_delta[H: PairedHandle](
+    ensure_base: Callable[[bool], H],
+    ensure_head: Callable[[bool], H],
+    *,
+    fresh: bool,
+    detector_distribution: str,
+) -> tuple[H, H, tuple[DependencyDelta, ...]]:
+    """Ensure both sides and run the paired same-run delta resolution (contract §3).
+
+    Attribution is temporal, never textual: a non-empty non-detector delta
+    observed while either side came from cache forces a same-run rebuild of
+    both sides, and only a delta surviving that rebuild is ref-attributable.
+    This single driver carries the policy for every environment backend.
+
+    Parameters
+    ----------
+    ensure_base : Callable[[bool], H]
+        Builds or reuses the base side; the argument forces a rebuild.
+    ensure_head : Callable[[bool], H]
+        Builds or reuses the head side; the argument forces a rebuild.
+    fresh : bool
+        Force rebuilds already on the first pass (``--fresh``).
+    detector_distribution : str
+        Detector distribution name, excluded from the delta.
+
+    Returns
+    -------
+    tuple[H, H, tuple[DependencyDelta, ...]]
+        The final base and head handles plus the surviving delta.
+    """
+    base = ensure_base(fresh)
+    head = ensure_head(fresh)
+    delta = dependency_delta(base.record.freeze, head.record.freeze, detector_distribution=detector_distribution)
+    if delta and not (base.record.rebuilt and head.record.rebuilt):
+        force_rebuild = True
+        base = ensure_base(force_rebuild)
+        head = ensure_head(force_rebuild)
+        delta = dependency_delta(base.record.freeze, head.record.freeze, detector_distribution=detector_distribution)
+    return base, head, delta
+
+
+def fetch_records_for(wheelhouse: Path, added: Iterable[str]) -> tuple[FetchRecord, ...]:
     """Build manifest fetch records for newly downloaded distribution files.
 
     Parameters
@@ -978,7 +1064,7 @@ class DetectorEnvironments:
         before = {entry.name for entry in wheelhouse.iterdir()}
         self._installer.prefetch(deduped, wheelhouse)
         added = {entry.name for entry in wheelhouse.iterdir()} - before
-        self._fetches.extend(_fetch_records_for(wheelhouse, added))
+        self._fetches.extend(fetch_records_for(wheelhouse, added))
         return wheelhouse
 
     def _pair_wheelhouse(self, repo: str, shas: Sequence[str]) -> Path:
@@ -1162,11 +1248,8 @@ class DetectorEnvironments:
         PreparedPair
             The two environments, surviving delta, and fetch records.
         """
-        base_sha = self._store.resolve_ref(repo, base_ref)
-        head_sha = self._store.resolve_ref(repo, head_ref)
-        self._fetches.append(FetchRecord(kind='git', name=repo, resolved=base_sha))
-        if head_sha != base_sha:
-            self._fetches.append(FetchRecord(kind='git', name=repo, resolved=head_sha))
+        base_sha, head_sha, ref_fetches = resolve_pair_refs(self._store, repo, base_ref, head_ref)
+        self._fetches.extend(ref_fetches)
         installer_identity = self._installer.identity()
         base_fingerprint = environment_fingerprint(repo, base_sha, adapter, installer_identity)
         head_fingerprint = environment_fingerprint(repo, head_sha, adapter, installer_identity)
@@ -1188,55 +1271,28 @@ class DetectorEnvironments:
 
         with contextlib.ExitStack() as stack:
             self._acquire_locks(stack, (base_fingerprint, head_fingerprint))
-            base = self._ensure(
-                repo=repo,
-                ref=base_ref,
-                sha=base_sha,
-                adapter=adapter,
-                fingerprint=base_fingerprint,
-                wheelhouse=pair_wheelhouse,
-                force_rebuild=self._fresh,
-            )
-            head = self._ensure(
-                repo=repo,
-                ref=head_ref,
-                sha=head_sha,
-                adapter=adapter,
-                fingerprint=head_fingerprint,
-                wheelhouse=pair_wheelhouse,
-                force_rebuild=self._fresh,
-            )
-            delta = dependency_delta(
-                base.record.freeze,
-                head.record.freeze,
-                detector_distribution=adapter.distribution,
-            )
-            if delta and not (base.record.rebuilt and head.record.rebuilt):
-                # Attribution is temporal, never textual: rebuild both sides
-                # in this run before attributing the delta to the refs (§3).
-                base = self._ensure(
+            base, head, delta = resolve_paired_delta(
+                lambda force: self._ensure(
                     repo=repo,
                     ref=base_ref,
                     sha=base_sha,
                     adapter=adapter,
                     fingerprint=base_fingerprint,
                     wheelhouse=pair_wheelhouse,
-                    force_rebuild=True,
-                )
-                head = self._ensure(
+                    force_rebuild=force,
+                ),
+                lambda force: self._ensure(
                     repo=repo,
                     ref=head_ref,
                     sha=head_sha,
                     adapter=adapter,
                     fingerprint=head_fingerprint,
                     wheelhouse=pair_wheelhouse,
-                    force_rebuild=True,
-                )
-                delta = dependency_delta(
-                    base.record.freeze,
-                    head.record.freeze,
-                    detector_distribution=adapter.distribution,
-                )
+                    force_rebuild=force,
+                ),
+                fresh=self._fresh,
+                detector_distribution=adapter.distribution,
+            )
             yield PreparedPair(
                 base=base,
                 head=head,

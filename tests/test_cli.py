@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the command-line interface (contract §12)."""
 
+import asyncio
 import os
 import shlex
 import shutil
 import sys
+from collections.abc import Mapping, Sequence
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
@@ -15,12 +17,17 @@ import liveness_primer.cli
 import liveness_primer.runner as runner_module
 from liveness_primer.cli import EXIT_FAILURE, EXIT_GATE, EXIT_OK, main
 from liveness_primer.config import Corpus, CorpusProject, ToolSettings
+from liveness_primer.corpus import CheckoutStore
 from liveness_primer.filesystem import atomic_write_text, read_small_text
 from liveness_primer.findings import SCHEMA_VERSION, Report
 from liveness_primer.isolation import UNENFORCED, Isolation, IsolationError
+from liveness_primer.launcher import LaunchResult
 from liveness_primer.license_check import LicenseCheckResult
 from liveness_primer.report import render_json
+from liveness_primer.runner import PrimerRunner, RunOptions
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
+from liveness_primer.tools.base import DetectorAdapter
+from tests.test_container import FakeDocker
 from tests.test_runner import ScriptedEnvInstaller, fake_detector_repo
 
 __all__ = ['fake_detector_repo']
@@ -791,3 +798,143 @@ def test_interactive_terminal_width_resolution(
         captured = capsys.readouterr()
         assert code == EXIT_OK
         assert 'liveness primer report' in captured.out
+
+
+def test_run_container_flag_matrix_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    escape_with_container = [
+        'run',
+        '--tool',
+        'vulture',
+        '--project',
+        'https://example.invalid/x',
+        '--old-cmd',
+        'x',
+        '--new-cmd',
+        'y',
+        '--container',
+    ]
+    assert main(escape_with_container) == EXIT_FAILURE
+    assert 'cannot combine with --old-cmd' in capsys.readouterr().err
+    image_without_container = [
+        'run',
+        '--tool',
+        'vulture',
+        '--project',
+        'https://example.invalid/x',
+        '--repo',
+        'https://example.invalid/r',
+        '--old',
+        'a',
+        '--new',
+        'b',
+        '--container-image',
+        'python:3.13-slim',
+    ]
+    assert main(image_without_container) == EXIT_FAILURE
+    assert '--container-image requires --container' in capsys.readouterr().err
+    builder_without_container = [
+        *image_without_container[:-2],
+        '--container-builder-image',
+        'python:3.13-slim',
+    ]
+    assert main(builder_without_container) == EXIT_FAILURE
+    assert '--container-builder-image requires --container' in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures('_isolated_cache')
+def test_container_run_destroys_containers_before_writing_output(
+    tmp_path: Path,
+    project_url: str,
+    fake_detector_repo: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = FakeDocker()
+    events = docker.events
+
+    async def docker_exec_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        del cwd, env
+        await asyncio.sleep(0)
+        events.append('exec')
+        is_base = any(element.endswith('-base') for element in argv)
+        stdout = "pkg/mod.py:5: unused function 'unused_helper' (60% confidence)\n" if is_base else ''
+        return LaunchResult(
+            argv=tuple(argv),
+            returncode=3 if stdout else 0,
+            stdout=stdout,
+            stderr='',
+            duration_seconds=0.0,
+            timed_out=False,
+        )
+
+    class ContainerCliRunner(PrimerRunner):
+        """PrimerRunner wired to the scripted docker-exec launcher."""
+
+        def __init__(
+            self,
+            *,
+            adapter: DetectorAdapter,
+            store: CheckoutStore,
+            isolation: Isolation,
+            options: RunOptions,
+        ) -> None:
+            super().__init__(
+                adapter=adapter,
+                store=store,
+                isolation=isolation,
+                options=options,
+                async_launcher=docker_exec_launcher,
+            )
+
+    def refuse_probe() -> Isolation:
+        msg = 'the host netns probe must be skipped in --container mode'
+        raise AssertionError(msg)
+
+    def spying_write(path: Path, text: str) -> None:
+        events.append('write-json')
+        atomic_write_text(path, text)
+
+    monkeypatch.setattr(liveness_primer.cli, 'DockerCli', lambda: docker)
+    monkeypatch.setattr(liveness_primer.cli, 'PrimerRunner', ContainerCliRunner)
+    monkeypatch.setattr(liveness_primer.cli, 'require_isolation', refuse_probe)
+    monkeypatch.setattr(liveness_primer.cli, 'atomic_write_text', spying_write)
+    json_out = tmp_path / 'report.json'
+    code = main(
+        [
+            'run',
+            '--tool',
+            'vulture',
+            '--project',
+            project_url,
+            '--repo',
+            fake_detector_repo,
+            '--old',
+            'base-branch',
+            '--new',
+            'head-branch',
+            '--container',
+            '--container-image',
+            'python:3.13-slim',
+            '--container-builder-image',
+            'python:3.13-slim',
+            '--json-out',
+            str(json_out),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert 'comparable: yes' in captured.out
+    report = Report.model_validate_json(read_small_text(json_out))
+    assert report.manifest.comparable is True
+    assert report.manifest.isolation_enforced is True
+    assert report.manifest.installer == 'docker 99.9; builder python:3.13-slim; runtime python:3.13-slim'
+    # Both ephemeral containers were force-removed strictly before the JSON
+    # artifact (or any other output) was written (contract §3, §11).
+    removals = [index for index, event in enumerate(events) if event.startswith('rm:')]
+    assert len(removals) == 2
+    assert max(removals) < events.index('write-json')

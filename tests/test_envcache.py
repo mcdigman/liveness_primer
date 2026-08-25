@@ -177,6 +177,7 @@ class RecordingLauncher:
     stdout: str = ''
     returncode: int = 0
     timed_out: bool = False
+    stderr_text: str | None = None
     calls: list[tuple[str, ...]] = field(default_factory=list)
     envs: list[Mapping[str, str] | None] = field(default_factory=list)
 
@@ -198,11 +199,12 @@ class RecordingLauncher:
         del cwd, timeout
         self.calls.append(tuple(argv))
         self.envs.append(env)
+        stderr = self.stderr_text if self.stderr_text is not None else ('boom' if self.returncode else '')
         return LaunchResult(
             argv=tuple(argv),
             returncode=None if self.timed_out else self.returncode,
             stdout=self.stdout,
-            stderr='boom' if self.returncode else '',
+            stderr=stderr,
             duration_seconds=0.0,
             timed_out=self.timed_out,
         )

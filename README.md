@@ -243,6 +243,39 @@ let generated prose replace deterministic gates or human review.
 >
 </details>
 
+## Run inside Docker containers
+
+For stronger containment of untrusted/attacker-controlled PR code,
+`--container` moves the build and execution of both detector revisions into
+separate ephemeral Docker containers:
+
+```bash
+liveness-primer run --tool vulture \
+  --repo https://github.com/jendrikseipp/vulture \
+  --old v2.15 \
+  --new v2.16 \
+  -k pluggy \
+  --container
+```
+
+Container mode uses digest-pinned Chainguard Python images in a
+[multi-stage build](https://edu.chainguard.dev/chainguard/containers/about/differences-development-production/):
+dependencies and the detector are built in a development image, then the resulting
+virtual environment is copied into a minimal distroless runtime.
+With the default images, detector invocations run without network access,
+`pip`, a shell, or a package manager, and with a read-only root filesystem.
+Each container is force-removed before results are written; the run fails
+if Docker cannot confirm its removal.
+
+This mode requires the Docker CLI and a running Docker daemon.
+`--container-builder-image IMAGE` and `--container-image IMAGE`
+select custom images, which must provide matching Python
+versions and architectures. Containers specified in this manner can have
+tools omitted from the default distroless image.
+
+See the [usage guide](docs/usage.md#run-inside-docker-containers) for
+dependency isolation, caching, platform limits, and other compatibility details.
+
 ## Pre-built detector commands
 
 The escape hatch compares commands you have already built:
