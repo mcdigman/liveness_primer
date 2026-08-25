@@ -12,41 +12,19 @@ independently of the package version; `liveness-primer --version` prints both.
 
 ### Added
 
-- **Container mode** — `run --container` builds both detector revisions into
-  fingerprint-cached, distroless Docker images (offline multi-stage `docker
-  build --network none` fed from a fetch-step prefetch inside a digest-pinned
-  Chainguard Python development image) and executes each side of the comparison
-  in its own ephemeral, network-less, hardened container
-  (invoking-user PID 1, all capabilities dropped, `no-new-privileges`, PID
-  limit, read-only root filesystem, per-side workspace mounts). The two
-  revisions are fetched into separate per-side wheelhouses — base first, then
-  head reusing the base wheelhouse read-only via `--find-links` so the shared
-  closure downloads once — and the base image builds from the base wheelhouse
-  alone, so an untrusted head-side build hook cannot forge a wheel under a
-  base dependency's name. Prefetched distributions are staged and validated as
-  regular files (base-owned names excluded) before entering a side's
-  wheelhouse, and helper containers are named and tracked so a client-side
-  timeout cannot leak one. Both analysis containers are
-  force-removed when the analysis finishes, before the report or any
-  `--json-out` artifact is written; an unconfirmed removal fails the run.
-  The final image copies the detector virtual environment and package freeze
-  into the matching minimal Chainguard runtime after removing `pip`; adapters
-  declare additional runtime executables, so Skylos receives a
-  digest-verified static ripgrep binary while Vulture remains Python-only.
-  Static-artifact metadata carries the installed executable name through
-  fetching, verification, staging, fingerprinting, and Dockerfile generation,
-  so one adapter can declare multiple distinct runtime binaries.
-  Both the architecture-specific official ripgrep archive and extracted
-  executable are SHA-256 checked. Detector installation and untrusted build
-  hooks run as UID/GID 65532 after the initial root-owned directory setup.
-  Builder/runtime architecture and exact Python-version mismatches fail before
-  cache lookup or build, each cached or built image is checked through its
-  exact virtual-environment interpreter, and manifests record the container
-  platform rather than the host platform.
-  `--container-builder-image IMAGE` and `--container-image IMAGE` override the
-  builder and runtime respectively. The `docker` CLI is a host requirement of
-  this mode only, driven through the audited launcher; it is never a Python
-  dependency (contract §3, §11, §17).
+- **Container mode** — `run --container` builds and runs each detector revision
+  in a separate ephemeral Docker container. With the default digest-pinned
+  Chainguard images, detector invocations have no network access and use a
+  read-only, distroless runtime. Base and head dependency artifacts are kept
+  separate, and containers are removed before results are written; an
+  unconfirmed removal fails the run.
+- **Container image overrides** — `--container-builder-image` and
+  `--container-image` select a custom image pair with matching Python versions
+  and architectures. Container mode requires the Docker CLI and a running
+  Docker daemon.
+- **Container runtime tools** — adapters can declare pinned runtime
+  executables. Skylos includes a digest-verified static ripgrep executable for
+  grep verification; Vulture requires none.
 
 ## [0.1.1] - 2026-08-21
 

@@ -31,44 +31,33 @@ point*: pre-triage, triage, or post-triage (§10).
 - The detector is obtained by cloning its repository and installing the base and head refs
   into two isolated cached virtualenvs (`uv pip` when on `PATH`, stdlib `venv` + `pip`
   fallback). Escape hatch: `--old-cmd`/`--new-cmd` point at pre-built executables.
-- Container mode (`--container`, opt-in): the same managed comparison with the build and
-  analysis steps moved into Docker. Each ref installs into a fingerprint-keyed
-  environment image (repository, resolved SHA, adapter build-recipe hash, exact builder
-  and runtime image references, exact static ripgrep identity, Docker runtime identity)
-  built offline with a multi-stage `docker build --network none`. A digest-pinned
-  development image prefetches the wheelhouse and builds a virtual environment; after
-  capturing its package freeze and removing `pip`, the build copies that environment,
-  freeze, and a separately digest-verified static ripgrep binary into the matching
-  digest-pinned distroless runtime. Ripgrep preserves Skylos's safe verification pass;
-  both its official architecture-specific release archive and extracted executable are
-  SHA-256 checked in the network-enabled fetch step. Wheels therefore match the runtime
-  platform rather than the host, while the final image inherits no builder shell or
-  package manager. The two refs are fetched into
-  **separate per-side wheelhouses**, base first; the head fetch then mounts the base
-  wheelhouse **read-only** as a `--find-links` source, so the shared dependency closure is
-  downloaded only once while the base image is built from the base wheelhouse alone. The
-  head wheelhouse holds only the names the base side does not already own. A fetch step
-  runs untrusted third-party build hooks (a detector ref's declared dependencies are
-  ref-controlled), so this keeps a head-side hook from forging a wheel under a base
-  dependency's name and thereby poisoning the base image and the independent-reference
-  comparison. Each fetch container writes only into a fresh staging directory whose every
-  promoted entry is validated as a regular, non-symlink file (and any base-owned name is
-  dropped) before promotion into that side's wheelhouse, and build-context assembly
-  re-validates and never follows symlinks — a build hook must not be able to make the host
-  dereference a planted link (§11). Every detector invocation then executes in its own
-  named **ephemeral** container started from that side's image with networking disabled
-  and a per-invocation workspace under a per-side bind mount (so neither side's untrusted
-  code can reach the other's checkout copies). The runner force-removes that container in
-  the invocation's `finally`, after detector completion or timeout and before deleting the
-  writable workspace. The analysis context tracks and reaps any leftover before the
-  manifest is assembled or report output is rendered or written; when analysis succeeded,
-  a removal the daemon cannot confirm fails the run instead of allowing output. Images are
-  cached by the Docker image store (which also serializes concurrent builds of a tag);
-  `--fresh` forces `--no-cache` rebuilds, and paired same-run delta resolution applies
-  unchanged. The `docker` CLI is a host requirement of this mode only, probed at run
-  time, driven exclusively through the audited launcher (§11), and never a Python
-  dependency (§17). Operator-supplied native helper executables (§4 `passthrough_env`)
-  are refused in this mode: a host binary cannot run inside the container.
+- Container mode (`--container`, opt-in) moves the same managed build and analysis into
+  Docker:
+  - **Images:** each ref installs into a fingerprint-keyed environment image. The key
+    covers the repository and resolved SHA, adapter build recipe, exact builder and
+    runtime image references, adapter-declared runtime artifacts, and Docker identity.
+    Builder and runtime images must report matching Python versions and architectures,
+    and the result must expose the managed virtual-environment interpreter. An offline
+    multi-stage `docker build --network none` installs the detector as a non-root user,
+    captures its package freeze, removes `pip`, and copies the environment into the
+    runtime. The default builder and distroless runtime are digest-pinned Chainguard
+    images. Adapter-declared runtime executables come from pinned artifacts whose archive
+    and extracted executable are SHA-256 checked before the build.
+  - **Dependency provenance:** base and head use separate wheelhouses. The head fetch may
+    reuse the base wheelhouse read-only, but the base image consumes only base-owned
+    artifacts and the head wheelhouse cannot replace their names. Fetch promotion and
+    build-context assembly accept only regular, non-symlink files and never follow a
+    planted link into the host filesystem (§11).
+  - **Execution and cleanup:** each invocation runs without networking in a named,
+    hardened container with only its side's workspace mounted (§11). The container is
+    force-removed after completion or timeout and before its workspace is deleted. All
+    tracked containers must be reaped before output; if Docker cannot confirm removal
+    after otherwise successful analysis, the run fails closed.
+  - **Caching and compatibility:** Docker images are cached; `--fresh` bypasses the build
+    cache, while paired same-run dependency resolution is unchanged. The Docker CLI and
+    image-override requirements are specified in §12 and §17. Operator-supplied native
+    helper executables (§4 `passthrough_env`) are refused because host binaries cannot run
+    inside the container.
 - Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
   statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and

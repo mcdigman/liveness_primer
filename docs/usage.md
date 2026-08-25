@@ -117,8 +117,9 @@ evidence-producing review job. For a semantics-preserving refactor,
 
 ## Run inside Docker containers
 
+For stronger containment of untrusted detector revisions,
 `--container` moves the build and execution of both detector revisions into
-ephemeral Docker containers:
+separate ephemeral Docker containers:
 
 ```bash
 liveness-primer run --tool vulture \
@@ -129,42 +130,33 @@ liveness-primer run --tool vulture \
   --container
 ```
 
-Each revision installs into a fingerprint-cached environment image built
-offline (`docker build --network none`) with digest-pinned Chainguard Python
-images: `latest-dev` fetches dependencies and builds a virtual environment,
-then that environment and its captured package freeze enter the minimal
-`latest` runtime. Adapters declare additional runtime executables: Skylos adds
-a digest-verified static ripgrep binary for its safe grep-verification pass,
-while Vulture adds none. Ripgrep's architecture-specific official release
-archive and extracted executable are both SHA-256 checked during the
-network-enabled fetch phase. After the initial `/liveness` setup, detector
-installation and untrusted build hooks run as UID/GID 65532 rather than root.
-`pip` is removed before the copy, and the runtime contains no shell or package
-manager from the builder. The two revisions are
-fetched into separate wheelhouses — base first, then head reusing the base
-wheelhouse read-only so the shared dependencies download only once — and the
-base image builds from the base wheelhouse alone, so an untrusted head-side
-build hook cannot forge a wheel into the base build. Every detector invocation
-then executes in its own named, hardened container — networking disabled,
-running as the invoking user with all capabilities dropped, a PID limit, and a
-read-only root filesystem, with only its side's workspaces mounted. Its
-container is force-removed before the writable workspace is deleted, including
-on timeout; the run reaps any leftover before report output. A removal Docker
-cannot confirm fails the run, and container isolation is recorded as enforced
-on every host platform.
+Container mode uses digest-pinned Chainguard Python images in a
+[multi-stage build](https://edu.chainguard.dev/chainguard/containers/about/differences-development-production/).
+A development image fetches dependencies and builds the detector environment;
+the resulting virtual environment is then copied into a minimal distroless
+runtime. With the default images, detector invocations run without network
+access, `pip`, a shell, or a package manager, and with a read-only root
+filesystem.
 
-The mode requires a running Docker daemon, probed at run start.
-`--container-builder-image IMAGE` and `--container-image IMAGE` override the
-builder and runtime respectively and require `--container`; custom images must
-provide matching Python versions and architectures. Both are probed before a
-cached environment is accepted or built, and every result must expose the
-exact managed virtual-environment interpreter. The manifest records the
-runtime's platform tag rather than the host's. For Skylos, the runtime
-architecture must be `x86_64` or `aarch64`, for which pinned static ripgrep
-release artifacts are available. `--fresh` forces image rebuilds.
-The mode cannot combine with `--old-cmd`/`--new-cmd`, and operator-supplied
-native helper executables (such as `SKYLOS_GO_BIN`) are refused: a host binary
-cannot run inside the container.
+Base and head dependencies are kept separate so an untrusted head build cannot
+alter the base environment. Shared dependencies may still be reused read-only.
+Each invocation sees only its revision's workspace and runs in a named
+container that is force-removed before output is written, including after a
+timeout. If Docker cannot confirm removal, the run fails.
+
+Container mode requires the Docker CLI and a running Docker daemon. The
+following compatibility rules apply:
+
+- `--container-builder-image IMAGE` and `--container-image IMAGE` select custom
+  images and require `--container`. The images must provide matching Python
+  versions and architectures. They still use the multi-stage build, but a
+  custom runtime may include tools omitted from the default distroless image.
+- Skylos container runs support `x86_64` and `aarch64`, the architectures for
+  which its pinned ripgrep executable is available.
+- `--fresh` forces image rebuilds.
+- `--old-cmd` and `--new-cmd` cannot be combined with `--container`.
+- Host executables supplied through variables such as `SKYLOS_GO_BIN` are not
+  supported because they cannot run inside the container.
 
 ## Use pre-built detector commands
 
