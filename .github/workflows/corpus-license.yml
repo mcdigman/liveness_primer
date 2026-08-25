@@ -1,0 +1,78 @@
+name: Corpus licenses
+
+# Contract §6: verify declared licenses through authenticated GitHub API
+# requests. Pull requests supply only the corpus YAML; the workflow and
+# executable checker always come from the repository's default branch.
+on:
+  push:
+    branches: [main]
+    paths:
+      - liveness_primer/data/corpus.yaml
+      - .github/workflows/corpus-license.yml
+  pull_request_target:
+    paths: [liveness_primer/data/corpus.yaml]
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-license-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+permissions:
+  contents: read
+
+jobs:
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      # For pull_request_target, github.sha is the exact default-branch commit,
+      # not either endpoint of the pull request. Never check out the PR head in
+      # this credentialed workflow.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # The immutable PR-head blob is untrusted input, not executable code.
+      # This unauthenticated download deliberately precedes the token-bearing
+      # checker step and writes to a runner-owned path.
+      - name: Download proposed corpus as data
+        if: github.event_name == 'pull_request_target'
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          curl --fail --location --silent --show-error \
+            --max-filesize 1048576 \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --output "$RUNNER_TEMP/proposed-corpus.yaml" \
+            "https://raw.githubusercontent.com/${HEAD_REPOSITORY}/${HEAD_SHA}/liveness_primer/data/corpus.yaml"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Install trusted project with the license extra
+        run: |
+          uv venv
+          uv pip install ".[license]"
+
+      - name: Verify proposed licenses via the GitHub API
+        if: github.event_name == 'pull_request_target'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          .venv/bin/liveness-primer corpus license-check
+          --corpus "$RUNNER_TEMP/proposed-corpus.yaml"
+
+      - name: Verify licenses via the GitHub API
+        if: github.event_name != 'pull_request_target'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/liveness-primer corpus license-check
