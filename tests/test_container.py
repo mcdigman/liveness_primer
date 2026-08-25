@@ -967,6 +967,24 @@ def test_adapter_can_stage_two_distinct_runtime_binaries(
     assert 'helper-tool 1.0 (aarch64; executable helper)' in pair.installer_identity
 
 
+def test_runtime_binary_registry_rejects_an_unsupported_executable(
+    tmp_path: Path,
+    detector_repo: DetectorRepo,
+) -> None:
+    helper = cast('RuntimeBinary', 'helper')
+    adapter = VultureAdapter()
+    adapter.runtime_binaries = cast('tuple[RuntimeBinary, ...]', (helper,))
+    docker = FakeDocker()
+
+    with (
+        pytest.raises(ContainerError, match="container runtime binary 'helper' has no pinned artifact"),
+        environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', adapter),
+    ):
+        pass
+    assert docker.ripgrep_prefetches == []
+    assert docker.built == []
+
+
 def test_runtime_binary_registry_rejects_a_mismatched_executable(
     tmp_path: Path,
     detector_repo: DetectorRepo,
