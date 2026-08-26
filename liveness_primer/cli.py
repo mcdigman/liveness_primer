@@ -689,6 +689,15 @@ def _command_validate(args: argparse.Namespace) -> int:
 def _command_license_check(args: argparse.Namespace) -> int:
     """Execute ``corpus license-check`` (contract §6, §12).
 
+    The corpus is parsed without tool-name validation: the check reads only
+    each entry's name, repository, and declared license, and in CI it runs
+    against a *proposed* corpus file under default-branch code whose adapter
+    registry need not know the tools that file names (§11 trust boundary).
+    Rejecting unknown tools is ``corpus validate``'s job, which runs against
+    the code that introduces them. Host and allowlist rules are re-applied
+    per entry by the checker itself, so nothing this command relies on goes
+    unverified.
+
     Parameters
     ----------
     args : argparse.Namespace
@@ -699,7 +708,7 @@ def _command_license_check(args: argparse.Namespace) -> int:
     int
         0 when every declared license is confirmed.
     """
-    corpus = load_corpus(args.corpus, known_tools=adapter_names(), known_analyses=adapter_analyses())
+    corpus = load_corpus(args.corpus)
     results = check_licenses(corpus.projects, token=os.environ.get('GITHUB_TOKEN'))
     for result in results:
         marker = 'ok  ' if result.ok else 'FAIL'

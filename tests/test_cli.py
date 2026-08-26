@@ -515,6 +515,17 @@ projects:
 """.format(pin='a' * 40)
 
 
+UNKNOWN_TOOL_CORPUS_YAML = """
+projects:
+  - name: alpha
+    repo: https://github.com/example/alpha
+    license: MIT
+    pin: {pin}
+    tools:
+      culler: {{}}
+""".format(pin='a' * 40)
+
+
 def write_corpus(tmp_path: Path, content: str = CORPUS_YAML) -> Path:
     corpus_file = tmp_path / 'corpus.yaml'
     atomic_write_text(corpus_file, content)
@@ -580,6 +591,29 @@ def test_corpus_license_check_failure(
     monkeypatch.setattr(liveness_primer.cli, 'check_licenses', fake_check)
     assert main(['corpus', 'license-check', '--corpus', str(corpus_file)]) == EXIT_FAILURE
     assert 'FAIL beta' in capsys.readouterr().out
+
+
+def test_corpus_license_check_accepts_unknown_tool(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus_file = write_corpus(tmp_path, UNKNOWN_TOOL_CORPUS_YAML)
+    seen: list[str] = []
+
+    def fake_check(projects: tuple[CorpusProject, ...], *, token: str | None = None) -> tuple[LicenseCheckResult, ...]:
+        del token
+        seen.extend(project.name for project in projects)
+        return (license_result('alpha', ok=True),)
+
+    monkeypatch.setattr(liveness_primer.cli, 'check_licenses', fake_check)
+    # The proposed corpus may name adapters this build lacks: in CI the file
+    # comes from a pull request and the checker from the default branch (§11).
+    assert main(['corpus', 'license-check', '--corpus', str(corpus_file)]) == EXIT_OK
+    assert seen == ['alpha']
+    # `corpus validate` still owns the tool-name gate, against the PR's code.
+    assert main(['corpus', 'validate', '--corpus', str(corpus_file)]) == EXIT_FAILURE
+    assert 'culler' in capsys.readouterr().err
 
 
 def test_schema_export_command(
