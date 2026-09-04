@@ -16,11 +16,11 @@ projects:
       vulture:
         targets:
           - src
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - src
-        cost: 6.0
+        cost: 2.0
 
   - name: click
     repo: https://github.com/pallets/click
@@ -30,11 +30,11 @@ projects:
       vulture:
         targets:
           - src/click
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - src/click
-        cost: 11.0
+        cost: 3.0
 
   - name: jinja
     repo: https://github.com/pallets/jinja
@@ -44,11 +44,11 @@ projects:
       vulture:
         targets:
           - src/jinja2
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - src/jinja2
-        cost: 19.0
+        cost: 4.0
 
   - name: rich
     repo: https://github.com/Textualize/rich
@@ -58,11 +58,11 @@ projects:
       vulture:
         targets:
           - rich
-        cost: 5.0
+        cost: 1.0
       skylos:
         targets:
           - rich
-        cost: 38.0
+        cost: 5.0
 
   - name: pluggy
     repo: https://github.com/pytest-dev/pluggy
@@ -90,7 +90,7 @@ projects:
       skylos:
         targets:
           - more_itertools
-        cost: 3.5
+        cost: 2.0
 
   - name: platformdirs
     repo: https://github.com/tox-dev/platformdirs
@@ -104,7 +104,7 @@ projects:
       skylos:
         targets:
           - src/platformdirs
-        cost: 2.5
+        cost: 2.0
 
   - name: httpx
     repo: https://github.com/encode/httpx
@@ -114,11 +114,11 @@ projects:
       vulture:
         targets:
           - httpx
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - httpx
-        cost: 5.5
+        cost: 2.0
 
   # Shared with Skylos's pinned real-repository framework corpus.
   - name: pydantic
@@ -129,11 +129,11 @@ projects:
       vulture:
         targets:
           - pydantic
-        cost: 7.0
+        cost: 1.0
       skylos:
         targets:
           - pydantic
-        cost: 90.0
+        cost: 11.0
 
   - name: flask
     repo: https://github.com/pallets/flask
@@ -143,11 +143,11 @@ projects:
       vulture:
         targets:
           - src/flask
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - src/flask
-        cost: 13.0
+        cost: 3.0
 
   - name: pytest
     repo: https://github.com/pytest-dev/pytest
@@ -157,11 +157,11 @@ projects:
       vulture:
         targets:
           - src/_pytest
-        cost: 6.0
+        cost: 1.0
       skylos:
         targets:
           - src/_pytest
-        cost: 100.0
+        cost: 12.0
 
   # Parent of psf/black#5041, preserving four maintainer-accepted dead symbols.
   - name: black-pre-cleanup
@@ -172,11 +172,11 @@ projects:
       vulture:
         targets:
           - src/black
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - src/black
-        cost: 8.0
+        cost: 3.0
 
   - name: requests
     repo: https://github.com/psf/requests
@@ -186,11 +186,11 @@ projects:
       vulture:
         targets:
           - src/requests
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - src/requests
-        cost: 8.5
+        cost: 2.0
 
   # Parent of mitmproxy/mitmproxy#8136, preserving accepted dead-code removals.
   - name: mitmproxy-pre-cleanup
@@ -201,11 +201,11 @@ projects:
       vulture:
         targets:
           - mitmproxy
-        cost: 10.0
+        cost: 1.0
       skylos:
         targets:
           - mitmproxy
-        cost: 110.0
+        cost: 19.0
 
   # Shared with Skylos's pinned real-repository framework corpus.
   - name: starlette
@@ -216,11 +216,11 @@ projects:
       vulture:
         targets:
           - starlette
-        cost: 2.0
+        cost: 1.0
       skylos:
         targets:
           - starlette
-        cost: 10.0
+        cost: 4.0
 
   # javascript coverage
   - name: remark
@@ -229,11 +229,13 @@ projects:
     pin: 360840f0c0e4c8a274e525cc5d7fb4939d922b73
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         targets:
           - packages
-        cost: 12.0
+        cost: 2.0
 
   # go coverage
   - name: bubbletea
@@ -242,6 +244,8 @@ projects:
     pin: faf4dcf54a92bab2fe3bf6f4715adf44f2fc245d
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         analyses:
@@ -249,7 +253,7 @@ projects:
           - secrets
           - quality
           - ai-defects
-        cost: 20.0
+        cost: 18.0
 
   # numerical and scientific python
   - name: xarray
@@ -258,14 +262,14 @@ projects:
     pin: c2998a75ef32f6cf4d62cd946f2200ca953550d9
     tools:
       vulture:
-        cost: 3.0
+        cost: 4.0
       skylos:
         analyses:
           - danger
           - secrets
           - quality
           - ai-defects
-        cost: 140.0
+        cost: 83.0
 
   # sql and mock data coverage
   - name: meltano-sdk
@@ -286,7 +290,8 @@ projects:
           - ai-defects
         targets:
           - singer_sdk
-        cost: 40.0
+          - tests
+        cost: 20.0
 
   # numerical python
   - name: fluids
@@ -297,7 +302,7 @@ projects:
       vulture:
         targets:
           - fluids
-        cost: 2.0
+        cost: 1.0
       skylos:
         analyses:
           - danger
@@ -306,7 +311,7 @@ projects:
           - ai-defects
         targets:
           - fluids
-        cost: 60.0
+        cost: 21.0
 
   # sql injection coverage
   - name: todo
@@ -316,7 +321,7 @@ projects:
     tools:
       vulture:
         targets:
-          - src/todo/domain/status.py
+          - src/todo
         cost: 1.0
       skylos:
         analyses:
@@ -326,7 +331,7 @@ projects:
           - ai-defects
         targets:
           - src/todo
-        cost: 10.0
+        cost: 6.0
 
   # javascript and python coverage
   - name: copyparty
@@ -343,7 +348,7 @@ projects:
         targets:
           - copyparty/web
           - bin/hooks
-        cost: 10.0
+        cost: 3.0
 
   # rust and typescript coverage
   - name: headroom-rust
@@ -352,6 +357,9 @@ projects:
     pin: b77d61291399976985f12adcd6014aba2f0275cf
     include_tools:
       - skylos
+    # The scoped crates/ and sdk/ trees contain no Python files.
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         targets:
@@ -362,7 +370,7 @@ projects:
           - secrets
           - quality
           - ai-defects
-        cost: 80.0
+        cost: 32.0
 
   # java servlet coverage
   - name: verademo
@@ -371,6 +379,8 @@ projects:
     pin: d2d1a34119a6eba955a24ab2b7935fe94c1c7286
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         analyses:
@@ -380,7 +390,7 @@ projects:
           - ai-defects
         targets:
           - app/src/main/java
-        cost: 5.0
+        cost: 2.0
 
   # dart coverage
   - name: shelf
@@ -389,6 +399,8 @@ projects:
     pin: fb3f931d2c158d794e83c1b76b7be4b625db3c28
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         analyses:
@@ -397,7 +409,7 @@ projects:
           - ai-defects
         targets:
           - pkgs/_shelf_compliance
-        cost: 4.0
+        cost: 2.0
 
   # shell coverage
   - name: sdkman-cli
@@ -406,6 +418,8 @@ projects:
     pin: f02e5de113ea46a95e5e2fd795eabe6f2b7d4095
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         analyses:
@@ -424,6 +438,8 @@ projects:
     pin: 7b0678f7d2e3b44898d4c602b082835567332782
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         analyses:
@@ -433,7 +449,7 @@ projects:
           - ai-defects
         targets:
           - Src/Generator.Cli
-        cost: 6.0
+        cost: 2.0
 
   # kotlin coverage
   - name: ktor-samples
@@ -442,6 +458,8 @@ projects:
     pin: 69dcff3fa81daa85f936cfb7f17007761363c303
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         analyses:
@@ -451,7 +469,7 @@ projects:
         targets:
           - filelisting/src
           - httpbin/src
-        cost: 4.0
+        cost: 3.0
 
   # php coverage
   - name: slim
@@ -460,6 +478,8 @@ projects:
     pin: 80900fb39cafce3ae53b18a2c4f642a122f03095
     include_tools:
       - skylos
+    exclude_tools:
+      - vulture
     tools:
       skylos:
         analyses:
@@ -468,7 +488,7 @@ projects:
           - ai-defects
         targets:
           - Slim
-        cost: 4.0
+        cost: 3.0
 
   # pydantic consumer, real secrets and danger
   - name: elementary
@@ -480,6 +500,8 @@ projects:
     tools:
       vulture:
         cost: 1.0
+      skylos:
+        cost: 6.0
 
   # runtime-generated decorator wrappers
   - name: beartype
@@ -491,6 +513,8 @@ projects:
     tools:
       vulture:
         cost: 1.0
+      skylos:
+        cost: 14.0
 
   # Decorator and annotation-defined GraphQL schemas
   - name: strawberry
@@ -502,6 +526,8 @@ projects:
     tools:
       vulture:
         cost: 2.0
+      skylos:
+        cost: 16.0
 
   # settings-discovered components, signal handlers, middleware
   - name: scrapy
@@ -513,6 +539,8 @@ projects:
     tools:
       vulture:
         cost: 2.0
+      skylos:
+        cost: 17.0
 
   # Paired Python model code and Typescript implementation
   - name: bokeh
@@ -524,6 +552,8 @@ projects:
     tools:
       vulture:
         cost: 3.0
+      skylos:
+        cost: 55.0
 
   # Metadata-discovered cloud provider and service-check registries;
   # blocking vulture workflow enforces confidence 100.
@@ -545,7 +575,9 @@ projects:
         targets:
           - .
         expected_clean: true
-        cost: 14.0
+        cost: 11.0
+      skylos:
+        cost: 368.0
 
   # Dynamically selected visualization backends, observer-decorated
   # callbacks, maintained Vulture allowlist; mirrors [tool.vulture].
@@ -569,6 +601,8 @@ projects:
           - tools/vulture_allowlist.py
         expected_clean: true
         cost: 6.0
+      skylos:
+        cost: 62.0
 
   # Gateway plus plugin architecture with dynamically registered MCP tools
   - name: mcp-context-forge
@@ -588,7 +622,12 @@ projects:
           - mcpgateway
           - plugins
         expected_clean: true
-        cost: 16.0
+        cost: 4.0
+      skylos:
+        args:
+          - --exclude
+          - "mcp-servers/templates/python/{{cookiecutter.project_slug}}/tests/test_server.py"
+        cost: 264.0
 
   # OS-selected modules, extension-backed public APIs, registered exit
   # handlers; vulture target is maintained but non-blocking
@@ -608,6 +647,8 @@ projects:
         targets:
           - .
         cost: 1.0
+      skylos:
+        cost: 8.0
 
   # Scale target: ~1,500 tracked Python files.
   - name: pandas
@@ -621,6 +662,8 @@ projects:
         args:
           - --min-confidence=100
         cost: 13.0
+      skylos:
+        cost: 168.0
 
   # Widgets, layouts, and hooks wired through @expose_command and
   # hook.subscribe rather than direct calls. Has [tool.vulture]
@@ -637,7 +680,12 @@ projects:
           - --exclude=test/configs/syntaxerr.py
         targets:
           - libqtile
-        cost: 2.0
+        cost: 1.0
+      skylos:
+        args:
+          - --exclude
+          - test/configs/syntaxerr.py
+        cost: 19.0
 
   # Whitelist-module semantics.
   # Mirrored sync/async hierarchies and command-table dispatch.
@@ -654,7 +702,9 @@ projects:
         targets:
           - redis
           - whitelist.py
-        cost: 3.0
+        cost: 2.0
+      skylos:
+        cost: 36.0
 
   # Self-hosting: Vulture's own AST visitor, config, reporting, built-in
   # whitelists, and the tests encoding its supported Python constructs.
@@ -672,6 +722,8 @@ projects:
           - tests/
         expected_clean: true
         cost: 1.0
+      skylos:
+        cost: 2.0
 
   # Self-hosting liveness_primer itself: invocation builder,
   # detector parsers, diffing, runner backends, reporting, and their tests.
@@ -690,4 +742,4 @@ projects:
           - liveness_primer
           - tests
         expected_clean: true
-        cost: 12.0
+        cost: 4.0
