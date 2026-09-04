@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.15"
+  PYTHON_VERSION: "3.14"
 
 # All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the
 # default token to read-only.
@@ -26,7 +26,7 @@ jobs:
     # Fast, current-Python gate on every push/PR. The full declared-support
     # matrix (below) is heavier and runs only on PRs to main and the weekly cron,
     # so routine commits are not slowed down. Skipped on the cron run because the
-    # matrix already covers 3.15 there.
+    # matrix already covers 3.14 there.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -109,9 +109,16 @@ jobs:
             resolution: highest
           - python-version: "3.14"
             resolution: highest
+          # Candidate for the next declared-support version. uv currently
+          # resolves "3.15" to a release candidate, so this entry tracks the
+          # upcoming Python early without letting an upstream prerelease
+          # regression block merges: it is advisory until 3.15.0 final ships,
+          # at which point drop `experimental` and promote PYTHON_VERSION.
           - python-version: "3.15"
             resolution: highest
+            experimental: true
     name: py${{ matrix.python-version }} (${{ matrix.resolution }})
+    continue-on-error: ${{ matrix.experimental || false }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
