@@ -27,7 +27,7 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           enable-cache: true
-          python-version: "3.14"
+          python-version: "3.15"
           cache-dependency-glob: "**/pyproject.toml"
 
       - name: Build sdist and wheel
@@ -54,7 +54,7 @@ jobs:
         include:
           - python-version: "3.12"
             resolution: lowest-direct
-          - python-version: "3.14"
+          - python-version: "3.15"
             resolution: highest
     name: install (py${{ matrix.python-version }}, ${{ matrix.resolution }})
     steps:
