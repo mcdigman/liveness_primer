@@ -125,20 +125,34 @@ jobs:
       - name: Import check
         run: .venv/bin/python -I -c "import liveness_primer"
 
+      # Enumerate the expectations from the installed package itself rather
+      # than from a list duplicated here: EXPORTED_MODELS names every schema
+      # the code loads, so adding a model extends this check automatically.
+      # Staleness is already gated by tests/test_schema_export.py against the
+      # source tree; what only an installed artifact can prove is that each
+      # declared file actually shipped.
       - name: Packaged data check
         run: |
           .venv/bin/python -I - <<'PY'
           from importlib.resources import files
 
+          from liveness_primer.config import default_corpus_path
+          from liveness_primer.schema_export import EXPORTED_MODELS, schemas_dir
+
           root = files('liveness_primer')
-          missing = []
+          schemas = schemas_dir()
+          missing = [
+              f'schemas/{name}.schema.json'
+              for name in EXPORTED_MODELS
+              if not (schemas / f'{name}.schema.json').is_file()
+          ]
           if not root.joinpath('py.typed').is_file():
               missing.append('py.typed')
-          for subdir, suffix in (('schemas', '.schema.json'), ('tools', '.toml'), ('data', '.yaml')):
-              entry = root.joinpath(subdir)
-              if not entry.is_dir() or not any(child.name.endswith(suffix) for child in entry.iterdir()):
-                  missing.append(f'{subdir}/*{suffix}')
+          if not default_corpus_path().is_file():
+              missing.append('data/corpus.yaml')
+          if not root.joinpath('tools').joinpath('skylos_neutral_config.toml').is_file():
+              missing.append('tools/skylos_neutral_config.toml')
           if missing:
-              raise SystemExit(f"::error::sdist install is missing declared package data: {', '.join(missing)}")
-          print('declared package data is present')
+              raise SystemExit(f"::error::sdist install is missing declared package data: {', '.join(sorted(missing))}")
+          print(f'declared package data is present ({len(EXPORTED_MODELS)} schemas, corpus, skylos config, py.typed)')
           PY
