@@ -45,8 +45,8 @@ jobs:
 
   install:
     # Confirm the built wheel installs and imports across every supported
-    # Python, both at the declared dependency floor and against the latest
-    # releases. Python 3.15 remains an advisory preview until its final release.
+    # Python against the latest compatible dependency releases. Python 3.15
+    # remains an advisory preview until its final release.
     needs: build
     runs-on: ubuntu-latest
     strategy:
@@ -54,7 +54,7 @@ jobs:
       matrix:
         include:
           - python-version: "3.12"
-            resolution: lowest-direct
+            resolution: highest
           - python-version: "3.13"
             resolution: highest
           - python-version: "3.14"

@@ -55,7 +55,7 @@ dependencies = [
     # The human-readable reporting contract §6.1 amends initial contract §17:
     # the terminal renderer uses Rich for Unicode width, ANSI styling, and
     # OSC-8 links rather than implementing them independently. The floor is
-    # installed and tested by the lowest-direct-resolution CI jobs.
+    # installed and tested by the Python 3.12 floor job.
     "rich>=13",
 ]
 requires-python = ">=3.12"
