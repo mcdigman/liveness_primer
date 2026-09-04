@@ -1350,25 +1350,57 @@ def test_container_run_stages_the_skylos_neutral_config(
         assert 'SKYLOS_GREP_BUDGET=150' in argv
 
 
-def test_container_run_refuses_native_helper_passthrough(tmp_path: Path) -> None:
-    # A host executable cannot run inside the Linux container, so admitting
-    # one would silently degrade both sides' analysis (contract §3).
+def test_container_run_stages_native_helper_for_both_sides(
+    tmp_path: Path,
+    corpus_project: CorpusProject,
+    fake_detector_repo: str,
+) -> None:
+    # The admitted helper is pinned into both images and each invocation
+    # receives its container-side path (contract §3, §11).
     engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    digest = hashlib.sha256(engine.read_bytes()).hexdigest()
     docker = FakeDocker()
     environments = ContainerEnvironments(CheckoutStore(tmp_path / 'cache'), tmp_path / 'cache', docker=docker)
+    exec_argvs: list[tuple[str, ...]] = []
+
+    async def docker_exec_launcher(
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> LaunchResult:
+        del cwd, env
+        await asyncio.sleep(0)
+        exec_argvs.append(tuple(argv))
+        return LaunchResult(
+            argv=tuple(argv), returncode=0, stdout='{}', stderr='', duration_seconds=0.0, timed_out=False
+        )
+
     runner = PrimerRunner(
         adapter=get_adapter('skylos'),
         store=CheckoutStore(tmp_path / 'cache'),
         isolation=CONTAINER_ISOLATION,
         options=DEFAULT_OPTIONS,
+        async_launcher=docker_exec_launcher,
         environ={'SKYLOS_GO_BIN': str(engine)},
     )
-    with pytest.raises(RunnerError, match=r'SKYLOS_GO_BIN.*not supported in --container mode'):
-        runner.run_container(
-            [],
-            detector_repo='https://example.invalid/repo',
-            base_ref='a',
-            head_ref='b',
-            environments=environments,
-        )
-    assert docker.events == []
+    report = runner.run_container(
+        [corpus_project],
+        detector_repo=fake_detector_repo,
+        base_ref='base-branch',
+        head_ref='head-branch',
+        environments=environments,
+    )
+
+    assert not report_has_failures(report)
+    assert len(exec_argvs) == 2
+    for argv in exec_argvs:
+        assert 'SKYLOS_GO_BIN=/liveness/native-tools/SKYLOS_GO_BIN' in argv
+    for names, dockerfile in docker.built_contexts:
+        assert 'native-tools/SKYLOS_GO_BIN' in names
+        assert 'COPY native-tools/SKYLOS_GO_BIN /liveness/native-tools/SKYLOS_GO_BIN' in dockerfile
+    (record,) = report.manifest.native_tools
+    assert record.variable == 'SKYLOS_GO_BIN'
+    assert record.sha256 == digest
+    assert report.manifest.installer is not None
+    assert report.manifest.installer.endswith(f'SKYLOS_GO_BIN sha256:{digest}')

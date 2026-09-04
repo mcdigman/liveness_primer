@@ -176,6 +176,10 @@ CONTAINER_WORK_ROOT = PurePosixPath('/liveness/work')
 # keeps it distinct from host filesystem paths governed by tempfile.
 CONTAINER_TMP_ROOT = PurePosixPath('/') / 'tmp'
 
+# Container-side directory for operator-supplied native helpers. The helper's
+# adapter-declared variable becomes its filename and points here at runtime.
+CONTAINER_NATIVE_TOOL_ROOT = PurePosixPath('/liveness/native-tools')
+
 _DOCKER_TIMEOUT = 1800.0
 
 # Cache-format / security revision of the environment image. Bump whenever the
@@ -235,6 +239,7 @@ FROM {runtime_image}
 COPY --from=builder /liveness/venv /liveness/venv
 COPY --from=builder /liveness/freeze.txt /liveness/freeze.txt
 {runtime_binary_copies}
+{native_tool_copies}
 ENV PATH="/liveness/venv/bin:$PATH"
 ENTRYPOINT []
 """
@@ -242,6 +247,35 @@ ENTRYPOINT []
 
 class ContainerError(LivenessPrimerError):
     """Raised when the Docker runtime cannot prepare or run an environment."""
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerNativeTool:
+    """One admitted native helper to snapshot into both images.
+
+    Attributes
+    ----------
+    variable : str
+        Adapter-declared environment variable carrying the helper.
+    source : Path
+        Admitted host executable to snapshot.
+    sha256 : str
+        Digest recorded when the helper was admitted.
+    """
+
+    variable: str
+    source: Path
+    sha256: str
+
+    @property
+    def container_path(self) -> PurePosixPath:
+        """Helper path inside an environment image."""
+        return CONTAINER_NATIVE_TOOL_ROOT / self.variable
+
+    @property
+    def identity(self) -> str:
+        """Helper identity used by fingerprints and manifests."""
+        return f'{self.variable} sha256:{self.sha256}'
 
 
 def _validate_cache_directory(path: Path) -> None:
@@ -447,6 +481,7 @@ def container_fingerprint(
     builder_image: str,
     runtime_image: str,
     runtime_binary_identities: tuple[str, ...],
+    native_tool_identities: tuple[str, ...] = (),
 ) -> str:
     """Compute the environment fingerprint of one containerized ref (contract §3).
 
@@ -467,6 +502,8 @@ def container_fingerprint(
     runtime_binary_identities : tuple[str, ...]
         Version, architecture, and exact binary digest of every
         adapter-declared runtime utility.
+    native_tool_identities : tuple[str, ...]
+        Variable and exact digest of every admitted native helper.
 
     Returns
     -------
@@ -486,6 +523,7 @@ def container_fingerprint(
             'runtime': docker_identity,
             'runtime_image': runtime_image,
             'runtime_binaries': runtime_binary_identities,
+            'native_tools': native_tool_identities,
         },
         sort_keys=True,
     )
@@ -621,6 +659,29 @@ def stage_static_binary(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
     destination.chmod(0o555)
+
+
+def stage_container_native_tool(tool: ContainerNativeTool, destination: Path) -> None:
+    """Snapshot and revalidate one admitted helper in a build context.
+
+    Parameters
+    ----------
+    tool : ContainerNativeTool
+        Admitted helper and its comparison-constant digest.
+    destination : Path
+        Build-context path to create.
+
+    Raises
+    ------
+    ContainerError
+        If the helper changed after admission.
+    """
+    stage_static_binary(tool.source, destination)
+    with destination.open('rb') as stream:
+        actual_digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    if actual_digest != tool.sha256:
+        msg = f'native helper {tool.variable} changed after admission: expected {tool.sha256}, got {actual_digest}'
+        raise ContainerError(msg)
 
 
 def _validate_prefetched_binary(path: Path, expected_digest: str) -> None:
@@ -1505,6 +1566,7 @@ class ContainerEnvironments:
         checkout: Path,
         wheelhouses: Sequence[Path],
         runtime_binaries: Mapping[RuntimeBinary, Callable[[], Path]],
+        native_tools: tuple[ContainerNativeTool, ...],
     ) -> None:
         """Build one environment image from an offline context (build step, §3, §11).
 
@@ -1521,6 +1583,8 @@ class ContainerEnvironments:
         runtime_binaries : Mapping[RuntimeBinary, Callable[[], Path]]
             Lazy providers of the adapter-declared, verified static binaries
             shared by both side builds.
+        native_tools : tuple[ContainerNativeTool, ...]
+            Admitted helpers to snapshot identically into both side images.
 
         Raises
         ------
@@ -1539,12 +1603,18 @@ class ContainerEnvironments:
             stage_wheelhouses(wheelhouses, context / 'wheelhouse')
             for binary, provider in runtime_binaries.items():
                 stage_static_binary(provider(), context / 'tools' / binary)
+            for tool in native_tools:
+                stage_container_native_tool(tool, context / 'native-tools' / tool.variable)
             runtime_binary_copies = '\n'.join(f'COPY tools/{binary} /usr/bin/{binary}' for binary in runtime_binaries)
+            native_tool_copies = '\n'.join(
+                f'COPY native-tools/{tool.variable} {tool.container_path}' for tool in native_tools
+            )
             dockerfile = _DOCKERFILE.format(
                 builder_image=self._builder_image,
                 runtime_image=self._runtime_image,
                 build_user=_BUILD_USER,
                 runtime_binary_copies=runtime_binary_copies,
+                native_tool_copies=native_tool_copies,
             )
             (context / 'Dockerfile').write_text(dockerfile, encoding='utf-8')
             self._docker.build_image(tag, context, fresh=self._fresh)
@@ -1558,6 +1628,7 @@ class ContainerEnvironments:
         fingerprint: str,
         wheelhouses: Callable[[], Sequence[Path]],
         runtime_binaries: Mapping[RuntimeBinary, Callable[[], Path]],
+        native_tools: tuple[ContainerNativeTool, ...],
         expected_python_version: str,
         force_rebuild: bool,
     ) -> ContainerEnvHandle:
@@ -1578,6 +1649,8 @@ class ContainerEnvironments:
             its fetch on first build.
         runtime_binaries : Mapping[RuntimeBinary, Callable[[], Path]]
             Lazy providers of the verified static runtime binaries.
+        native_tools : tuple[ContainerNativeTool, ...]
+            Admitted helpers to snapshot into the image.
         expected_python_version : str
             Version the builder and runtime image preflight both reported.
         force_rebuild : bool
@@ -1599,7 +1672,7 @@ class ContainerEnvironments:
         if not cached:
             houses = wheelhouses()
             checkout = self._store.materialize(repo, sha)
-            self._build(tag, checkout, houses, runtime_binaries)
+            self._build(tag, checkout, houses, runtime_binaries, native_tools)
         environment_python_version = self._docker.environment_python_version(tag)
         if environment_python_version != expected_python_version:
             msg = (
@@ -1619,7 +1692,13 @@ class ContainerEnvironments:
 
     @contextlib.contextmanager
     def prepare_pair(
-        self, repo: str, base_ref: str, head_ref: str, adapter: DetectorAdapter
+        self,
+        repo: str,
+        base_ref: str,
+        head_ref: str,
+        adapter: DetectorAdapter,
+        *,
+        native_tools: tuple[ContainerNativeTool, ...] = (),
     ) -> Iterator[PreparedContainerPair]:
         """Prepare both environment images and run their ephemeral containers (contract §3, §11).
 
@@ -1653,6 +1732,8 @@ class ContainerEnvironments:
             Head ref as requested on the CLI.
         adapter : DetectorAdapter
             Adapter of the tool under test.
+        native_tools : tuple[ContainerNativeTool, ...]
+            Operator-supplied helpers admitted before image preparation.
 
         Yields
         ------
@@ -1677,6 +1758,7 @@ class ContainerEnvironments:
             self._builder_image,
             self._runtime_image,
             image_pair.runtime_binary_identities,
+            tuple(tool.identity for tool in native_tools),
         )
         head_fingerprint = container_fingerprint(
             repo,
@@ -1686,6 +1768,7 @@ class ContainerEnvironments:
             self._builder_image,
             self._runtime_image,
             image_pair.runtime_binary_identities,
+            tuple(tool.identity for tool in native_tools),
         )
         pair_key = hashlib.sha256(f'{base_fingerprint}:{head_fingerprint}'.encode()).hexdigest()[:24]
         wheelhouse_root = self._cache_dir / 'wheelhouse-container'
@@ -1816,6 +1899,7 @@ class ContainerEnvironments:
                     fingerprint=base_fingerprint,
                     wheelhouses=base_wheelhouses,
                     runtime_binaries=runtime_binary_providers,
+                    native_tools=native_tools,
                     expected_python_version=image_pair.python_version,
                     force_rebuild=force,
                 ),
@@ -1826,6 +1910,7 @@ class ContainerEnvironments:
                     fingerprint=head_fingerprint,
                     wheelhouses=head_wheelhouses,
                     runtime_binaries=runtime_binary_providers,
+                    native_tools=native_tools,
                     expected_python_version=image_pair.python_version,
                     force_rebuild=force,
                 ),
@@ -1851,6 +1936,7 @@ class ContainerEnvironments:
                         f'builder {self._builder_image}',
                         f'runtime {self._runtime_image}',
                         *image_pair.runtime_binary_identities,
+                        *(tool.identity for tool in native_tools),
                     )
                 ),
                 python_version=image_pair.python_version,

@@ -24,6 +24,7 @@ from liveness_primer.container import (
     ContainerEnvironments,
     ContainerError,
     ContainerExecution,
+    ContainerNativeTool,
     DockerCli,
     DockerRuntime,
     StaticBinaryArtifact,
@@ -32,6 +33,7 @@ from liveness_primer.container import (
     image_tag,
     promote_prefetched,
     ripgrep_artifact_for,
+    stage_container_native_tool,
     stage_invocation_env_files,
     stage_static_binary,
     stage_wheelhouses,
@@ -344,6 +346,16 @@ def test_container_fingerprint_varies_by_inputs() -> None:
     assert base != container_fingerprint(
         'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:2',)
     )
+    assert base != container_fingerprint(
+        'https://r',
+        'a' * 40,
+        adapter,
+        'docker 27',
+        'builder:1',
+        'runtime:1',
+        ('ripgrep:1',),
+        ('SKYLOS_GO_BIN sha256:1234',),
+    )
 
 
 def test_container_fingerprint_tracks_the_cache_format(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -412,6 +424,25 @@ def test_stage_static_binaries_share_one_tools_directory(tmp_path: Path) -> None
     stage_static_binary(second, tools / 'second')
     assert (tools / 'first').read_bytes() == b'first'
     assert (tools / 'second').read_bytes() == b'second'
+
+
+def test_stage_container_native_tool_revalidates_the_admitted_digest(tmp_path: Path) -> None:
+    source = tmp_path / 'skylos-go'
+    atomic_write_bytes(source, b'go-engine')
+    source.chmod(0o755)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=digest)
+
+    destination = tmp_path / 'context' / 'native-tools' / tool.variable
+    stage_container_native_tool(tool, destination)
+    assert destination.read_bytes() == b'go-engine'
+    assert destination.stat().st_mode & 0o777 == 0o555
+    assert tool.container_path == PurePosixPath('/liveness/native-tools/SKYLOS_GO_BIN')
+    assert tool.identity == f'SKYLOS_GO_BIN sha256:{digest}'
+
+    atomic_write_bytes(source, b'changed-engine')
+    with pytest.raises(ContainerError, match='SKYLOS_GO_BIN changed after admission'):
+        stage_container_native_tool(tool, tmp_path / 'second-context' / tool.variable)
 
 
 def requirement_wheel(requirement: str) -> str:

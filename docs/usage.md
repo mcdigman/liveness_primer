@@ -155,8 +155,9 @@ following compatibility rules apply:
   which its pinned ripgrep executable is available.
 - `--fresh` forces image rebuilds.
 - `--old-cmd` and `--new-cmd` cannot be combined with `--container`.
-- Host executables supplied through variables such as `SKYLOS_GO_BIN` are not
-  supported because they cannot run inside the container.
+- Host executables supplied through variables such as `SKYLOS_GO_BIN` are
+  digest-pinned and copied into both environment images. They must be built
+  for the selected container platform.
 
 ## Use pre-built detector commands
 

@@ -26,6 +26,7 @@ from liveness_primer.config import CorpusProject, ToolSettings
 from liveness_primer.container import (
     ContainerEnvironments,
     ContainerExecution,
+    ContainerNativeTool,
     PreparedContainerPair,
     container_user,
     stage_invocation_env_files,
@@ -414,6 +415,9 @@ class PrimerRunner:
         # the identical binary.
         admitted = resolve_native_tools(adapter, os.environ if environ is None else environ)
         self._passthrough_env = {tool.variable: tool.path for tool in admitted}
+        self._container_native_tools = tuple(
+            ContainerNativeTool(variable=tool.variable, source=Path(tool.path), sha256=tool.sha256) for tool in admitted
+        )
         self._native_tools = tuple(tool.record() for tool in admitted)
         self._adapter = adapter
         self._store = store
@@ -990,17 +994,14 @@ class PrimerRunner:
         Report
             The blast radius.
 
-        Raises
-        ------
-        RunnerError
-            If an operator-supplied native helper was admitted: a host
-            executable cannot run inside the container.
         """
-        if self._passthrough_env:
-            names = ', '.join(sorted(self._passthrough_env))
-            msg = f'native helper passthrough ({names}) is not supported in --container mode'
-            raise RunnerError(msg)
-        with environments.prepare_pair(detector_repo, base_ref, head_ref, self._adapter) as pair:
+        with environments.prepare_pair(
+            detector_repo,
+            base_ref,
+            head_ref,
+            self._adapter,
+            native_tools=self._container_native_tools,
+        ) as pair:
             # Declared env files exist only on the host; each side gets an
             # identical copy under its mount, at one container-side path.
             env_files = stage_invocation_env_files(
@@ -1009,7 +1010,11 @@ class PrimerRunner:
             execution = ContainerExecution(
                 work_roots={'base': pair.base_work_root, 'head': pair.head_work_root},
                 images={'base': pair.base.image, 'head': pair.head.image},
-                invocation_env={**self._adapter.invocation_env, **env_files},
+                invocation_env={
+                    **self._adapter.invocation_env,
+                    **env_files,
+                    **{tool.variable: str(tool.container_path) for tool in self._container_native_tools},
+                },
                 docker=environments.runtime,
                 active_containers=pair.active_containers,
                 user=container_user(),
