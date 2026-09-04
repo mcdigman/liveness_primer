@@ -18,9 +18,14 @@ projects:
           - src
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - src
-        cost: 2.0
+        cost: 4.0
 
   - name: click
     repo: https://github.com/pallets/click
@@ -32,9 +37,14 @@ projects:
           - src/click
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - src/click
-        cost: 3.0
+        cost: 6.0
 
   - name: jinja
     repo: https://github.com/pallets/jinja
@@ -46,9 +56,14 @@ projects:
           - src/jinja2
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - src/jinja2
-        cost: 4.0
+        cost: 8.0
 
   - name: rich
     repo: https://github.com/Textualize/rich
@@ -74,9 +89,14 @@ projects:
           - src/pluggy
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - src/pluggy
-        cost: 2.0
+        cost: 3.0
 
   - name: more-itertools
     repo: https://github.com/more-itertools/more-itertools
@@ -88,9 +108,14 @@ projects:
           - more_itertools
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - more_itertools
-        cost: 2.0
+        cost: 5.0
 
   - name: platformdirs
     repo: https://github.com/tox-dev/platformdirs
@@ -102,9 +127,14 @@ projects:
           - src/platformdirs
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - src/platformdirs
-        cost: 2.0
+        cost: 3.0
 
   - name: httpx
     repo: https://github.com/encode/httpx
@@ -188,9 +218,14 @@ projects:
           - src/requests
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - src/requests
-        cost: 2.0
+        cost: 6.0
 
   # Parent of mitmproxy/mitmproxy#8136, preserving accepted dead-code removals.
   - name: mitmproxy-pre-cleanup
@@ -218,9 +253,14 @@ projects:
           - starlette
         cost: 1.0
       skylos:
+        analyses:
+          - danger
+          - secrets
+          - quality
+          - ai-defects
         targets:
           - starlette
-        cost: 4.0
+        cost: 7.0
 
   # javascript coverage
   - name: remark
