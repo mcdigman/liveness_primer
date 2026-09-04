@@ -44,8 +44,9 @@ jobs:
           if-no-files-found: error
 
   install:
-    # Confirm the package installs and imports both at the declared dependency
-    # and against the latest releases (modern Python + highest resolution).
+    # Confirm the built wheel installs and imports across every supported
+    # Python against the latest compatible dependency releases. Python 3.15
+    # remains an advisory preview until its final release.
     needs: build
     runs-on: ubuntu-latest
     strategy:
@@ -53,7 +54,9 @@ jobs:
       matrix:
         include:
           - python-version: "3.12"
-            resolution: lowest-direct
+            resolution: highest
+          - python-version: "3.13"
+            resolution: highest
           - python-version: "3.14"
             resolution: highest
           # Advisory candidate for the next declared-support version; see the
@@ -64,21 +67,23 @@ jobs:
     name: install (py${{ matrix.python-version }}, ${{ matrix.resolution }})
     continue-on-error: ${{ matrix.experimental || false }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          persist-credentials: false
+          name: dist
+          path: dist/
 
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-          cache-dependency-glob: "**/pyproject.toml"
+          cache-dependency-glob: "dist/*.whl"
 
-      - name: Install project (${{ matrix.resolution }} resolution)
+      - name: Install built wheel (${{ matrix.resolution }} resolution)
         run: |
           uv venv --python ${{ matrix.python-version }}
-          uv pip install --resolution ${{ matrix.resolution }} .
+          uv pip install --resolution ${{ matrix.resolution }} dist/*.whl
 
       - name: Import check
-        run: .venv/bin/python -c "import liveness_primer"
+        run: .venv/bin/python -I -c "import liveness_primer"
