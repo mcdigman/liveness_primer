@@ -56,7 +56,13 @@ jobs:
             resolution: lowest-direct
           - python-version: "3.14"
             resolution: highest
+          # Advisory candidate for the next declared-support version; see the
+          # matrix job in test.yml for why "3.15" is not blocking yet.
+          - python-version: "3.15"
+            resolution: highest
+            experimental: true
     name: install (py${{ matrix.python-version }}, ${{ matrix.resolution }})
+    continue-on-error: ${{ matrix.experimental || false }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
