@@ -29,7 +29,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
 from pathlib import Path, PurePosixPath
-from typing import Literal, Protocol, runtime_checkable
+from typing import BinaryIO, Literal, Protocol, runtime_checkable
 
 from filelock import BaseFileLock, FileLock, Timeout
 
@@ -181,6 +181,7 @@ CONTAINER_TMP_ROOT = PurePosixPath('/') / 'tmp'
 CONTAINER_NATIVE_TOOL_ROOT = PurePosixPath('/liveness/native-tools')
 
 _ELF_HEADER_PREFIX_BYTES = 20
+_NATIVE_TOOL_DIGEST_CHUNK_BYTES = 1_048_576
 _ELF64_LITTLE_ENDIAN_IDENT = b'\x7fELF\x02\x01\x01'
 _LINUX_ELF_OS_ABIS = frozenset({0, 3})
 _ELF_EXECUTABLE_TYPES = frozenset({2, 3})
@@ -693,36 +694,30 @@ def stage_static_binary(
     destination.chmod(0o555)
 
 
-def validate_container_native_tool_platform(tool: ContainerNativeTool, machine: str) -> None:
-    """Require an admitted helper to target the container architecture.
+def _native_tool_header_and_digest(stream: BinaryIO) -> tuple[bytes, str]:
+    header = stream.read(_ELF_HEADER_PREFIX_BYTES)
+    digest = hashlib.sha256(header)
+    for chunk in iter(lambda: stream.read(_NATIVE_TOOL_DIGEST_CHUNK_BYTES), b''):
+        digest.update(chunk)
+    return header, digest.hexdigest()
 
-    Parameters
-    ----------
-    tool : ContainerNativeTool
-        Admitted helper to inspect.
-    machine : str
-        Runtime image architecture.
 
-    Raises
-    ------
-    ContainerError
-        If the helper is not a supported Linux ELF executable for the
-        runtime image architecture.
-    """
+def _container_native_tool_target(machine: str) -> tuple[str, int]:
     architecture = _normalized_architecture(machine)
     expected_machine = _ELF_MACHINE_BY_ARCHITECTURE.get(architecture)
     if expected_machine is None:
         msg = f'container architecture {machine!r} cannot admit native helpers'
         raise ContainerError(msg)
+    return architecture, expected_machine
 
-    description = f'native helper {tool.variable}'
-    _require_regular_source(tool.source, description=description)
-    try:
-        with tool.source.open('rb') as stream:
-            header = stream.read(_ELF_HEADER_PREFIX_BYTES)
-    except OSError as error:
-        msg = f'cannot read {description}: {error}'
-        raise ContainerError(msg) from error
+
+def _validate_container_native_tool_header(
+    header: bytes,
+    *,
+    architecture: str,
+    expected_machine: int,
+    description: str,
+) -> None:
     if len(header) < _ELF_HEADER_PREFIX_BYTES:
         msg = f'{description} is not a supported 64-bit Linux ELF executable'
         raise ContainerError(msg)
@@ -744,13 +739,49 @@ def validate_container_native_tool_platform(tool: ContainerNativeTool, machine: 
         raise ContainerError(msg)
 
 
+def validate_container_native_tool_platform(tool: ContainerNativeTool, machine: str) -> None:
+    """Require admitted bytes to target the container architecture.
+
+    Parameters
+    ----------
+    tool : ContainerNativeTool
+        Admitted helper to inspect.
+    machine : str
+        Runtime image architecture.
+
+    Raises
+    ------
+    ContainerError
+        If the helper changed after admission or is not a supported Linux
+        ELF executable for the runtime image architecture.
+    """
+    architecture, expected_machine = _container_native_tool_target(machine)
+    description = f'native helper {tool.variable}'
+    _require_regular_source(tool.source, description=description)
+    try:
+        with tool.source.open('rb') as stream:
+            header, actual_digest = _native_tool_header_and_digest(stream)
+    except OSError as error:
+        msg = f'cannot read {description}: {error}'
+        raise ContainerError(msg) from error
+    if actual_digest != tool.sha256:
+        msg = f'{description} changed after admission: expected {tool.sha256}, got {actual_digest}'
+        raise ContainerError(msg)
+    _validate_container_native_tool_header(
+        header,
+        architecture=architecture,
+        expected_machine=expected_machine,
+        description=description,
+    )
+
+
 def _validate_container_native_tool_platforms(tools: tuple[ContainerNativeTool, ...], machine: str) -> None:
     """Validate every admitted helper against one container architecture."""
     for tool in tools:
         validate_container_native_tool_platform(tool, machine)
 
 
-def stage_container_native_tool(tool: ContainerNativeTool, destination: Path) -> None:
+def stage_container_native_tool(tool: ContainerNativeTool, destination: Path, *, machine: str) -> None:
     """Snapshot and revalidate one admitted helper in a build context.
 
     Parameters
@@ -759,18 +790,29 @@ def stage_container_native_tool(tool: ContainerNativeTool, destination: Path) ->
         Admitted helper and its comparison-constant digest.
     destination : Path
         Build-context path to create.
+    machine : str
+        Runtime image architecture.
 
     Raises
     ------
     ContainerError
-        If the helper changed after admission.
+        If the helper changed after admission or its staged bytes are not a
+        supported Linux ELF executable for the runtime image architecture.
     """
+    architecture, expected_machine = _container_native_tool_target(machine)
+    description = f'native helper {tool.variable}'
     stage_static_binary(tool.source, destination, source_description=f'native helper {tool.variable}')
     with destination.open('rb') as stream:
-        actual_digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        header, actual_digest = _native_tool_header_and_digest(stream)
     if actual_digest != tool.sha256:
-        msg = f'native helper {tool.variable} changed after admission: expected {tool.sha256}, got {actual_digest}'
+        msg = f'{description} changed after admission: expected {tool.sha256}, got {actual_digest}'
         raise ContainerError(msg)
+    _validate_container_native_tool_header(
+        header,
+        architecture=architecture,
+        expected_machine=expected_machine,
+        description=description,
+    )
 
 
 def _validate_prefetched_binary(path: Path, expected_digest: str) -> None:
@@ -1658,6 +1700,7 @@ class ContainerEnvironments:
         wheelhouses: Sequence[Path],
         runtime_binaries: Mapping[RuntimeBinary, Callable[[], Path]],
         native_tools: tuple[ContainerNativeTool, ...],
+        machine: str,
     ) -> None:
         """Build one environment image from an offline context (build step, §3, §11).
 
@@ -1676,6 +1719,8 @@ class ContainerEnvironments:
             shared by both side builds.
         native_tools : tuple[ContainerNativeTool, ...]
             Admitted helpers to snapshot identically into both side images.
+        machine : str
+            Runtime image architecture.
 
         Raises
         ------
@@ -1695,7 +1740,11 @@ class ContainerEnvironments:
             for binary, provider in runtime_binaries.items():
                 stage_static_binary(provider(), context / 'tools' / binary)
             for tool in native_tools:
-                stage_container_native_tool(tool, context / 'native-tools' / tool.variable)
+                stage_container_native_tool(
+                    tool,
+                    context / 'native-tools' / tool.variable,
+                    machine=machine,
+                )
             runtime_binary_copies = '\n'.join(f'COPY tools/{binary} /usr/bin/{binary}' for binary in runtime_binaries)
             native_tool_copies = '\n'.join(
                 f'COPY native-tools/{tool.variable} {tool.container_path}' for tool in native_tools
@@ -1720,6 +1769,7 @@ class ContainerEnvironments:
         wheelhouses: Callable[[], Sequence[Path]],
         runtime_binaries: Mapping[RuntimeBinary, Callable[[], Path]],
         native_tools: tuple[ContainerNativeTool, ...],
+        machine: str,
         expected_python_version: str,
         force_rebuild: bool,
     ) -> ContainerEnvHandle:
@@ -1742,6 +1792,8 @@ class ContainerEnvironments:
             Lazy providers of the verified static runtime binaries.
         native_tools : tuple[ContainerNativeTool, ...]
             Admitted helpers to snapshot into the image.
+        machine : str
+            Runtime image architecture.
         expected_python_version : str
             Version the builder and runtime image preflight both reported.
         force_rebuild : bool
@@ -1763,7 +1815,7 @@ class ContainerEnvironments:
         if not cached:
             houses = wheelhouses()
             checkout = self._store.materialize(repo, sha)
-            self._build(tag, checkout, houses, runtime_binaries, native_tools)
+            self._build(tag, checkout, houses, runtime_binaries, native_tools, machine)
         environment_python_version = self._docker.environment_python_version(tag)
         if environment_python_version != expected_python_version:
             msg = (
@@ -1992,6 +2044,7 @@ class ContainerEnvironments:
                     wheelhouses=base_wheelhouses,
                     runtime_binaries=runtime_binary_providers,
                     native_tools=native_tools,
+                    machine=image_pair.architecture,
                     expected_python_version=image_pair.python_version,
                     force_rebuild=force,
                 ),
@@ -2003,6 +2056,7 @@ class ContainerEnvironments:
                     wheelhouses=head_wheelhouses,
                     runtime_binaries=runtime_binary_providers,
                     native_tools=native_tools,
+                    machine=image_pair.architecture,
                     expected_python_version=image_pair.python_version,
                     force_rebuild=force,
                 ),

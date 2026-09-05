@@ -58,8 +58,10 @@ point*: pre-triage, triage, or post-triage (§10).
     cache, while paired same-run dependency resolution is unchanged. The Docker CLI and
     image-override requirements are specified in §12 and §17. Operator-supplied native
     helper executables (§4 `passthrough_env`) must be 64-bit Linux ELF binaries whose
-    machine matches the probed image architecture. Each admitted helper's digest is part
-    of the image fingerprint, and identical revalidated bytes are staged into both images.
+    machine matches the probed image architecture. Platform validation and the admitted
+    digest apply to the same byte stream before cache lookup; each staged copy is checked
+    again. The digest is part of the image fingerprint, and identical bytes are staged into
+    both images.
 - Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
   statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and
