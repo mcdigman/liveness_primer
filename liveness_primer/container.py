@@ -695,6 +695,23 @@ def stage_static_binary(
 
 
 def _native_tool_header_and_digest(stream: BinaryIO) -> tuple[bytes, str]:
+    """Read one helper's ELF header prefix and whole-file digest together.
+
+    Taking both from a single open stream binds the validated header to the
+    admitted digest: the bytes that pass the platform check are the same
+    bytes the digest comparison accepts.
+
+    Parameters
+    ----------
+    stream : BinaryIO
+        Binary stream positioned at the start of the helper.
+
+    Returns
+    -------
+    tuple[bytes, str]
+        The leading header bytes, short only when the helper ends first,
+        and the SHA-256 of everything read.
+    """
     header = stream.read(_ELF_HEADER_PREFIX_BYTES)
     digest = hashlib.sha256(header)
     for chunk in iter(lambda: stream.read(_NATIVE_TOOL_DIGEST_CHUNK_BYTES), b''):
@@ -703,6 +720,25 @@ def _native_tool_header_and_digest(stream: BinaryIO) -> tuple[bytes, str]:
 
 
 def _container_native_tool_target(machine: str) -> tuple[str, int]:
+    """Resolve the ELF machine an admitted helper must declare.
+
+    Parameters
+    ----------
+    machine : str
+        Runtime image architecture.
+
+    Returns
+    -------
+    tuple[str, int]
+        Canonical architecture name, and the ELF ``e_machine`` value a
+        helper must carry to run on it.
+
+    Raises
+    ------
+    ContainerError
+        If the container architecture has no pinned ELF machine, so no
+        helper can be admitted for it.
+    """
     architecture = _normalized_architecture(machine)
     expected_machine = _ELF_MACHINE_BY_ARCHITECTURE.get(architecture)
     if expected_machine is None:
@@ -718,6 +754,25 @@ def _validate_container_native_tool_header(
     expected_machine: int,
     description: str,
 ) -> None:
+    """Require one ELF header prefix to describe a runnable helper.
+
+    Parameters
+    ----------
+    header : bytes
+        Leading header bytes of the helper.
+    architecture : str
+        Canonical container architecture, named in the mismatch message.
+    expected_machine : int
+        ELF ``e_machine`` value the container architecture requires.
+    description : str
+        Operator-facing name of the helper.
+
+    Raises
+    ------
+    ContainerError
+        If the header is not a 64-bit little-endian Linux ELF executable
+        built for the container architecture.
+    """
     if len(header) < _ELF_HEADER_PREFIX_BYTES:
         msg = f'{description} is not a supported 64-bit Linux ELF executable'
         raise ContainerError(msg)
@@ -776,7 +831,18 @@ def validate_container_native_tool_platform(tool: ContainerNativeTool, machine: 
 
 
 def _validate_container_native_tool_platforms(tools: tuple[ContainerNativeTool, ...], machine: str) -> None:
-    """Validate every admitted helper against one container architecture."""
+    """Validate every admitted helper against one container architecture.
+
+    Runs before any cache lookup, clone, or fetch, so an unusable helper
+    fails the run before it costs an image build.
+
+    Parameters
+    ----------
+    tools : tuple[ContainerNativeTool, ...]
+        Admitted helpers, empty when the operator supplied none.
+    machine : str
+        Runtime image architecture.
+    """
     for tool in tools:
         validate_container_native_tool_platform(tool, machine)
 
