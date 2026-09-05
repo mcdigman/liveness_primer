@@ -169,7 +169,8 @@ class SkylosAdapter:
         incompletely without it, and on revisions that surface that as an
         analysis error the invocation fails outright. Both sides receive
         the same operator-supplied binary, so the engine is a constant of
-        the comparison rather than part of the diff.
+        the comparison rather than part of the diff. Container mode
+        snapshots it into both environment images after digest validation.
     runtime_binaries : tuple[RuntimeBinary, ...]
         ``rg`` for grep verification in minimal container runtimes.
     success_exit_codes : frozenset[int]

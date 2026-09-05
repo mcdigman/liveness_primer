@@ -24,6 +24,7 @@ from liveness_primer.container import (
     ContainerEnvironments,
     ContainerError,
     ContainerExecution,
+    ContainerNativeTool,
     DockerCli,
     DockerRuntime,
     StaticBinaryArtifact,
@@ -32,9 +33,11 @@ from liveness_primer.container import (
     image_tag,
     promote_prefetched,
     ripgrep_artifact_for,
+    stage_container_native_tool,
     stage_invocation_env_files,
     stage_static_binary,
     stage_wheelhouses,
+    validate_container_native_tool_platform,
 )
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.execution import SideWorkspace
@@ -344,6 +347,16 @@ def test_container_fingerprint_varies_by_inputs() -> None:
     assert base != container_fingerprint(
         'https://r', 'a' * 40, adapter, 'docker 27', 'builder:1', 'runtime:1', ('ripgrep:2',)
     )
+    assert base != container_fingerprint(
+        'https://r',
+        'a' * 40,
+        adapter,
+        'docker 27',
+        'builder:1',
+        'runtime:1',
+        ('ripgrep:1',),
+        ('SKYLOS_GO_BIN sha256:1234',),
+    )
 
 
 def test_container_fingerprint_tracks_the_cache_format(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -380,6 +393,31 @@ def test_ripgrep_artifact_for_rejects_unsupported_architecture() -> None:
         ripgrep_artifact_for('s390x')
 
 
+def write_linux_elf(
+    path: Path,
+    architecture: Literal['aarch64', 'x86_64'],
+    *,
+    elf_type: int = 2,
+    os_abi: int = 0,
+) -> Path:
+    """Write the ELF header prefix used by native-helper admission tests.
+
+    Returns
+    -------
+    Path
+        Executable test-file path.
+    """
+    machine = {'x86_64': 62, 'aarch64': 183}[architecture]
+    header = bytearray(32)
+    header[:7] = b'\x7fELF\x02\x01\x01'
+    header[7] = os_abi
+    header[16:18] = elf_type.to_bytes(2, byteorder='little')
+    header[18:20] = machine.to_bytes(2, byteorder='little')
+    atomic_write_bytes(path, bytes(header))
+    path.chmod(0o755)
+    return path
+
+
 def test_stage_static_binary_copies_only_a_regular_file(tmp_path: Path) -> None:
     source = tmp_path / 'source' / 'rg'
     source.parent.mkdir()
@@ -412,6 +450,118 @@ def test_stage_static_binaries_share_one_tools_directory(tmp_path: Path) -> None
     stage_static_binary(second, tools / 'second')
     assert (tools / 'first').read_bytes() == b'first'
     assert (tools / 'second').read_bytes() == b'second'
+
+
+def test_stage_container_native_tool_revalidates_the_admitted_digest(tmp_path: Path) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    admitted = source.read_bytes()
+    digest = hashlib.sha256(admitted).hexdigest()
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=digest)
+
+    destination = tmp_path / 'context' / 'native-tools' / tool.variable
+    stage_container_native_tool(tool, destination, machine='aarch64')
+    assert destination.read_bytes() == admitted
+    assert destination.stat().st_mode & 0o777 == 0o555
+    assert tool.container_path == PurePosixPath('/liveness/native-tools/SKYLOS_GO_BIN')
+    assert tool.identity == f'SKYLOS_GO_BIN sha256:{digest}'
+
+    atomic_write_bytes(source, b'changed-engine')
+    with pytest.raises(ContainerError, match='SKYLOS_GO_BIN changed after admission'):
+        stage_container_native_tool(tool, tmp_path / 'second-context' / tool.variable, machine='aarch64')
+
+
+def test_stage_container_native_tool_validates_the_digest_matching_copy(tmp_path: Path) -> None:
+    source = tmp_path / 'skylos-go'
+    payload = b'\xcf\xfa\xed\xfe' + (b'host-native' * 3)
+    atomic_write_bytes(source, payload)
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(payload).hexdigest())
+    with pytest.raises(ContainerError, match='not a supported 64-bit Linux ELF executable'):
+        stage_container_native_tool(tool, tmp_path / 'context' / tool.variable, machine='aarch64')
+
+
+def test_stage_container_native_tool_names_an_invalid_operator_source(tmp_path: Path) -> None:
+    missing = tmp_path / 'skylos-go'
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=missing, sha256='a' * 64)
+    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN is missing: skylos-go'):
+        stage_container_native_tool(tool, tmp_path / 'context' / tool.variable, machine='aarch64')
+
+    target = tmp_path / 'engine'
+    atomic_write_bytes(target, b'engine')
+    missing.symlink_to(target)
+    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN is not a regular file: skylos-go'):
+        stage_container_native_tool(tool, tmp_path / 'context' / tool.variable, machine='aarch64')
+
+
+@pytest.mark.parametrize('machine', ['aarch64', 'arm64'])
+def test_validate_container_native_tool_accepts_matching_linux_elf(tmp_path: Path, machine: str) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    validate_container_native_tool_platform(tool, machine)
+
+
+def test_validate_container_native_tool_binds_header_to_admitted_digest(tmp_path: Path) -> None:
+    source = tmp_path / 'skylos-go'
+    admitted = b'\xcf\xfa\xed\xfe' + (b'host-native' * 3)
+    atomic_write_bytes(source, admitted)
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(admitted).hexdigest())
+    write_linux_elf(source, 'aarch64')
+    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN changed after admission'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+@pytest.mark.parametrize(
+    ('payload', 'detail'),
+    [
+        (b'', 'not a supported 64-bit Linux ELF executable'),
+        (b'x' * 20, 'not a supported 64-bit Linux ELF executable'),
+    ],
+)
+def test_validate_container_native_tool_rejects_invalid_elf(tmp_path: Path, payload: bytes, detail: str) -> None:
+    source = tmp_path / 'skylos-go'
+    atomic_write_bytes(source, payload)
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(payload).hexdigest())
+    with pytest.raises(ContainerError, match=detail):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+@pytest.mark.parametrize(('elf_type', 'os_abi'), [(2, 9), (1, 0)])
+def test_validate_container_native_tool_rejects_non_executable_or_non_linux_elf(
+    tmp_path: Path, elf_type: int, os_abi: int
+) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64', elf_type=elf_type, os_abi=os_abi)
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    with pytest.raises(ContainerError, match='not a supported 64-bit Linux ELF executable'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+def test_validate_container_native_tool_rejects_wrong_or_unsupported_architecture(tmp_path: Path) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'x86_64')
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    with pytest.raises(ContainerError, match='targets x86_64, not container architecture aarch64'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+    with pytest.raises(ContainerError, match="container architecture 's390x' cannot admit native helpers"):
+        validate_container_native_tool_platform(tool, 's390x')
+
+
+def test_validate_container_native_tool_wraps_read_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+    def deny_open(_path: Path, _mode: str) -> None:
+        message = 'denied'
+        raise PermissionError(message)
+
+    monkeypatch.setattr(Path, 'open', deny_open)
+    with pytest.raises(ContainerError, match='cannot read native helper SKYLOS_GO_BIN: denied'):
+        validate_container_native_tool_platform(tool, 'aarch64')
 
 
 def requirement_wheel(requirement: str) -> str:
@@ -804,6 +954,30 @@ def test_cached_pair_skips_builds(tmp_path: Path, detector_repo: DetectorRepo) -
     assert docker.prefetches == []
     assert docker.ripgrep_prefetches == []
     assert pair.environment_delta == ()
+
+
+def test_native_tool_platform_is_validated_before_cached_pair_reuse(
+    tmp_path: Path, detector_repo: DetectorRepo
+) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'x86_64')
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    docker = FakeDocker(always_cached=True)
+    with (
+        pytest.raises(ContainerError, match='targets x86_64, not container architecture aarch64'),
+        environments(tmp_path, docker).prepare_pair(
+            detector_repo.url,
+            'base-branch',
+            'head-branch',
+            VultureAdapter(),
+            native_tools=(tool,),
+        ),
+    ):
+        pass
+    assert 'inspect' not in docker.events
+    assert docker.prefetches == []
+    assert docker.built == []
 
 
 def test_cached_delta_triggers_paired_same_run_rebuild(tmp_path: Path, detector_repo: DetectorRepo) -> None:

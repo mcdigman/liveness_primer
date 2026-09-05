@@ -150,10 +150,12 @@ class DetectorAdapter(Protocol):
         Environment variables naming an operator-supplied native helper
         executable the detector needs. The §3 scrub drops everything
         unlisted, so a declared variable is the only way an operator sets
-        one for the analysis invocation (the build step does not receive
-        them); the runner validates and hashes each value and records it in
-        the manifest. A detector may still locate a helper by its own
-        means — bundled in its install, or on the surviving ``PATH``.
+        one for the analysis invocation (the detector build stage does not
+        receive them); the runner validates and hashes each value and records
+        it in the manifest. Container mode snapshots a compatible Linux ELF
+        helper into each runtime image. A detector may still locate a helper
+        by its own means — bundled in its install, or on the surviving
+        ``PATH``.
     runtime_binaries : tuple[RuntimeBinary, ...]
         Static executables staged into a minimal container runtime. Empty for
         a pure-Python detector.
