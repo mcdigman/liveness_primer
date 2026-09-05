@@ -156,8 +156,9 @@ following compatibility rules apply:
 - `--fresh` forces image rebuilds.
 - `--old-cmd` and `--new-cmd` cannot be combined with `--container`.
 - Host executables supplied through variables such as `SKYLOS_GO_BIN` are
-  digest-pinned and copied into both environment images. They must be built
-  for the selected container platform.
+  digest-pinned and copied into both environment images. They must be 64-bit
+  Linux ELF executables built for, and otherwise runnable on, the selected
+  container architecture.
 
 ## Use pre-built detector commands
 

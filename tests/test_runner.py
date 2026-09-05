@@ -43,7 +43,7 @@ from liveness_primer.runner import (
 )
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.tools.registry import get_adapter
-from tests.test_container import FakeDocker
+from tests.test_container import FakeDocker, write_linux_elf
 
 BASE_FINDING = FakeFinding(path='pkg/mod.py', line=5, symbol='unused_helper', kind='function', confidence=60)
 MOVED_FINDING = FakeFinding(path='pkg/mod.py', line=9, symbol='unused_helper', kind='function', confidence=60)
@@ -1357,7 +1357,7 @@ def test_container_run_stages_native_helper_for_both_sides(
 ) -> None:
     # The admitted helper is pinned into both images and each invocation
     # receives its container-side path (contract §3, §11).
-    engine = write_fake_native_engine(tmp_path / 'skylos-go')
+    engine = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
     digest = hashlib.sha256(engine.read_bytes()).hexdigest()
     docker = FakeDocker()
     environments = ContainerEnvironments(CheckoutStore(tmp_path / 'cache'), tmp_path / 'cache', docker=docker)

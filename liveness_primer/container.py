@@ -180,6 +180,18 @@ CONTAINER_TMP_ROOT = PurePosixPath('/') / 'tmp'
 # adapter-declared variable becomes its filename and points here at runtime.
 CONTAINER_NATIVE_TOOL_ROOT = PurePosixPath('/liveness/native-tools')
 
+_ELF_HEADER_PREFIX_BYTES = 20
+_ELF64_LITTLE_ENDIAN_IDENT = b'\x7fELF\x02\x01\x01'
+_LINUX_ELF_OS_ABIS = frozenset({0, 3})
+_ELF_EXECUTABLE_TYPES = frozenset({2, 3})
+_ELF_MACHINE_BY_ARCHITECTURE: Mapping[str, int] = {
+    'x86_64': 62,
+    'aarch64': 183,
+}
+_ARCHITECTURE_BY_ELF_MACHINE: Mapping[int, str] = {
+    machine: architecture for architecture, machine in _ELF_MACHINE_BY_ARCHITECTURE.items()
+}
+
 _DOCKER_TIMEOUT = 1800.0
 
 # Cache-format / security revision of the environment image. Bump whenever the
@@ -633,7 +645,37 @@ def _static_binary_identity(artifact: StaticBinaryArtifact) -> str:
     )
 
 
-def stage_static_binary(source: Path, destination: Path) -> None:
+def _require_regular_source(source: Path, *, description: str) -> None:
+    """Require one build-context source to be a regular, non-symlink file.
+
+    Parameters
+    ----------
+    source : Path
+        Host path to inspect without following symlinks.
+    description : str
+        Operator-facing name of the source kind.
+
+    Raises
+    ------
+    ContainerError
+        If the source is missing, a symlink, or not a regular file.
+    """
+    try:
+        status = source.lstat()
+    except FileNotFoundError as error:
+        msg = f'{description} is missing: {source.name}'
+        raise ContainerError(msg) from error
+    if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
+        msg = f'{description} is not a regular file: {source.name}'
+        raise ContainerError(msg)
+
+
+def stage_static_binary(
+    source: Path,
+    destination: Path,
+    *,
+    source_description: str = 'prefetched static binary',
+) -> None:
     """Copy one verified static binary into an offline build context.
 
     Parameters
@@ -642,23 +684,70 @@ def stage_static_binary(source: Path, destination: Path) -> None:
         Fresh output of the runtime's digest-verifying fetch operation.
     destination : Path
         Build-context path to create.
+    source_description : str
+        Operator-facing name of the source kind.
+    """
+    _require_regular_source(source, description=source_description)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    destination.chmod(0o555)
+
+
+def validate_container_native_tool_platform(tool: ContainerNativeTool, machine: str) -> None:
+    """Require an admitted helper to target the container architecture.
+
+    Parameters
+    ----------
+    tool : ContainerNativeTool
+        Admitted helper to inspect.
+    machine : str
+        Runtime image architecture.
 
     Raises
     ------
     ContainerError
-        If the fetch output is missing, a symlink, or not a regular file.
+        If the helper is not a supported Linux ELF executable for the
+        runtime image architecture.
     """
-    try:
-        status = source.lstat()
-    except FileNotFoundError as error:
-        msg = f'prefetched static binary is missing: {source.name}'
-        raise ContainerError(msg) from error
-    if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
-        msg = f'prefetched static binary is not a regular file: {source.name}'
+    architecture = _normalized_architecture(machine)
+    expected_machine = _ELF_MACHINE_BY_ARCHITECTURE.get(architecture)
+    if expected_machine is None:
+        msg = f'container architecture {machine!r} cannot admit native helpers'
         raise ContainerError(msg)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, destination)
-    destination.chmod(0o555)
+
+    description = f'native helper {tool.variable}'
+    _require_regular_source(tool.source, description=description)
+    try:
+        with tool.source.open('rb') as stream:
+            header = stream.read(_ELF_HEADER_PREFIX_BYTES)
+    except OSError as error:
+        msg = f'cannot read {description}: {error}'
+        raise ContainerError(msg) from error
+    if len(header) < _ELF_HEADER_PREFIX_BYTES:
+        msg = f'{description} is not a supported 64-bit Linux ELF executable'
+        raise ContainerError(msg)
+    if header[: len(_ELF64_LITTLE_ENDIAN_IDENT)] != _ELF64_LITTLE_ENDIAN_IDENT:
+        msg = f'{description} is not a supported 64-bit Linux ELF executable'
+        raise ContainerError(msg)
+    if header[7] not in _LINUX_ELF_OS_ABIS:
+        msg = f'{description} is not a supported 64-bit Linux ELF executable'
+        raise ContainerError(msg)
+    elf_type = int.from_bytes(header[16:18], byteorder='little')
+    if elf_type not in _ELF_EXECUTABLE_TYPES:
+        msg = f'{description} is not a supported 64-bit Linux ELF executable'
+        raise ContainerError(msg)
+
+    actual_machine = int.from_bytes(header[18:20], byteorder='little')
+    if actual_machine != expected_machine:
+        actual_architecture = _ARCHITECTURE_BY_ELF_MACHINE.get(actual_machine, f'ELF machine {actual_machine}')
+        msg = f'{description} targets {actual_architecture}, not container architecture {architecture}'
+        raise ContainerError(msg)
+
+
+def _validate_container_native_tool_platforms(tools: tuple[ContainerNativeTool, ...], machine: str) -> None:
+    """Validate every admitted helper against one container architecture."""
+    for tool in tools:
+        validate_container_native_tool_platform(tool, machine)
 
 
 def stage_container_native_tool(tool: ContainerNativeTool, destination: Path) -> None:
@@ -676,7 +765,7 @@ def stage_container_native_tool(tool: ContainerNativeTool, destination: Path) ->
     ContainerError
         If the helper changed after admission.
     """
-    stage_static_binary(tool.source, destination)
+    stage_static_binary(tool.source, destination, source_description=f'native helper {tool.variable}')
     with destination.open('rb') as stream:
         actual_digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     if actual_digest != tool.sha256:
@@ -1248,6 +1337,7 @@ class ContainerEnvHandle:
 class _ImagePairProbe:
     """Compatible builder/runtime image properties used by preparation."""
 
+    architecture: str
     docker_identity: str
     python_version: str
     platform: str
@@ -1468,6 +1558,7 @@ class ContainerEnvironments:
         }
         identities = tuple(_static_binary_identity(artifact) for artifact in artifacts.values())
         return _ImagePairProbe(
+            architecture=_normalized_architecture(runtime_architecture),
             docker_identity=docker_identity,
             python_version=runtime_python_version,
             platform=self._docker.platform(self._runtime_image),
@@ -1748,6 +1839,7 @@ class ContainerEnvironments:
             container cannot be confirmed after a successful analysis.
         """
         image_pair = self._probe_images(adapter)
+        _validate_container_native_tool_platforms(native_tools, image_pair.architecture)
         base_sha, head_sha, ref_fetches = resolve_pair_refs(self._store, repo, base_ref, head_ref)
         self._fetches.extend(ref_fetches)
         base_fingerprint = container_fingerprint(

@@ -35,7 +35,8 @@ point*: pre-triage, triage, or post-triage (§10).
   Docker:
   - **Images:** each ref installs into a fingerprint-keyed environment image. The key
     covers the repository and resolved SHA, adapter build recipe, exact builder and
-    runtime image references, adapter-declared runtime artifacts, and Docker identity.
+    runtime image references, adapter-declared runtime artifacts, admitted native-helper
+    identities, and Docker identity.
     Builder and runtime images must report matching Python versions and architectures,
     and the result must expose the managed virtual-environment interpreter. An offline
     multi-stage `docker build --network none` installs the detector as a non-root user,
@@ -56,8 +57,9 @@ point*: pre-triage, triage, or post-triage (§10).
   - **Caching and compatibility:** Docker images are cached; `--fresh` bypasses the build
     cache, while paired same-run dependency resolution is unchanged. The Docker CLI and
     image-override requirements are specified in §12 and §17. Operator-supplied native
-    helper executables (§4 `passthrough_env`) are refused because host binaries cannot run
-    inside the container.
+    helper executables (§4 `passthrough_env`) must be 64-bit Linux ELF binaries whose
+    machine matches the probed image architecture. Each admitted helper's digest is part
+    of the image fingerprint, and identical revalidated bytes are staged into both images.
 - Three-step runs: a **fetch** step (network permitted; git clones plus dependency prefetch
   into a local wheel cache, wheels preferred; detector-ref dependencies are resolved by
   statically parsing `[project.dependencies]`/`[project.optional-dependencies]` and
@@ -125,7 +127,9 @@ point*: pre-triage, triage, or post-triage (§10).
   `passthrough_env`: names of operator-supplied environment variables carrying native
   helper executables the detector needs (skylos's `SKYLOS_GO_BIN`); the runner resolves,
   validates, and hashes each supplied binary into the manifest, and both sides receive
-  the identical helper. Skylos still
+  the identical helper. In container mode it additionally validates a 64-bit Linux ELF
+  machine matching the runtime image, snapshots the helper into both images, and passes
+  the container path instead of its host path. Skylos still
   merges a target `.skylos/config.yaml`, which can enable unselected analyses and affect
   execution cost, exit status, timeouts, and run completeness; revisions predating the
   variable can likewise discover target configuration. Parse-side gating protects report
