@@ -577,6 +577,10 @@ projects:
           - danger
           - secrets
           - quality
+        # Unique at this pin; Skylos matches secret-scan excludes by path component.
+        args:
+          - --exclude
+          - elementary_output.json
         cost: 8.0
 
   # runtime-generated decorator wrappers
