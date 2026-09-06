@@ -8,6 +8,7 @@ arrays are always ingested; the diagnostic arrays (``danger``, ``secrets``,
 when a corpus config opts into the matching analysis (contract §4, §5).
 """
 
+import functools
 import json
 from collections.abc import Mapping
 from pathlib import Path, PurePath
@@ -73,6 +74,70 @@ _GREP_BUDGET_SECONDS = '150'
 # One failed invocation can report an error per skipped file. Keep the
 # diagnostic useful without allowing that list to dominate the report.
 _ANALYSIS_ERROR_LIMIT = 5
+
+
+@functools.lru_cache(maxsize=1)
+def _load_document(stdout: str) -> object:
+    """Decode skylos stdout, remembering the most recent document.
+
+    A failed invocation that still produced output is decoded twice in a
+    row: once for its failure detail and once for its findings. A
+    single-entry cache spares the second decode of a document that can
+    run to megabytes on a large corpus project, while retaining at most
+    one document beyond the invocation that produced it.
+
+    Parameters
+    ----------
+    stdout : str
+        Captured skylos standard output.
+
+    Returns
+    -------
+    object
+        The decoded JSON value.
+
+    Raises
+    ------
+    AdapterError
+        If stdout is not valid JSON.
+    """
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        msg = f'skylos output is not valid JSON: {exc}'
+        raise AdapterError(msg) from exc
+
+
+def _analysis_error_location(raw_error: Mapping[str, object], root: PurePath) -> str:
+    """Name the file (and line) one skylos analysis error is about.
+
+    Parameters
+    ----------
+    raw_error : Mapping[str, object]
+        One ``analysis_errors`` entry (untrusted).
+    root : PurePath
+        Checkout directory skylos analyzed, for path normalization.
+
+    Returns
+    -------
+    str
+        ``path`` or ``path:line`` relative to the checkout, or the empty
+        string when the entry names no usable file.
+    """
+    file = raw_error.get('file')
+    if not isinstance(file, str) or not file.strip():
+        return ''
+    try:
+        path = normalize_finding_path(file, root, allow_root=True)
+    except AdapterError:
+        # A path outside the checkout is malformed detector output; keep
+        # the message but not the path (contract §11).
+        return ''
+    line = raw_error.get('line')
+    if isinstance(line, int) and not isinstance(line, bool) and line >= 1:
+        return f'{path}:{line}'
+    return path
+
 
 # Documented, versioned mapping from each ingested single-rule skylos
 # symbol bucket to its canonical rule ID (reporting contract §3.1). A rule
@@ -211,22 +276,26 @@ class SkylosAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
-    def failure_detail(output: RawToolOutput) -> str | None:
+    def failure_detail(output: RawToolOutput, *, root: PurePath) -> str | None:
         """Extract bounded analysis errors from skylos JSON output.
 
         Parameters
         ----------
         output : RawToolOutput
             Captured skylos output.
+        root : PurePath
+            Checkout directory skylos analyzed, for path normalization.
 
         Returns
         -------
         str | None
-            Up to five analysis-error messages, when present and valid.
+            At most ``_ANALYSIS_ERROR_LIMIT`` analysis-error entries joined
+            by ``; ``, each ``path:line: kind: message`` with whichever of
+            those parts the entry provides; ``None`` without any.
         """
         try:
-            document = json.loads(output.stdout)
-        except json.JSONDecodeError:
+            document = _load_document(output.stdout)
+        except AdapterError:
             return None
         if not isinstance(document, dict):
             return None
@@ -242,11 +311,15 @@ class SkylosAdapter:
             if not isinstance(message, str) or not message.strip():
                 continue
             kind = raw_error.get('kind')
-            prefix = f'{kind.strip()}: ' if isinstance(kind, str) and kind.strip() else ''
-            details.append(prefix + message.strip())
+            parts = (
+                _analysis_error_location(raw_error, root),
+                kind.strip() if isinstance(kind, str) else '',
+                message.strip(),
+            )
+            details.append(': '.join(part for part in parts if part))
             if len(details) == _ANALYSIS_ERROR_LIMIT:
                 break
-        return '\n'.join(details) or None
+        return '; '.join(details) or None
 
     @staticmethod
     def parse(output: RawToolOutput, *, project: str, root: PurePath, analyses: tuple[str, ...] = ()) -> list[Finding]:
@@ -285,11 +358,7 @@ class SkylosAdapter:
                 msg = f'skylos does not provide analysis {name!r}'
                 raise AdapterError(msg)
             selected.add(_ANALYSIS_BUCKETS[name])
-        try:
-            document = json.loads(output.stdout)
-        except json.JSONDecodeError as exc:
-            msg = f'skylos output is not valid JSON: {exc}'
-            raise AdapterError(msg) from exc
+        document = _load_document(output.stdout)
         if not isinstance(document, dict):
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)

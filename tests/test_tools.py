@@ -345,13 +345,46 @@ def test_skylos_accepts_failed_output_with_a_result_bucket() -> None:
 def test_skylos_extracts_bounded_analysis_error_details() -> None:
     errors = [{'kind': f'kind-{index}', 'message': f'failure {index}'} for index in range(6)]
     errors.append({'kind': 'missing-message'})
-    detail = SkylosAdapter.failure_detail(raw(json.dumps({'analysis_errors': errors}), returncode=2))
-    assert detail == '\n'.join(f'kind-{index}: failure {index}' for index in range(5))
+    detail = SkylosAdapter.failure_detail(raw(json.dumps({'analysis_errors': errors}), returncode=2), root=ROOT)
+    # Entries are joined on one line: renderers flatten newlines to spaces.
+    assert detail == '; '.join(f'kind-{index}: failure {index}' for index in range(5))
 
 
 def test_skylos_failure_detail_accepts_message_without_kind() -> None:
-    detail = SkylosAdapter.failure_detail(raw('{"analysis_errors": [{"message": "failure"}]}', returncode=2))
-    assert detail == 'failure'
+    output = raw('{"analysis_errors": [{"message": "failure"}]}', returncode=2)
+    assert SkylosAdapter.failure_detail(output, root=ROOT) == 'failure'
+
+
+def test_skylos_failure_detail_names_the_failed_file() -> None:
+    # Skylos reports one error per skipped file; the location is what tells
+    # them apart.
+    errors = [
+        {'kind': 'syntax_error', 'message': 'invalid syntax', 'file': '/checkout/pkg/a.py', 'line': 3},
+        {'kind': 'processing_error', 'message': 'boom', 'file': 'pkg/b.py'},
+        {'message': 'symlink scan root', 'file': '/checkout'},
+    ]
+    detail = SkylosAdapter.failure_detail(raw(json.dumps({'analysis_errors': errors}), returncode=2), root=ROOT)
+    assert detail == 'pkg/a.py:3: syntax_error: invalid syntax; pkg/b.py: processing_error: boom; .: symlink scan root'
+
+
+@pytest.mark.parametrize(
+    'entry',
+    [
+        {'file': '/elsewhere/a.py', 'line': 3},
+        {'file': '../escape.py'},
+        {'file': 5},
+        {'file': ' '},
+    ],
+)
+def test_skylos_failure_detail_omits_unusable_locations(entry: dict[str, object]) -> None:
+    document = {'analysis_errors': [{'kind': 'k', 'message': 'm', **entry}]}
+    assert SkylosAdapter.failure_detail(raw(json.dumps(document), returncode=2), root=ROOT) == 'k: m'
+
+
+@pytest.mark.parametrize('line', [0, -1, True, '3', None])
+def test_skylos_failure_detail_ignores_invalid_lines(line: object) -> None:
+    document = {'analysis_errors': [{'message': 'm', 'file': 'pkg/a.py', 'line': line}]}
+    assert SkylosAdapter.failure_detail(raw(json.dumps(document), returncode=2), root=ROOT) == 'pkg/a.py: m'
 
 
 @pytest.mark.parametrize(
@@ -367,7 +400,7 @@ def test_skylos_failure_detail_accepts_message_without_kind() -> None:
     ],
 )
 def test_skylos_failure_detail_rejects_unstructured_output(stdout: str) -> None:
-    assert SkylosAdapter.failure_detail(raw(stdout, returncode=2)) is None
+    assert SkylosAdapter.failure_detail(raw(stdout, returncode=2), root=ROOT) is None
 
 
 def test_vulture_findings_carry_no_invented_rule_id() -> None:

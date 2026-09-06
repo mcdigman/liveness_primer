@@ -53,12 +53,15 @@ from liveness_primer.findings import (
 from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
 from liveness_primer.locators import attach_locators
+from liveness_primer.report.sanitize import truncate_end, truncate_start
 from liveness_primer.report.source import collect_source_evidence
 from liveness_primer.tools.base import AdapterError, DetectorAdapter, RawToolOutput, build_invocation
 
 GATE_CHOICES = ('new', 'dropped', 'changed', 'any', 'corpus-integrity')
 
-_STDERR_SNIPPET = 500
+# Bound on each part of a recorded failure detail (contract §8 keeps the
+# full detail in the JSON report, which must still stay readable).
+_DETAIL_CAP = 500
 
 _DIGEST_CHUNK = 1_048_576
 
@@ -526,12 +529,16 @@ class PrimerRunner:
         )
         error: ToolError | None = None
         if result.returncode not in self._adapter.success_exit_codes:
-            stderr_detail = result.stderr.strip()[-_STDERR_SNIPPET:]
-            adapter_detail = self._adapter.failure_detail(raw) if not stderr_detail else None
-            error_detail = stderr_detail or (adapter_detail[:_STDERR_SNIPPET] if adapter_detail is not None else '')
+            # Record both accounts of the failure: stderr keeps its tail (a
+            # traceback ends with the exception) and the detector's own
+            # structured detail keeps its head (the first reported errors).
+            # Incidental stderr noise must not hide the structured detail.
+            stderr_detail = truncate_start(result.stderr.strip(), _DETAIL_CAP)
+            adapter_detail = self._adapter.failure_detail(raw, root=root) or ''
+            parts = [part for part in (stderr_detail, truncate_end(adapter_detail, _DETAIL_CAP)) if part]
             detail = f'exit code {result.returncode}'
-            if error_detail:
-                detail += f': {error_detail}'
+            if parts:
+                detail += f': {"; ".join(parts)}'
             error = ToolError(side=side, exit_code=result.returncode, detail=detail)
             if not result.stdout.strip():
                 return _SideOutcome(

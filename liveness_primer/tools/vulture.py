@@ -77,20 +77,22 @@ class VultureAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
-    def failure_detail(output: RawToolOutput) -> str | None:
+    def failure_detail(output: RawToolOutput, *, root: PurePath) -> str | None:
         """Return no structured failure detail for vulture output.
 
         Parameters
         ----------
         output : RawToolOutput
             Captured vulture output.
+        root : PurePath
+            Checkout directory vulture analyzed.
 
         Returns
         -------
         str | None
             Vulture reports operational errors on standard error.
         """
-        del output
+        del output, root
         return None
 
     @staticmethod

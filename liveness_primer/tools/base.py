@@ -206,18 +206,22 @@ class DetectorAdapter(Protocol):
         """
         ...
 
-    def failure_detail(self, output: RawToolOutput) -> str | None:
+    def failure_detail(self, output: RawToolOutput, *, root: PurePath) -> str | None:
         """Extract detector-specific detail from a failed invocation.
 
         Parameters
         ----------
         output : RawToolOutput
             Captured detector output with a non-success exit code.
+        root : PurePath
+            Checkout root as the detector saw it, for path normalization.
 
         Returns
         -------
         str | None
-            Structured failure detail, when the detector reports it.
+            Structured failure detail, when the detector reports it. The
+            runner records it alongside the stderr snippet, so it should
+            name what stderr does not (which files failed, and why).
         """
         ...
 

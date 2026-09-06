@@ -222,6 +222,43 @@ def test_skylos_analysis_error_is_recorded_from_stdout(tmp_path: Path, corpus_pr
     assert expected_message in render_github(report)
 
 
+def test_tool_failure_records_stderr_and_structured_detail(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    # Incidental stderr output must not hide the detector's own account of
+    # the failure, and that account names the file it is about.
+    document = {
+        'unused_functions': [{'name': 'a', 'type': 'function', 'file': 'a.py', 'line': 1}],
+        'analysis_errors': [{'kind': 'syntax_error', 'message': 'invalid syntax', 'line': 7}],
+    }
+    script = (
+        'import json, os, sys; '
+        f'document = json.loads({json.dumps(document)!r}); '
+        "document['analysis_errors'][0]['file'] = os.path.join(os.getcwd(), 'pkg', 'broken.py'); "
+        "sys.stderr.write('DeprecationWarning: noise\\n'); "
+        'print(json.dumps(document)); '
+        'sys.exit(2)'
+    )
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [BASE_FINDING], output_format='skylos')
+    report = runner_for(tmp_path, tool='skylos').run_escape_hatch(
+        [corpus_project],
+        base_cmd=[sys.executable, '-c', script],
+        head_cmd=head_cmd,
+    )
+    (error,) = report.projects[0].errors
+    assert error.detail == 'exit code 2: DeprecationWarning: noise; pkg/broken.py:7: syntax_error: invalid syntax'
+
+
+def test_tool_failure_detail_marks_truncated_stderr(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    # The recorded snippet keeps the end of stderr (where a traceback names
+    # its exception) and says how much it dropped.
+    base_cmd = write_fake_detector_script(tmp_path / 'base.json', [], exit_code=2, stderr='x' * 600 + 'END')
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [BASE_FINDING])
+    report = runner_for(tmp_path).run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
+    (error,) = report.projects[0].errors
+    assert error.detail.startswith('exit code 2: ...(+112)x')
+    assert error.detail.endswith('xEND')
+    assert len(error.detail) == len('exit code 2: ') + 500
+
+
 def test_failed_skylos_with_empty_result_buckets_does_not_diff(
     tmp_path: Path,
     corpus_project: CorpusProject,

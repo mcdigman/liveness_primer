@@ -31,6 +31,36 @@ def _clean(text: str) -> str:
     return ''.join(ch if ch.isprintable() else ' ' for ch in text)
 
 
+def _marker_budget(length: int, max_length: int) -> tuple[int, int] | None:
+    """Split a cap between kept text and a ``...(+N)`` omission marker.
+
+    Parameters
+    ----------
+    length : int
+        Length of the text to bound; longer than the cap.
+    max_length : int
+        Maximum rendered length.
+
+    Returns
+    -------
+    tuple[int, int] | None
+        ``(kept, omitted)`` character counts whose marker fits the cap, or
+        ``None`` when the cap is too tiny for any marker.
+    """
+    # The marker length depends on the omitted count's digits, which in
+    # turn depends on how much is kept: walk digit budgets upward until
+    # the count fits its budget (it grows by at most one digit per step).
+    digits = 1
+    while True:
+        kept = max_length - (6 + digits)
+        if kept < 1:
+            return None
+        omitted = length - kept
+        if len(str(omitted)) <= digits:
+            return kept, omitted
+        digits += 1
+
+
 def _end_truncated(cleaned: str, max_length: int) -> str:
     """Truncate at the end with a marker stating the omitted count.
 
@@ -46,18 +76,63 @@ def _end_truncated(cleaned: str, max_length: int) -> str:
     str
         Truncated text within the cap; tiny caps fall back to a hard cut.
     """
-    # The marker length depends on the omitted count's digits, which in
-    # turn depends on how much is kept: walk digit budgets upward until
-    # the count fits its budget (it grows by at most one digit per step).
-    digits = 1
-    while True:
-        kept = max_length - (6 + digits)
-        if kept < 1:
-            return cleaned[:max_length]
-        omitted = len(cleaned) - kept
-        if len(str(omitted)) <= digits:
-            return f'{cleaned[:kept]}...(+{omitted})'
-        digits += 1
+    budget = _marker_budget(len(cleaned), max_length)
+    if budget is None:
+        return cleaned[:max_length]
+    kept, omitted = budget
+    return f'{cleaned[:kept]}...(+{omitted})'
+
+
+def truncate_end(text: str, max_length: int) -> str:
+    """Bound text by keeping its beginning, marking how much was cut.
+
+    Unlike :func:`sanitize_inline`, the text is not cleaned: this bounds
+    what a record stores, not what a renderer prints.
+
+    Parameters
+    ----------
+    text : str
+        Text to bound.
+    max_length : int
+        Maximum length.
+
+    Returns
+    -------
+    str
+        The text unchanged when it fits; otherwise its head followed by a
+        marker stating the omitted character count.
+    """
+    if len(text) <= max_length:
+        return text
+    return _end_truncated(text, max_length)
+
+
+def truncate_start(text: str, max_length: int) -> str:
+    """Bound text by keeping its end, marking how much was cut.
+
+    The tail is the identifying portion of a traceback or log, which ends
+    with the failure itself.
+
+    Parameters
+    ----------
+    text : str
+        Text to bound.
+    max_length : int
+        Maximum length.
+
+    Returns
+    -------
+    str
+        The text unchanged when it fits; otherwise a marker stating the
+        omitted character count followed by the text's tail.
+    """
+    if len(text) <= max_length:
+        return text
+    budget = _marker_budget(len(text), max_length)
+    if budget is None:
+        return text[-max_length:] if max_length else ''
+    kept, omitted = budget
+    return f'...(+{omitted}){text[-kept:]}'
 
 
 def sanitize_inline(text: str, *, max_length: int = DEFAULT_INLINE_CAP) -> str:
