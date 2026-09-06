@@ -53,12 +53,11 @@ from liveness_primer.findings import (
 from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
 from liveness_primer.locators import attach_locators
+from liveness_primer.report.sanitize import FAILURE_DETAIL_PART_CAP, truncate_end, truncate_start
 from liveness_primer.report.source import collect_source_evidence
 from liveness_primer.tools.base import AdapterError, DetectorAdapter, RawToolOutput, build_invocation
 
 GATE_CHOICES = ('new', 'dropped', 'changed', 'any', 'corpus-integrity')
-
-_STDERR_SNIPPET = 500
 
 _DIGEST_CHUNK = 1_048_576
 
@@ -519,9 +518,23 @@ class PrimerRunner:
         _SideOutcome
             The parsed outcome.
         """
+        raw = RawToolOutput(
+            returncode=result.returncode if result.returncode is not None else 0,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
         error: ToolError | None = None
         if result.returncode not in self._adapter.success_exit_codes:
-            detail = f'exit code {result.returncode}: {result.stderr.strip()[-_STDERR_SNIPPET:]}'
+            # Record both accounts of the failure: stderr keeps its tail (a
+            # traceback ends with the exception) and the detector's own
+            # structured detail keeps its head (the first reported errors).
+            # Incidental stderr noise must not hide the structured detail.
+            stderr_detail = truncate_start(result.stderr.strip(), FAILURE_DETAIL_PART_CAP)
+            adapter_detail = truncate_end(self._adapter.failure_detail(raw, root=root) or '', FAILURE_DETAIL_PART_CAP)
+            parts = [part for part in (stderr_detail, adapter_detail) if part]
+            detail = f'exit code {result.returncode}'
+            if parts:
+                detail += f': {"; ".join(parts)}'
             error = ToolError(side=side, exit_code=result.returncode, detail=detail)
             if not result.stdout.strip():
                 return _SideOutcome(
@@ -531,11 +544,6 @@ class PrimerRunner:
                     duration_seconds=result.duration_seconds,
                     returncode=result.returncode,
                 )
-        raw = RawToolOutput(
-            returncode=result.returncode if result.returncode is not None else 0,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
         try:
             findings = self._adapter.parse(raw, project=item.project.name, root=root, analyses=item.settings.analyses)
         except AdapterError as exc:
