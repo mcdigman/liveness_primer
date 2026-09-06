@@ -206,6 +206,21 @@ class DetectorAdapter(Protocol):
         """
         ...
 
+    def failure_detail(self, output: RawToolOutput) -> str | None:
+        """Extract detector-specific detail from a failed invocation.
+
+        Parameters
+        ----------
+        output : RawToolOutput
+            Captured detector output with a non-success exit code.
+
+        Returns
+        -------
+        str | None
+            Structured failure detail, when the detector reports it.
+        """
+        ...
+
 
 def build_invocation(adapter: DetectorAdapter, executable: Sequence[str], settings: ToolSettings) -> list[str]:
     """Compose the analysis argv for one (project, tool) pair (contract §11).

@@ -70,6 +70,10 @@ _NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
 # the pass cannot on its own starve the rest of the run.
 _GREP_BUDGET_SECONDS = '150'
 
+# One failed invocation can report an error per skipped file. Keep the
+# diagnostic useful without allowing that list to dominate the report.
+_ANALYSIS_ERROR_LIMIT = 5
+
 # Documented, versioned mapping from each ingested single-rule skylos
 # symbol bucket to its canonical rule ID (reporting contract §3.1). A rule
 # ID explicitly present on the detector finding takes precedence; a rule ID
@@ -205,6 +209,44 @@ class SkylosAdapter:
         output_format='json',
     )
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
+
+    @staticmethod
+    def failure_detail(output: RawToolOutput) -> str | None:
+        """Extract bounded analysis errors from skylos JSON output.
+
+        Parameters
+        ----------
+        output : RawToolOutput
+            Captured skylos output.
+
+        Returns
+        -------
+        str | None
+            Up to five analysis-error messages, when present and valid.
+        """
+        try:
+            document = json.loads(output.stdout)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(document, dict):
+            return None
+        raw_errors = document.get('analysis_errors')
+        if not isinstance(raw_errors, list):
+            return None
+
+        details: list[str] = []
+        for raw_error in raw_errors:
+            if not isinstance(raw_error, dict):
+                continue
+            message = raw_error.get('message')
+            if not isinstance(message, str) or not message.strip():
+                continue
+            kind = raw_error.get('kind')
+            prefix = f'{kind.strip()}: ' if isinstance(kind, str) and kind.strip() else ''
+            details.append(prefix + message.strip())
+            if len(details) == _ANALYSIS_ERROR_LIMIT:
+                break
+        return '\n'.join(details) or None
 
     @staticmethod
     def parse(output: RawToolOutput, *, project: str, root: PurePath, analyses: tuple[str, ...] = ()) -> list[Finding]:

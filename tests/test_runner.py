@@ -4,6 +4,7 @@
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import stat
@@ -181,6 +182,44 @@ def test_tool_failure_is_recorded_not_raised(tmp_path: Path, corpus_project: Cor
     assert project_report.diffs == ()
     assert project_report.measured_cost_seconds is None
     assert report_has_failures(report)
+
+
+def test_tool_failure_without_detail_omits_empty_separator(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    base_cmd = write_fake_detector_script(tmp_path / 'base.json', [], exit_code=2)
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [BASE_FINDING])
+    report = runner_for(tmp_path).run_escape_hatch([corpus_project], base_cmd=base_cmd, head_cmd=head_cmd)
+    (error,) = report.projects[0].errors
+    assert error.detail == 'exit code 2'
+
+
+def test_skylos_analysis_error_is_recorded_from_stdout(tmp_path: Path, corpus_project: CorpusProject) -> None:
+    document = {
+        'unused_functions': [{'name': 'a', 'type': 'function', 'file': 'a.py', 'line': 1}],
+        'analysis_errors': [
+            {
+                'kind': 'language_engine_unavailable',
+                'message': 'Go analysis incomplete: engine binary not found.',
+            }
+        ],
+    }
+    base_cmd = [
+        sys.executable,
+        '-c',
+        f'import sys; print({json.dumps(document)!r}); sys.exit(2)',
+    ]
+    head_cmd = write_fake_detector_script(tmp_path / 'head.json', [BASE_FINDING], output_format='skylos')
+    report = runner_for(tmp_path, tool='skylos').run_escape_hatch(
+        [corpus_project],
+        base_cmd=base_cmd,
+        head_cmd=head_cmd,
+    )
+    (error,) = report.projects[0].errors
+    assert error.detail == (
+        'exit code 2: language_engine_unavailable: Go analysis incomplete: engine binary not found.'
+    )
+    expected_message = 'Go analysis incomplete: engine binary not found.'
+    assert expected_message in render_text(report)
+    assert expected_message in render_github(report)
 
 
 def test_failed_skylos_with_empty_result_buckets_does_not_diff(

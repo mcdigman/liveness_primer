@@ -342,6 +342,34 @@ def test_skylos_accepts_failed_output_with_a_result_bucket() -> None:
     assert finding.symbol == 'a'
 
 
+def test_skylos_extracts_bounded_analysis_error_details() -> None:
+    errors = [{'kind': f'kind-{index}', 'message': f'failure {index}'} for index in range(6)]
+    errors.append({'kind': 'missing-message'})
+    detail = SkylosAdapter.failure_detail(raw(json.dumps({'analysis_errors': errors}), returncode=2))
+    assert detail == '\n'.join(f'kind-{index}: failure {index}' for index in range(5))
+
+
+def test_skylos_failure_detail_accepts_message_without_kind() -> None:
+    detail = SkylosAdapter.failure_detail(raw('{"analysis_errors": [{"message": "failure"}]}', returncode=2))
+    assert detail == 'failure'
+
+
+@pytest.mark.parametrize(
+    'stdout',
+    [
+        'not JSON',
+        '[]',
+        '{}',
+        '{"analysis_errors": {}}',
+        '{"analysis_errors": ["invalid"]}',
+        '{"analysis_errors": [{"kind": "missing-message"}]}',
+        '{"analysis_errors": [{"message": " "}]}',
+    ],
+)
+def test_skylos_failure_detail_rejects_unstructured_output(stdout: str) -> None:
+    assert SkylosAdapter.failure_detail(raw(stdout, returncode=2)) is None
+
+
 def test_vulture_findings_carry_no_invented_rule_id() -> None:
     # Reporting contract §3.1 and acceptance 4: a detector without a native
     # rule ID yields None, never an invented tool-specific code.

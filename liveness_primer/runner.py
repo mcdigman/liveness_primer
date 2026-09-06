@@ -519,9 +519,19 @@ class PrimerRunner:
         _SideOutcome
             The parsed outcome.
         """
+        raw = RawToolOutput(
+            returncode=result.returncode if result.returncode is not None else 0,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
         error: ToolError | None = None
         if result.returncode not in self._adapter.success_exit_codes:
-            detail = f'exit code {result.returncode}: {result.stderr.strip()[-_STDERR_SNIPPET:]}'
+            stderr_detail = result.stderr.strip()[-_STDERR_SNIPPET:]
+            adapter_detail = self._adapter.failure_detail(raw) if not stderr_detail else None
+            error_detail = stderr_detail or (adapter_detail[:_STDERR_SNIPPET] if adapter_detail is not None else '')
+            detail = f'exit code {result.returncode}'
+            if error_detail:
+                detail += f': {error_detail}'
             error = ToolError(side=side, exit_code=result.returncode, detail=detail)
             if not result.stdout.strip():
                 return _SideOutcome(
@@ -531,11 +541,6 @@ class PrimerRunner:
                     duration_seconds=result.duration_seconds,
                     returncode=result.returncode,
                 )
-        raw = RawToolOutput(
-            returncode=result.returncode if result.returncode is not None else 0,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
         try:
             findings = self._adapter.parse(raw, project=item.project.name, root=root, analyses=item.settings.analyses)
         except AdapterError as exc:
