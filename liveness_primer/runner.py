@@ -53,15 +53,11 @@ from liveness_primer.findings import (
 from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
 from liveness_primer.locators import attach_locators
-from liveness_primer.report.sanitize import truncate_end, truncate_start
+from liveness_primer.report.sanitize import FAILURE_DETAIL_PART_CAP, truncate_end, truncate_start
 from liveness_primer.report.source import collect_source_evidence
 from liveness_primer.tools.base import AdapterError, DetectorAdapter, RawToolOutput, build_invocation
 
 GATE_CHOICES = ('new', 'dropped', 'changed', 'any', 'corpus-integrity')
-
-# Bound on each part of a recorded failure detail (contract §8 keeps the
-# full detail in the JSON report, which must still stay readable).
-_DETAIL_CAP = 500
 
 _DIGEST_CHUNK = 1_048_576
 
@@ -533,9 +529,9 @@ class PrimerRunner:
             # traceback ends with the exception) and the detector's own
             # structured detail keeps its head (the first reported errors).
             # Incidental stderr noise must not hide the structured detail.
-            stderr_detail = truncate_start(result.stderr.strip(), _DETAIL_CAP)
-            adapter_detail = self._adapter.failure_detail(raw, root=root) or ''
-            parts = [part for part in (stderr_detail, truncate_end(adapter_detail, _DETAIL_CAP)) if part]
+            stderr_detail = truncate_start(result.stderr.strip(), FAILURE_DETAIL_PART_CAP)
+            adapter_detail = truncate_end(self._adapter.failure_detail(raw, root=root) or '', FAILURE_DETAIL_PART_CAP)
+            parts = [part for part in (stderr_detail, adapter_detail) if part]
             detail = f'exit code {result.returncode}'
             if parts:
                 detail += f': {"; ".join(parts)}'

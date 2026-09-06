@@ -233,7 +233,7 @@ def test_tool_failure_records_stderr_and_structured_detail(tmp_path: Path, corpu
         'import json, os, sys; '
         f'document = json.loads({json.dumps(document)!r}); '
         "document['analysis_errors'][0]['file'] = os.path.join(os.getcwd(), 'pkg', 'broken.py'); "
-        "sys.stderr.write('DeprecationWarning: noise\\n'); "
+        "sys.stderr.write('x' * 600 + 'Traceback END\\n'); "
         'print(json.dumps(document)); '
         'sys.exit(2)'
     )
@@ -244,7 +244,15 @@ def test_tool_failure_records_stderr_and_structured_detail(tmp_path: Path, corpu
         head_cmd=head_cmd,
     )
     (error,) = report.projects[0].errors
-    assert error.detail == 'exit code 2: DeprecationWarning: noise; pkg/broken.py:7: syntax_error: invalid syntax'
+    structured = 'pkg/broken.py:7: syntax_error: invalid syntax'
+    assert error.detail.startswith('exit code 2: ...(+')
+    assert error.detail.endswith(f'xTraceback END; {structured}')
+    # Both accounts survive the human renderers' caps: the stderr tail kept
+    # on purpose and the structured account after it.
+    for rendered in (render_text(report), render_github(report)):
+        assert 'xTraceback END; pkg/broken.py:7: syntax' in rendered
+        assert 'invalid syntax' in rendered
+        assert '...(+' not in rendered.split('xTraceback END', 1)[1]
 
 
 def test_tool_failure_detail_marks_truncated_stderr(tmp_path: Path, corpus_project: CorpusProject) -> None:

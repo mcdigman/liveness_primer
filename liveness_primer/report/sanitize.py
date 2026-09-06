@@ -14,6 +14,15 @@ injection reliably (contract §11).
 
 DEFAULT_INLINE_CAP = 300
 
+# Each account of a failed detector invocation (its stderr tail, its
+# structured detail) is bounded to this many characters when recorded.
+FAILURE_DETAIL_PART_CAP = 500
+
+# Renderers show a recorded failure detail whole: both accounts plus the
+# exit-code prefix, separators, and a parse-failure suffix. Failures are
+# rare (at most one per project side), so this one line may run long.
+FAILURE_DETAIL_RENDER_CAP = 2 * FAILURE_DETAIL_PART_CAP + 200
+
 
 def _clean(text: str) -> str:
     """Replace non-printable characters (controls, separators) with spaces.
