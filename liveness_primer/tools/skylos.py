@@ -3,7 +3,7 @@
 """Adapter for the ``skylos`` dead-code detector (contract §4).
 
 Skylos emits a JSON document on stdout under ``--json``. The dead-code
-arrays and the always-on ``circular_dependencies`` array are always
+arrays and ``circular_dependencies`` array are always
 ingested; the diagnostic arrays (``danger``, ``secrets``, ``quality``,
 ``ai_defects``) are ingested when present — each appears only when a
 corpus config opts into the matching analysis (contract §4, §5).
@@ -13,8 +13,9 @@ import json
 from collections.abc import Mapping
 from pathlib import Path, PurePath
 from types import MappingProxyType
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from liveness_primer.findings import Finding
 from liveness_primer.tools.base import (
@@ -39,11 +40,8 @@ DEAD_CODE_KEYS = (
     'unused_files',
 )
 
-# Cycle array in the skylos JSON document. Circular-dependency analysis is
-# not opt-in: every supported skylos revision runs it unless the analyzed
-# repository turns it off, which the packaged neutral config never does, so
-# the array is ingested alongside the dead-code arrays rather than gated on
-# a selected analysis. Skylos omits the key entirely when it finds no cycle.
+# Cycle array in the skylos JSON document.
+# Skylos omits the key entirely when it finds no cycle.
 CIRCULAR_KEY = 'circular_dependencies'
 
 # Normalized kind stamped onto circular-dependency findings.
@@ -83,7 +81,7 @@ _NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
 _GREP_BUDGET_SECONDS = '150'
 
 # Documented, versioned mapping from each ingested single-rule skylos
-# bucket to its canonical rule ID (reporting contract §3.1). A rule
+# symbol bucket to its canonical rule ID (reporting contract §3.1). A rule
 # ID explicitly present on the detector finding takes precedence; a rule ID
 # is never inferred from free-form message text. The multi-rule
 # ``unused_files`` bucket is deliberately absent: it has no canonical
@@ -136,11 +134,11 @@ class _SkylosDiagnosticEntry(BaseModel):
 class _SkylosCircularEntry(BaseModel):
     """One circular-dependency entry from the skylos JSON array (untrusted input).
 
-    A cycle names modules, not a source location: the entry carries no
-    ``file`` and no ``line``, so the finding is reported against the
-    checkout root. ``cycle`` lists the modules of one cycle in traversal
-    order, which is why it is the field that distinguishes one cycle
-    finding from another.
+    A cycle names modules rather than one symbol, so ``cycle`` is the field
+    that distinguishes one cycle finding from another. Skylos stamps the
+    earliest recorded import edge of the cycle as ``file`` and ``line``;
+    both are absent when the module graph was built without source
+    evidence, and on revisions predating the SKY-CIRC location fix.
     """
 
     model_config = ConfigDict(frozen=True, extra='ignore')
@@ -150,6 +148,32 @@ class _SkylosCircularEntry(BaseModel):
     message: str
     cycle: tuple[str, ...] = Field(min_length=1)
     suggested_break: str | None = None
+    file: str | None = None
+    line: int | None = None
+
+    @model_validator(mode='after')
+    def _check_location(self) -> Self:
+        """Reject a half-located cycle entry.
+
+        Skylos assigns a cycle's ``file`` and ``line`` together or reports
+        neither, so an entry carrying one without the other is malformed
+        rather than a located cycle missing its line, or a locationless one
+        that somehow kept a line number.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If exactly one of ``file`` and ``line`` is present.
+        """
+        if (self.file is None) != (self.line is None):
+            msg = f'cycle location is half-reported: file={self.file!r}, line={self.line!r}'
+            raise ValueError(msg)
+        return self
 
 
 class _SkylosUnusedFileEntry(BaseModel):
@@ -446,28 +470,31 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: PurePa
     )
 
 
-def _parse_circular_entry(raw: object, *, project: str) -> Finding:
+def _parse_circular_entry(raw: object, *, key: str, project: str, root: PurePath) -> Finding:
     """Convert one skylos circular-dependency entry into a finding.
 
-    A cycle is a property of the module graph rather than of one file:
-    skylos reports no path and no line, so the finding takes the
-    repository-level ``.`` path and a point span at line 1. The symbol is
-    the cycle's module set, sorted — that set is skylos's own
+    The symbol is the cycle's module set, sorted — that set is skylos's own
     cycle-uniqueness key, so the same cycle keeps one identity across the
     two compared revisions even when they report it from a different
-    starting module.
+    starting module. A located cycle takes the import edge skylos reported;
+    a cycle reported without one names no file, so it takes the
+    repository-level ``.`` path at a point span on line 1.
 
     Parameters
     ----------
     raw : object
         Untrusted JSON entry.
+    key : str
+        Array name the entry came from, for error context.
     project : str
         Corpus project name to stamp onto the finding.
+    root : PurePath
+        Checkout directory skylos analyzed.
 
     Returns
     -------
     Finding
-        The normalized repository-level finding.
+        The normalized finding.
 
     Raises
     ------
@@ -477,17 +504,22 @@ def _parse_circular_entry(raw: object, *, project: str) -> Finding:
     try:
         entry = _SkylosCircularEntry.model_validate(raw)
     except ValidationError as exc:
-        msg = f'malformed skylos entry in {CIRCULAR_KEY!r}: {exc}'
+        msg = f'malformed skylos entry in {key!r}: {exc}'
         raise AdapterError(msg) from exc
+    # The model guarantees the reported location is a pair or absent.
+    if entry.file is None or entry.line is None:
+        path, line = '.', 1
+    else:
+        path, line = normalize_finding_path(entry.file, root, allow_root=True), max(entry.line, 1)
     return Finding(
         tool=SkylosAdapter.name,
         project=project,
-        path='.',
+        path=path,
         symbol=', '.join(sorted(entry.cycle)),
         kind=_CIRCULAR_KIND,
         message=entry.message,
-        start_line=1,
-        end_line=1,
+        start_line=line,
+        end_line=line,
         severity=entry.severity,
         # An explicit detector rule ID wins; the documented bucket mapping
         # is the fallback (reporting contract §3.1).
@@ -516,10 +548,8 @@ def _parse_bucket(entries: list[object], *, key: str, project: str, root: PurePa
         One finding per entry.
     """
     if key == CIRCULAR_KEY:
-        # Cycle entries report no file, so they need no checkout root to
-        # normalize against.
-        return [_parse_circular_entry(raw, project=project) for raw in entries]
-    if key == 'unused_files':
+        parse_entry = _parse_circular_entry
+    elif key == 'unused_files':
         parse_entry = _parse_unused_file_entry
     elif key in DIAGNOSTIC_KINDS:
         parse_entry = _parse_diagnostic_entry

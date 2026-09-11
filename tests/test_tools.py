@@ -393,15 +393,18 @@ def test_skylos_ingests_circular_dependencies_without_an_opt_in_analysis() -> No
                 'cycle': ['pkg.b', 'pkg.a'],
                 'cycle_length': 2,
                 'suggested_break': 'pkg.a',
+                'file': '/checkout/pkg/b.py',
+                'line': 4,
             }
         ]
     }
     (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
     assert finding.rule_id == 'SKY-CIRC'
     assert finding.kind == 'circular_dependency'
-    # A cycle names modules, not a source location.
-    assert finding.path == '.'
-    assert finding.start_line == finding.end_line == 1
+    # Skylos locates a cycle at the earliest import edge it recorded; the
+    # symbol names the cycle itself, which no single file does.
+    assert finding.path == 'pkg/b.py'
+    assert finding.start_line == finding.end_line == 4
     assert finding.symbol == 'pkg.a, pkg.b'
     assert finding.severity == 'MEDIUM'
     assert finding.confidence is None
@@ -409,8 +412,21 @@ def test_skylos_ingests_circular_dependencies_without_an_opt_in_analysis() -> No
     excerpt = json.loads(finding.raw_excerpt)
     assert excerpt['cycle'] == ['pkg.b', 'pkg.a']
     assert excerpt['suggested_break'] == 'pkg.a'
+    assert excerpt['file'] == '/checkout/pkg/b.py'
+    assert excerpt['line'] == 4
     assert 'category' not in excerpt
     assert 'cycle_length' not in excerpt
+
+
+def test_skylos_locationless_circular_entries_report_the_repository_root() -> None:
+    # A cycle skylos found without source evidence — and every cycle on a
+    # revision predating the SKY-CIRC location fix — names no file, so it
+    # takes the repository-level path at a point span on line 1.
+    document = {'circular_dependencies': [{'message': 'Circular dependency', 'cycle': ['pkg.b', 'pkg.a']}]}
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.path == '.'
+    assert finding.start_line == finding.end_line == 1
+    assert finding.symbol == 'pkg.a, pkg.b'
 
 
 def test_skylos_circular_findings_survive_a_rotated_cycle() -> None:
@@ -443,6 +459,10 @@ def test_skylos_circular_entries_fall_back_to_the_bucket_rule_id() -> None:
         # A cycle finding without its cycle names no subject.
         {'message': 'Circular dependency'},
         {'message': 'Circular dependency', 'cycle': []},
+        # Skylos stamps a cycle's file and line together or reports
+        # neither, so half a location is malformed rather than a default.
+        {'message': 'Circular dependency', 'cycle': ['pkg.a', 'pkg.b'], 'file': 'pkg/b.py'},
+        {'message': 'Circular dependency', 'cycle': ['pkg.a', 'pkg.b'], 'line': 4},
     ],
 )
 def test_skylos_rejects_malformed_circular_entries(entry: dict[str, object]) -> None:

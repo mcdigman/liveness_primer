@@ -115,8 +115,9 @@ point*: pre-triage, triage, or post-triage (§10).
   requirements — `dependencies`/`optional-dependencies` must not be listed in `dynamic`
   (§3); other fields such as `version` may be dynamic and resolve during the sandboxed
   build (vulture's `dynamic = ["version"]` is fine). Detectors with dynamic dependency
-  metadata are unsupported. Adapters ingest dead-code finding kinds by default; a
-  detector's other report categories (e.g. skylos's security, secrets, quality, and
+  metadata are unsupported. Adapters ingest dead-code finding kinds by default, and any
+  other category the detector reports unconditionally (skylos's circular dependencies); a
+  detector's opt-in report categories (e.g. skylos's security, secrets, quality, and
   AI-defect diagnostics) are ingested only where a corpus per-tool table opts in through
   `analyses`, validated against the adapter's declared analysis set (§5). Adapters may
   declare a static, side-identical invocation environment; the skylos adapter pins config

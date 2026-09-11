@@ -36,6 +36,12 @@ independently of the package version; `liveness-primer --version` prints both.
   and Skylos, scoped to `liveness_primer` and `tests` to match the committed
   Dead Code workflow. Skylos is `expected_clean` at the pin; Vulture is not.
 
+### Fixed
+
+- The Skylos adapter now ingests `circular_dependencies` (`SKY-CIRC`).
+  Circular dependencies are on by default, so they go in the same bin
+  as dead code findings.
+
 ## [0.1.1] - 2026-08-21
 
 ### Added
@@ -52,16 +58,9 @@ independently of the package version; `liveness-primer --version` prints both.
 - **Corpus selection** — `-k` now selects a matching project even when the
   project's `include_tools` omits the tool being run. `exclude_tools` remains a
   hard exclusion under every selector.
+
 ### Fixed
 
-- The Skylos adapter now ingests `circular_dependencies` (`SKY-CIRC`).
-  Circular-dependency analysis is always on rather than opt-in, so the
-  bucket joins the dead-code arrays in the stock ingest set instead of
-  being dropped from every comparison. A cycle names modules, not a source
-  location, so its finding takes the repository-level `.` path at line 1
-  and is identified by the cycle's sorted module set — Skylos's own
-  cycle-uniqueness key — keeping one identity when the two compared
-  revisions report the same cycle from a different starting module.
 - The Skylos adapter now ingests `unused_files` (`SKY-E002` and `SKY-E003`)
   findings instead of silently omitting file-level dead-code changes from
   comparisons. The bucket is multi-rule and every supported Skylos revision
