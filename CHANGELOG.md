@@ -36,6 +36,15 @@ independently of the package version; `liveness-primer --version` prints both.
   and Skylos, scoped to `liveness_primer` and `tests` to match the committed
   Dead Code workflow. Skylos is `expected_clean` at the pin; Vulture is not.
 
+### Fixed
+
+- **Detector failure detail** — a failed invocation now records both its
+  stderr tail and the detector's own structured errors (Skylos
+  `analysis_errors`, up to five, each naming the file and line it is about),
+  so stderr noise no longer hides why a run failed. Truncated detail states
+  how much was omitted, and a failure with no diagnostic text no longer ends
+  in a dangling separator. The report schema and CLI are unchanged.
+
 ## [0.1.1] - 2026-08-21
 
 ### Added
