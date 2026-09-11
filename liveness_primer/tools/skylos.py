@@ -3,9 +3,10 @@
 """Adapter for the ``skylos`` dead-code detector (contract §4).
 
 Skylos emits a JSON document on stdout under ``--json``. The dead-code
-arrays are always ingested; the diagnostic arrays (``danger``, ``secrets``,
-``quality``, ``ai_defects``) are ingested when present — each appears only
-when a corpus config opts into the matching analysis (contract §4, §5).
+arrays and the always-on ``circular_dependencies`` array are always
+ingested; the diagnostic arrays (``danger``, ``secrets``, ``quality``,
+``ai_defects``) are ingested when present — each appears only when a
+corpus config opts into the matching analysis (contract §4, §5).
 """
 
 import json
@@ -25,9 +26,10 @@ from liveness_primer.tools.base import (
     normalize_finding_path,
 )
 
-# Dead-code finding arrays in the skylos JSON document; the complete
-# always-ingested bucket list, public so the fake detector emits the same
-# document shape as a real skylos run.
+# Dead-code finding arrays in the skylos JSON document; always ingested,
+# and public so the fake detector emits the same document shape as a real
+# skylos run. ``CIRCULAR_KEY`` is ingested unconditionally too, but skylos
+# emits it only when a cycle exists, so it is not part of this skeleton.
 DEAD_CODE_KEYS = (
     'unused_functions',
     'unused_imports',
@@ -36,6 +38,16 @@ DEAD_CODE_KEYS = (
     'unused_parameters',
     'unused_files',
 )
+
+# Cycle array in the skylos JSON document. Circular-dependency analysis is
+# not opt-in: every supported skylos revision runs it unless the analyzed
+# repository turns it off, which the packaged neutral config never does, so
+# the array is ingested alongside the dead-code arrays rather than gated on
+# a selected analysis. Skylos omits the key entirely when it finds no cycle.
+CIRCULAR_KEY = 'circular_dependencies'
+
+# Normalized kind stamped onto circular-dependency findings.
+_CIRCULAR_KIND = 'circular_dependency'
 
 # Diagnostic arrays, each emitted only under its opt-in analysis flag,
 # mapped to the normalized kind stamped onto its findings. Entries carry a
@@ -71,7 +83,7 @@ _NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
 _GREP_BUDGET_SECONDS = '150'
 
 # Documented, versioned mapping from each ingested single-rule skylos
-# symbol bucket to its canonical rule ID (reporting contract §3.1). A rule
+# bucket to its canonical rule ID (reporting contract §3.1). A rule
 # ID explicitly present on the detector finding takes precedence; a rule ID
 # is never inferred from free-form message text. The multi-rule
 # ``unused_files`` bucket is deliberately absent: it has no canonical
@@ -85,6 +97,7 @@ BUCKET_RULE_IDS = {
     'unused_variables': 'SKY-U003',
     'unused_classes': 'SKY-U004',
     'unused_parameters': 'SKY-U006',
+    CIRCULAR_KEY: 'SKY-CIRC',
 }
 
 
@@ -118,6 +131,25 @@ class _SkylosDiagnosticEntry(BaseModel):
     line: int
     symbol: str | None = None
     name: str | None = None
+
+
+class _SkylosCircularEntry(BaseModel):
+    """One circular-dependency entry from the skylos JSON array (untrusted input).
+
+    A cycle names modules, not a source location: the entry carries no
+    ``file`` and no ``line``, so the finding is reported against the
+    checkout root. ``cycle`` lists the modules of one cycle in traversal
+    order, which is why it is the field that distinguishes one cycle
+    finding from another.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='ignore')
+
+    rule_id: str | None = None
+    severity: str | None = None
+    message: str
+    cycle: tuple[str, ...] = Field(min_length=1)
+    suggested_break: str | None = None
 
 
 class _SkylosUnusedFileEntry(BaseModel):
@@ -227,8 +259,8 @@ class SkylosAdapter:
         Returns
         -------
         list[Finding]
-            One finding per dead-code entry and per diagnostic in a
-            selected analysis array.
+            One finding per dead-code entry, per reported cycle, and per
+            diagnostic in a selected analysis array.
 
         Raises
         ------
@@ -251,20 +283,18 @@ class SkylosAdapter:
         if not isinstance(document, dict):
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
-        result_keys = (*DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected))
+        result_keys = (
+            *DEAD_CODE_KEYS,
+            CIRCULAR_KEY,
+            *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected),
+        )
         findings: list[Finding] = []
         for key in result_keys:
             bucket = document.get(key, [])
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
                 raise AdapterError(msg)
-            if key == 'unused_files':
-                parse_entry = _parse_unused_file_entry
-            elif key in DIAGNOSTIC_KINDS:
-                parse_entry = _parse_diagnostic_entry
-            else:
-                parse_entry = _parse_entry
-            findings.extend(parse_entry(raw, key=key, project=project, root=root) for raw in bucket)
+            findings.extend(_parse_bucket(bucket, key=key, project=project, root=root))
         if output.returncode not in SkylosAdapter.success_exit_codes and not findings:
             msg = 'failed skylos output has no findings in recognized result buckets'
             raise AdapterError(msg)
@@ -414,3 +444,85 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: PurePa
         rule_id=entry.rule_id,
         raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
     )
+
+
+def _parse_circular_entry(raw: object, *, project: str) -> Finding:
+    """Convert one skylos circular-dependency entry into a finding.
+
+    A cycle is a property of the module graph rather than of one file:
+    skylos reports no path and no line, so the finding takes the
+    repository-level ``.`` path and a point span at line 1. The symbol is
+    the cycle's module set, sorted — that set is skylos's own
+    cycle-uniqueness key, so the same cycle keeps one identity across the
+    two compared revisions even when they report it from a different
+    starting module.
+
+    Parameters
+    ----------
+    raw : object
+        Untrusted JSON entry.
+    project : str
+        Corpus project name to stamp onto the finding.
+
+    Returns
+    -------
+    Finding
+        The normalized repository-level finding.
+
+    Raises
+    ------
+    AdapterError
+        If the entry does not carry the guaranteed skylos fields.
+    """
+    try:
+        entry = _SkylosCircularEntry.model_validate(raw)
+    except ValidationError as exc:
+        msg = f'malformed skylos entry in {CIRCULAR_KEY!r}: {exc}'
+        raise AdapterError(msg) from exc
+    return Finding(
+        tool=SkylosAdapter.name,
+        project=project,
+        path='.',
+        symbol=', '.join(sorted(entry.cycle)),
+        kind=_CIRCULAR_KIND,
+        message=entry.message,
+        start_line=1,
+        end_line=1,
+        severity=entry.severity,
+        # An explicit detector rule ID wins; the documented bucket mapping
+        # is the fallback (reporting contract §3.1).
+        rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS[CIRCULAR_KEY],
+        raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
+    )
+
+
+def _parse_bucket(entries: list[object], *, key: str, project: str, root: PurePath) -> list[Finding]:
+    """Convert one skylos result array into findings under its entry shape.
+
+    Parameters
+    ----------
+    entries : list[object]
+        Untrusted JSON entries of the array.
+    key : str
+        Array name the entries came from.
+    project : str
+        Corpus project name to stamp onto the findings.
+    root : PurePath
+        Checkout directory skylos analyzed.
+
+    Returns
+    -------
+    list[Finding]
+        One finding per entry.
+    """
+    if key == CIRCULAR_KEY:
+        # Cycle entries report no file, so they need no checkout root to
+        # normalize against.
+        return [_parse_circular_entry(raw, project=project) for raw in entries]
+    if key == 'unused_files':
+        parse_entry = _parse_unused_file_entry
+    elif key in DIAGNOSTIC_KINDS:
+        parse_entry = _parse_diagnostic_entry
+    else:
+        parse_entry = _parse_entry
+    return [parse_entry(raw, key=key, project=project, root=root) for raw in entries]

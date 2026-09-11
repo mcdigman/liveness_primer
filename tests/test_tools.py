@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from liveness_primer.config import CorpusConfigError, ToolSettings
+from liveness_primer.findings import Finding
 from liveness_primer.tools import adapter_names, get_adapter
 from liveness_primer.tools.base import (
     AdapterError,
@@ -358,7 +359,7 @@ def test_skylos_ingests_diagnostic_buckets_with_per_bucket_kinds() -> None:
         'secrets': [{'rule_id': 'SKY-S101', 'severity': 'CRITICAL', 'message': 'AWS key', 'file': 'a.py', 'line': 2}],
         'quality': [{'rule_id': 'SKY-L014', 'severity': 'HIGH', 'message': 'bare except', 'file': 'a.py', 'line': 3}],
         'ai_defects': [{'rule_id': 'SKY-AI001', 'message': 'hallucinated API', 'file': 'a.py', 'line': 4}],
-        'circular_dependencies': [{'rule_id': 'SKY-CIRC'}],
+        'dependency_vulnerabilities': [{'rule_id': 'SKY-SCA-001'}],
     }
     findings = SkylosAdapter.parse(
         raw(json.dumps(document)),
@@ -376,6 +377,78 @@ def test_skylos_ingests_diagnostic_buckets_with_per_bucket_kinds() -> None:
     assert by_rule['SKY-D001'].severity is None
     assert by_rule['SKY-S101'].severity == 'CRITICAL'
     assert all(finding.confidence is None for finding in findings)
+
+
+def test_skylos_ingests_circular_dependencies_without_an_opt_in_analysis() -> None:
+    # SKY-CIRC is always on, so its bucket is ingested like the dead-code
+    # arrays rather than gated on a selected analysis (contract §4).
+    document = {
+        'circular_dependencies': [
+            {
+                'rule_id': 'SKY-CIRC',
+                'kind': 'circular_dependency',
+                'category': 'ARCHITECTURE',
+                'severity': 'MEDIUM',
+                'message': 'Circular dependency: pkg.b → pkg.a → pkg.b',
+                'cycle': ['pkg.b', 'pkg.a'],
+                'cycle_length': 2,
+                'suggested_break': 'pkg.a',
+            }
+        ]
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.rule_id == 'SKY-CIRC'
+    assert finding.kind == 'circular_dependency'
+    # A cycle names modules, not a source location.
+    assert finding.path == '.'
+    assert finding.start_line == finding.end_line == 1
+    assert finding.symbol == 'pkg.a, pkg.b'
+    assert finding.severity == 'MEDIUM'
+    assert finding.confidence is None
+    assert finding.raw_excerpt is not None
+    excerpt = json.loads(finding.raw_excerpt)
+    assert excerpt['cycle'] == ['pkg.b', 'pkg.a']
+    assert excerpt['suggested_break'] == 'pkg.a'
+    assert 'category' not in excerpt
+    assert 'cycle_length' not in excerpt
+
+
+def test_skylos_circular_findings_survive_a_rotated_cycle() -> None:
+    # Skylos keys cycle uniqueness on the module set, so a report starting
+    # the same cycle at another module must stay one finding identity
+    # rather than a dropped/new pair across the compared revisions.
+    def parse_cycle(cycle: list[str]) -> Finding:
+        document = {'circular_dependencies': [{'message': 'Circular dependency', 'cycle': cycle}]}
+        (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+        return finding
+
+    assert parse_cycle(['pkg.a', 'pkg.b', 'pkg.c']).identity == parse_cycle(['pkg.c', 'pkg.a', 'pkg.b']).identity
+    assert parse_cycle(['pkg.a', 'pkg.b']).identity != parse_cycle(['pkg.a', 'pkg.c']).identity
+
+
+def test_skylos_circular_entries_fall_back_to_the_bucket_rule_id() -> None:
+    # Single-rule bucket: the documented code is the fallback when an entry
+    # omits it (reporting contract §3.1), never invented from the message.
+    document = {'circular_dependencies': [{'message': 'Circular dependency', 'cycle': ['pkg.a', 'pkg.b']}]}
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.rule_id == 'SKY-CIRC'
+    assert finding.severity is None
+
+
+@pytest.mark.parametrize(
+    'entry',
+    [
+        # Guaranteed fields missing outright.
+        {'rule_id': 'SKY-CIRC'},
+        # A cycle finding without its cycle names no subject.
+        {'message': 'Circular dependency'},
+        {'message': 'Circular dependency', 'cycle': []},
+    ],
+)
+def test_skylos_rejects_malformed_circular_entries(entry: dict[str, object]) -> None:
+    document = {'circular_dependencies': [entry]}
+    with pytest.raises(AdapterError, match="malformed skylos entry in 'circular_dependencies'"):
+        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
 
 
 def test_skylos_secret_entries_keep_undeclared_fields_out_of_the_excerpt() -> None:
