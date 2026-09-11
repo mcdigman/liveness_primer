@@ -166,7 +166,8 @@ def open_bounded_regular(path: Path, *, description: str, max_bytes: int) -> Ite
         msg = f'{description} exceeds {max_bytes} bytes'
         raise FilesystemPolicyError(msg)
 
-    with os.fdopen(os.open(path, _READ_ONLY_FLAGS), 'rb') as stream:
+    descriptor = os.open(path, _READ_ONLY_FLAGS)  # skylos: ignore[SKY-D215] no-follow open of a resolved path
+    with os.fdopen(descriptor, 'rb') as stream:
         opened = os.fstat(stream.fileno())
         if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
             inspected.st_dev,

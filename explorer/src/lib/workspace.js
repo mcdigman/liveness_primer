@@ -63,7 +63,6 @@ export function loadWorkspace(storage, digest, knownKeys) {
       return { workspace, failed: false };
     }
     const parsed = /** @type {Partial<ExplorerReview>} */ (JSON.parse(raw));
-    // skylos: ignore[SKY-D253] the digest already keys this entry; a consistency check, not authentication
     if (parsed === null || typeof parsed !== 'object' || parsed.report_sha256 !== digest) {
       return { workspace, failed: false };
     }
