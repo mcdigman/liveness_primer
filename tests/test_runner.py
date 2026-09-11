@@ -1026,7 +1026,7 @@ def test_resolve_native_tools_rejects_an_oversized_executable(
     limit = engine.stat().st_size - 1
     # Lowering the production cap avoids constructing a 256 MiB test artifact;
     # the same size comparison and operator-facing error path are exercised.
-    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', limit)
+    monkeypatch.setattr(runner_module, 'MAX_NATIVE_TOOL_BYTES', limit)
     with pytest.raises(RunnerError, match=rf'native tool exceeds {limit} bytes'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
 
@@ -1047,7 +1047,7 @@ def test_executable_digest_rejects_a_changed_file(
     # the opened inode pins the identity-mismatch branch; it is not end-to-end
     # evidence that the later subprocess executes the recorded digest.
     monkeypatch.setattr(os, 'fstat', changed_fstat)
-    with pytest.raises(RunnerError, match='native tool changed while it was being admitted'):
+    with pytest.raises(RunnerError, match='native tool changed while it was being opened'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
 
 
@@ -1065,7 +1065,7 @@ def test_executable_digest_stops_if_the_file_grows_while_reading(
     # the real stream crosses it, pinning only the post-open growth guard.
     monkeypatch.setattr(Path, 'lstat', lambda _path: bounded_stat)
     monkeypatch.setattr(os, 'fstat', lambda _descriptor: bounded_stat)
-    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', actual_stat.st_size - 1)
+    monkeypatch.setattr(runner_module, 'MAX_NATIVE_TOOL_BYTES', actual_stat.st_size - 1)
     with pytest.raises(RunnerError, match='native tool exceeds'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})
 
