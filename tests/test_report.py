@@ -59,6 +59,8 @@ from liveness_primer.report.sanitize import (
     sanitize_cell,
     sanitize_inline,
     sanitize_location,
+    truncate_end,
+    truncate_start,
 )
 from liveness_primer.report.terminal import TextRenderOptions
 
@@ -952,6 +954,21 @@ def test_sanitize_inline_never_exceeds_tiny_caps(cap: int, expected: str) -> Non
     # Regression: caps below the marker length must fall back to a hard cut
     # rather than exceeding the cap.
     assert sanitize_inline('x' * 50, max_length=cap) == expected
+
+
+def test_truncate_end_keeps_head_with_marker() -> None:
+    assert truncate_end('short', 10) == 'short'
+    assert truncate_end('x' * 400, 300) == 'x' * 291 + '...(+109)'
+    assert truncate_end('x' * 50, 8) == 'xxxxxxxx'
+
+
+def test_truncate_start_keeps_tail_with_marker() -> None:
+    assert truncate_start('short', 10) == 'short'
+    assert truncate_start('a' * 109 + 'b' * 291, 300) == '...(+109)' + 'b' * 291
+    assert truncate_start('y' * 50, 9) == '...(+49)y'
+    # Caps below the marker length fall back to a hard cut of the tail.
+    assert truncate_start('y' * 50, 8) == 'yyyyyyyy'
+    assert not truncate_start('y' * 50, 0)
 
 
 def test_sanitize_location_preserves_beginning_and_ending() -> None:

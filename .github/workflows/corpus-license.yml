@@ -9,7 +9,7 @@ on:
     paths:
       - liveness_primer/data/corpus.yaml
       - .github/workflows/corpus-license.yml
-  pull_request_target:
+  pull_request_target:  # skylos: ignore[SKY-D290] trusted checker treats the PR corpus as data only
     paths: [liveness_primer/data/corpus.yaml]
   workflow_dispatch:
 
@@ -26,6 +26,7 @@ permissions:
 jobs:
   license-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # For pull_request_target, github.sha is the exact default-branch commit,
       # not either endpoint of the pull request. Never check out the PR head in

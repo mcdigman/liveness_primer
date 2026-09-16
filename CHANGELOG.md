@@ -33,8 +33,23 @@ independently of the package version; `liveness-primer --version` prints both.
   Vulture invocation its project commits upstream, so these are the first
   entries to pass `args:` and to pin a confidence floor.
 - **Corpus self-analysis** — Add `liveness-primer` itself, under both Vulture
-  and Skylos, scoped to `liveness_primer` and `tests` to match the committed
-  Dead Code workflow. Skylos is `expected_clean` at the pin; Vulture is not.
+  and Skylos, scoped to `liveness_primer` and `tests`. Skylos is
+  `expected_clean` at the pin; Vulture is not.
+
+### Changed
+
+- **Skylos CI check** — the `Dead Code` workflow is now `Skylos Analysis`
+  (`.github/workflows/skylos.yml`) and additionally runs Skylos's security,
+  secret, and AI-defect analyses.
+
+### Fixed
+
+- **Detector failure detail** — a failed invocation now records both its
+  stderr tail and the detector's own structured errors (Skylos
+  `analysis_errors`, up to five, each naming the file and line it is about),
+  so stderr noise no longer hides why a run failed. Truncated detail states
+  how much was omitted, and a failure with no diagnostic text no longer ends
+  in a dangling separator. The report schema and CLI are unchanged.
 
 ### Fixed
 

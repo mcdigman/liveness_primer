@@ -42,6 +42,13 @@ from liveness_primer.envcache import (
 )
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.execution import LaunchPlan, SideWorkspace
+from liveness_primer.filesystem import (
+    MAX_NATIVE_TOOL_BYTES,
+    FilesystemPolicyError,
+    atomic_write_stream,
+    open_bounded_regular,
+    read_bounded_chunks,
+)
 from liveness_primer.findings import DependencyDelta, EnvironmentRecord, FetchRecord
 from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import LaunchResult, SyncLauncher, run_sync, validate_sync_launcher
@@ -181,7 +188,6 @@ CONTAINER_TMP_ROOT = PurePosixPath('/') / 'tmp'
 CONTAINER_NATIVE_TOOL_ROOT = PurePosixPath('/liveness/native-tools')
 
 _ELF_HEADER_PREFIX_BYTES = 20
-_NATIVE_TOOL_DIGEST_CHUNK_BYTES = 1_048_576
 _ELF64_LITTLE_ENDIAN_IDENT = b'\x7fELF\x02\x01\x01'
 _LINUX_ELF_OS_ABIS = frozenset({0, 3})
 _ELF_EXECUTABLE_TYPES = frozenset({2, 3})
@@ -671,6 +677,96 @@ def _require_regular_source(source: Path, *, description: str) -> None:
         raise ContainerError(msg)
 
 
+def _native_tool_header_and_digest(
+    stream: BinaryIO,
+    *,
+    description: str,
+    destination: BinaryIO | None = None,
+) -> tuple[bytes, str]:
+    """Read, optionally copy, and digest one bounded native helper.
+
+    A stream that outgrows the native-helper limit while it is being read
+    propagates ``read_bounded_chunks``'s ``FilesystemPolicyError``, which
+    ``_read_native_tool`` reports as a ``ContainerError``.
+
+    Taking both from a single open stream binds the validated header to the
+    admitted digest: the bytes that pass the platform check are the same
+    bytes the digest comparison accepts.
+
+    Parameters
+    ----------
+    stream : BinaryIO
+        Binary stream positioned at the start of the helper.
+    description : str
+        Operator-facing name of the helper.
+    destination : BinaryIO | None
+        Staging stream that receives the validated bytes, if any.
+
+    Returns
+    -------
+    tuple[bytes, str]
+        The leading header bytes, short only when the helper ends first,
+        and the SHA-256 of everything read.
+    """
+    header = stream.read(_ELF_HEADER_PREFIX_BYTES)
+    if destination is not None:
+        destination.write(header)
+    digest = hashlib.sha256(header)
+    for chunk in read_bounded_chunks(
+        stream,
+        description=description,
+        max_bytes=MAX_NATIVE_TOOL_BYTES,
+        already_read=len(header),
+    ):
+        if destination is not None:
+            destination.write(chunk)
+        digest.update(chunk)
+    return header, digest.hexdigest()
+
+
+def _read_native_tool(
+    source: Path,
+    *,
+    description: str,
+    destination: BinaryIO | None = None,
+) -> tuple[bytes, str]:
+    """Read one bounded admitted helper, optionally copying it as it is read.
+
+    The shared bounded open is the same one host admission uses, so a helper
+    that passed ``resolve_native_tools`` cannot fail a different check here.
+
+    Parameters
+    ----------
+    source : Path
+        Admitted native-helper path.
+    description : str
+        Operator-facing name of the helper.
+    destination : BinaryIO | None
+        Staging stream that receives the validated bytes, if any.
+
+    Returns
+    -------
+    tuple[bytes, str]
+        The leading header bytes, short only when the helper ends first,
+        and the SHA-256 of everything read.
+
+    Raises
+    ------
+    ContainerError
+        If the helper is missing, is not a regular non-symlink file, exceeds
+        the native-helper size limit, changes while it is being read, or
+        cannot be read.
+    """
+    try:
+        with open_bounded_regular(source, description=description, max_bytes=MAX_NATIVE_TOOL_BYTES) as stream:
+            return _native_tool_header_and_digest(stream, description=description, destination=destination)
+    except FilesystemPolicyError as error:
+        raise ContainerError(str(error)) from error
+    except OSError as error:
+        msg = f'cannot read {description}: {error}'
+        raise ContainerError(msg) from error
+
+
 def stage_static_binary(
     source: Path,
     destination: Path,
@@ -692,31 +788,6 @@ def stage_static_binary(
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
     destination.chmod(0o555)
-
-
-def _native_tool_header_and_digest(stream: BinaryIO) -> tuple[bytes, str]:
-    """Read one helper's ELF header prefix and whole-file digest together.
-
-    Taking both from a single open stream binds the validated header to the
-    admitted digest: the bytes that pass the platform check are the same
-    bytes the digest comparison accepts.
-
-    Parameters
-    ----------
-    stream : BinaryIO
-        Binary stream positioned at the start of the helper.
-
-    Returns
-    -------
-    tuple[bytes, str]
-        The leading header bytes, short only when the helper ends first,
-        and the SHA-256 of everything read.
-    """
-    header = stream.read(_ELF_HEADER_PREFIX_BYTES)
-    digest = hashlib.sha256(header)
-    for chunk in iter(lambda: stream.read(_NATIVE_TOOL_DIGEST_CHUNK_BYTES), b''):
-        digest.update(chunk)
-    return header, digest.hexdigest()
 
 
 def _container_native_tool_target(machine: str) -> tuple[str, int]:
@@ -812,13 +883,7 @@ def validate_container_native_tool_platform(tool: ContainerNativeTool, machine: 
     """
     architecture, expected_machine = _container_native_tool_target(machine)
     description = f'native helper {tool.variable}'
-    _require_regular_source(tool.source, description=description)
-    try:
-        with tool.source.open('rb') as stream:
-            header, actual_digest = _native_tool_header_and_digest(stream)
-    except OSError as error:
-        msg = f'cannot read {description}: {error}'
-        raise ContainerError(msg) from error
+    header, actual_digest = _read_native_tool(tool.source, description=description)
     if actual_digest != tool.sha256:
         msg = f'{description} changed after admission: expected {tool.sha256}, got {actual_digest}'
         raise ContainerError(msg)
@@ -847,6 +912,39 @@ def _validate_container_native_tool_platforms(tools: tuple[ContainerNativeTool, 
         validate_container_native_tool_platform(tool, machine)
 
 
+def _copy_container_native_tool(tool: ContainerNativeTool, destination: BinaryIO, *, machine: str) -> None:
+    """Copy and validate one bounded native helper stream.
+
+    Parameters
+    ----------
+    tool : ContainerNativeTool
+        Admitted helper to copy.
+    destination : BinaryIO
+        Fresh build-context stream.
+    machine : str
+        Runtime image architecture.
+
+    Raises
+    ------
+    ContainerError
+        If the source differs from its admission record, exceeds the
+        native-helper size limit, or cannot run on the runtime image
+        architecture.
+    """
+    architecture, expected_machine = _container_native_tool_target(machine)
+    description = f'native helper {tool.variable}'
+    header, actual_digest = _read_native_tool(tool.source, description=description, destination=destination)
+    if actual_digest != tool.sha256:
+        msg = f'{description} changed after admission: expected {tool.sha256}, got {actual_digest}'
+        raise ContainerError(msg)
+    _validate_container_native_tool_header(
+        header,
+        architecture=architecture,
+        expected_machine=expected_machine,
+        description=description,
+    )
+
+
 def stage_container_native_tool(tool: ContainerNativeTool, destination: Path, *, machine: str) -> None:
     """Snapshot and revalidate one admitted helper in a build context.
 
@@ -862,23 +960,18 @@ def stage_container_native_tool(tool: ContainerNativeTool, destination: Path, *,
     Raises
     ------
     ContainerError
-        If the helper changed after admission or its staged bytes are not a
-        supported Linux ELF executable for the runtime image architecture.
+        If the helper changed after admission, exceeds the native-helper size
+        limit, or its staged bytes are not a supported Linux ELF executable
+        for the runtime image architecture.
     """
-    architecture, expected_machine = _container_native_tool_target(machine)
     description = f'native helper {tool.variable}'
-    stage_static_binary(tool.source, destination, source_description=f'native helper {tool.variable}')
-    with destination.open('rb') as stream:
-        header, actual_digest = _native_tool_header_and_digest(stream)
-    if actual_digest != tool.sha256:
-        msg = f'{description} changed after admission: expected {tool.sha256}, got {actual_digest}'
-        raise ContainerError(msg)
-    _validate_container_native_tool_header(
-        header,
-        architecture=architecture,
-        expected_machine=expected_machine,
-        description=description,
-    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with atomic_write_stream(destination, mode=0o555) as destination_stream:
+            _copy_container_native_tool(tool, destination_stream, machine=machine)
+    except OSError as error:
+        msg = f'cannot stage {description}: {error}'
+        raise ContainerError(msg) from error
 
 
 def _validate_prefetched_binary(path: Path, expected_digest: str) -> None:
