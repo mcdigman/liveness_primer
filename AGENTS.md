@@ -7,7 +7,7 @@ The module uses pre-commit hooks which are run before commit with `prek run --al
 The pre-commit hooks will run `ruff format`.
 Additionally `mypy` and `pyright` are run as CI workflows, with settings in pyproject.toml.
 Write very briefy, numpy style docstrings, which checked by the `pydoclint` CI workflow.
-A `skylos` CI workflow is used for dead code detection.
+A `skylos` CI workflow is used for dead code detection, secrets, ai-defects, and security linting.
 Unit tests are `pytest` style. Unit tests should aim for full branch and line coverage with non-vacuous tests.
 A ``coverage.py` CI workflow enforces thorough testing coverage.
 

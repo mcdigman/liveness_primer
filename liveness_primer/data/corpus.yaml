@@ -501,10 +501,13 @@ projects:
         targets:
           - liveness_primer
           - tests
+          - explorer
         cost: 1.0
       skylos:
         targets:
           - liveness_primer
           - tests
+          - explorer
+          - .github
         expected_clean: true
         cost: 12.0
