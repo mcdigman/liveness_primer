@@ -835,7 +835,7 @@ projects:
   - name: liveness-primer
     repo: https://github.com/mcdigman/liveness_primer
     license: Apache-2.0
-    pin: 8ce55f42ab196f45368e23cb556860246125cc2b
+    pin: be839d2aa5c807265028a68a157b9b39cbfa3d9e
     tools:
       vulture:
         targets:
@@ -847,10 +847,11 @@ projects:
         analyses:
           - danger
           - secrets
+          - ai-defects
         targets:
           - liveness_primer
           - tests
           - explorer
           - .github
         expected_clean: true
-        cost: 5.0
+        cost: 6.0
