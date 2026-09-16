@@ -1,4 +1,4 @@
-name: Dead Code
+name: Skylos Analysis
 
 on:
   push:
@@ -33,7 +33,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache-dependency-glob: "**/pyproject.toml"
 
-      # Dead-code / unreachable-symbol detection. Run unpinned (like the other
-      # uvx-based checks) so CI tracks the current release.
+      # Dead-code, danger, secret, and AI-defect detection. Run unpinned (like
+      # the other uvx-based checks) so CI tracks the current release.
       - name: Run skylos
-        run: uvx skylos liveness_primer tests
+        run: uvx skylos liveness_primer tests --danger --secrets --ai-defects
