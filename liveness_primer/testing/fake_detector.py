@@ -6,9 +6,9 @@ The fake detector reads a JSON script and emits vulture-format report lines
 or a skylos-format JSON document, so runs parse through the real adapters.
 Pointing the escape hatch (``--old-cmd``/``--new-cmd``) at two different
 scripts simulates two fake pinned detector commits; the skylos format can
-carry explicit rule IDs (reporting contract §3.1), and its diagnostic
-buckets (``danger``, ``secrets``, ...) emit diagnostics with severity
-labels.
+carry explicit rule IDs (reporting contract §3.1), its diagnostic buckets
+(``danger``, ``secrets``, ...) emit diagnostics with severity labels, and
+``circular_dependencies`` emits cycle entries.
 """
 
 import json
@@ -20,13 +20,37 @@ from pathlib import Path
 from typing import Literal
 
 from liveness_primer.filesystem import atomic_write_text
-from liveness_primer.tools.skylos import DEAD_CODE_KEYS, DIAGNOSTIC_KINDS
+from liveness_primer.tools.skylos import CIRCULAR_KEY, DEAD_CODE_KEYS, DIAGNOSTIC_KINDS
 
 FakeFormat = Literal['vulture', 'skylos']
 
 # Severity every supported skylos revision stamps on an unused-file entry;
 # a scripted label overrides it.
 _UNUSED_FILE_SEVERITY = 'LOW'
+
+# Rule ID every supported skylos revision stamps on a cycle entry; a
+# scripted rule ID overrides it.
+_CIRCULAR_RULE_ID = 'SKY-CIRC'
+
+
+def _circular_severity(cycle: tuple[str, ...]) -> str:
+    """Grade a cycle the way every supported skylos revision does.
+
+    Parameters
+    ----------
+    cycle : tuple[str, ...]
+        Modules of the reported cycle.
+
+    Returns
+    -------
+    str
+        ``HIGH`` above three modules, ``MEDIUM`` at three, ``LOW`` below.
+    """
+    if len(cycle) > 3:
+        return 'HIGH'
+    if len(cycle) > 2:
+        return 'MEDIUM'
+    return 'LOW'
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +60,9 @@ class FakeFinding:
     Attributes
     ----------
     path : str
-        Repo-relative path to report.
+        Repo-relative path to report. For ``circular_dependencies`` the
+        empty string emits the locationless cycle entry a graph built
+        without source evidence produces.
     line : int
         Line number to report.
     symbol : str
@@ -55,11 +81,16 @@ class FakeFinding:
         SKY-E003 import reachability), so the script states the rule rather
         than the fake guessing one from the path.
     severity : str | None
-        Severity label (skylos diagnostic or unused-file buckets only).
-        Unscripted ``unused_files`` entries carry the ``LOW`` every
-        supported skylos revision stamps on them.
+        Severity label (skylos diagnostic, unused-file, or cycle buckets
+        only). Unscripted ``unused_files`` entries carry the ``LOW`` every
+        supported skylos revision stamps on them; an unscripted cycle is
+        graded by its length, as skylos grades it.
     message : str | None
         Message override (skylos diagnostic or unused-file buckets only).
+    cycle : tuple[str, ...]
+        Modules of the reported cycle (``circular_dependencies`` only), in
+        the traversal order skylos prints them. Required for that bucket:
+        a cycle names modules rather than one symbol.
     """
 
     path: str
@@ -71,6 +102,7 @@ class FakeFinding:
     rule_id: str | None = None
     severity: str | None = None
     message: str | None = None
+    cycle: tuple[str, ...] = ()
 
     def report_line(self) -> str:
         """Format the finding as a vulture report line.
@@ -89,14 +121,37 @@ class FakeFinding:
         -------
         dict[str, object]
             The symbol-level dead-code entry shape, or the dedicated shape
-            for diagnostic and unused-file buckets; optional fields are
-            present only when scripted.
+            for the cycle, diagnostic, and unused-file buckets; optional
+            fields are present only when scripted.
 
         Raises
         ------
         ValueError
-            If an ``unused_files`` finding carries no explicit rule ID.
+            If an ``unused_files`` finding carries no explicit rule ID, or
+            a ``circular_dependencies`` finding names no cycle.
         """
+        if self.bucket == CIRCULAR_KEY:
+            # A cycle names modules rather than one symbol, so the fake
+            # cannot derive one from the scripted symbol. Skylos locates a
+            # cycle at the earliest recorded import edge of the cycle and
+            # reports no location at all when the graph carried no source
+            # evidence, which an empty path scripts. Skylos reports the two
+            # as a pair, so the fake emits neither half alone.
+            if not self.cycle:
+                msg = f'scripted {CIRCULAR_KEY} finding for {self.symbol!r} needs a cycle'
+                raise ValueError(msg)
+            cyclic: dict[str, object] = {
+                'rule_id': self.rule_id if self.rule_id is not None else _CIRCULAR_RULE_ID,
+                'message': self.message
+                if self.message is not None
+                else f'Circular dependency: {" → ".join((*self.cycle, self.cycle[0]))}',
+                'cycle': list(self.cycle),
+                'severity': self.severity if self.severity is not None else _circular_severity(self.cycle),
+            }
+            if self.path:
+                cyclic['file'] = self.path
+                cyclic['line'] = self.line
+            return cyclic
         if self.bucket == 'unused_files':
             # Every supported skylos revision stamps the rule ID explicitly
             # on unused-file entries and the adapter rejects an entry
@@ -215,6 +270,7 @@ def write_fake_detector_script(
                 'rule_id': finding.rule_id,
                 'severity': finding.severity,
                 'message': finding.message,
+                'cycle': list(finding.cycle),
             }
             for finding in findings
         ],
@@ -225,6 +281,23 @@ def write_fake_detector_script(
     }
     atomic_write_text(script_path, json.dumps(script, indent=2))
     return fake_detector_command(script_path)
+
+
+def _scripted_cycle(entry: dict[str, object]) -> list[object]:
+    """Read one scripted entry's cycle modules.
+
+    Parameters
+    ----------
+    entry : dict[str, object]
+        One parsed script finding.
+
+    Returns
+    -------
+    list[object]
+        The scripted modules; empty when the entry names no cycle.
+    """
+    cycle = entry.get('cycle', [])
+    return cycle if isinstance(cycle, list) else []
 
 
 def _scripted_findings(script: dict[str, object]) -> list[FakeFinding]:
@@ -259,6 +332,7 @@ def _scripted_findings(script: dict[str, object]) -> list[FakeFinding]:
                         rule_id=str(rule_id) if rule_id is not None else None,
                         severity=str(severity) if severity is not None else None,
                         message=str(message) if message is not None else None,
+                        cycle=tuple(str(module) for module in _scripted_cycle(entry)),
                     )
                 )
     return findings

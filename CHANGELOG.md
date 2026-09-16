@@ -51,6 +51,12 @@ independently of the package version; `liveness-primer --version` prints both.
   how much was omitted, and a failure with no diagnostic text no longer ends
   in a dangling separator. The report schema and CLI are unchanged.
 
+### Fixed
+
+- The Skylos adapter now ingests `circular_dependencies` (`SKY-CIRC`).
+  Circular dependencies are on by default, so they go in the same bin
+  as dead code findings.
+
 ## [0.1.1] - 2026-08-21
 
 ### Added
@@ -67,6 +73,7 @@ independently of the package version; `liveness-primer --version` prints both.
 - **Corpus selection** — `-k` now selects a matching project even when the
   project's `include_tools` omits the tool being run. `exclude_tools` remains a
   hard exclusion under every selector.
+
 ### Fixed
 
 - The Skylos adapter now ingests `unused_files` (`SKY-E002` and `SKY-E003`)
