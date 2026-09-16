@@ -40,10 +40,7 @@ independently of the package version; `liveness-primer --version` prints both.
 
 - **Skylos CI check** — the `Dead Code` workflow is now `Skylos Analysis`
   (`.github/workflows/skylos.yml`) and additionally runs Skylos's security,
-  secret, and AI-defect analyses. The scan covers the whole repository rather
-  than the package, because the secret and AI-defect rules read files a
-  package-only scan never sees, and it runs under `--strict`, without which
-  Skylos exits 0 even on critical findings.
+  secret, and AI-defect analyses.
 
 ### Fixed
 

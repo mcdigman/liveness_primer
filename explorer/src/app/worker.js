@@ -1,5 +1,4 @@
-// skylos: ignore[SKY-E003] esbuild entry point (build.mjs), so nothing
-// imports it; the rule reports the file at line 1.
+// skylos: ignore[SKY-E003] (reported false positive in Skylos #852)
 // Import worker (explorer contract §8): digesting, parsing, and
 // structural validation of an untrusted report run off the main thread so
 // the shell stays responsive and cancelable. The main thread terminates
