@@ -841,6 +841,7 @@ projects:
         targets:
           - liveness_primer
           - tests
+          - explorer
         cost: 1.0
       skylos:
         analyses:
@@ -849,5 +850,7 @@ projects:
         targets:
           - liveness_primer
           - tests
+          - explorer
+          - .github
         expected_clean: true
         cost: 5.0

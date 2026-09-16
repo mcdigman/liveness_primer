@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from liveness_primer.config import CorpusConfigError, ToolSettings
+from liveness_primer.findings import Finding
 from liveness_primer.tools import adapter_names, get_adapter
 from liveness_primer.tools.base import (
     AdapterError,
@@ -342,6 +343,67 @@ def test_skylos_accepts_failed_output_with_a_result_bucket() -> None:
     assert finding.symbol == 'a'
 
 
+def test_skylos_extracts_bounded_analysis_error_details() -> None:
+    errors = [{'kind': f'kind-{index}', 'message': f'failure {index}'} for index in range(6)]
+    errors.append({'kind': 'missing-message'})
+    detail = SkylosAdapter.failure_detail(raw(json.dumps({'analysis_errors': errors}), returncode=2), root=ROOT)
+    # Entries are joined on one line: renderers flatten newlines to spaces.
+    assert detail == '; '.join(f'kind-{index}: failure {index}' for index in range(5))
+
+
+def test_skylos_failure_detail_accepts_message_without_kind() -> None:
+    output = raw('{"analysis_errors": [{"message": "failure"}]}', returncode=2)
+    assert SkylosAdapter.failure_detail(output, root=ROOT) == 'failure'
+
+
+def test_skylos_failure_detail_names_the_failed_file() -> None:
+    # Skylos reports one error per skipped file; the location is what tells
+    # them apart.
+    errors = [
+        {'kind': 'syntax_error', 'message': 'invalid syntax', 'file': '/checkout/pkg/a.py', 'line': 3},
+        {'kind': 'processing_error', 'message': 'boom', 'file': 'pkg/b.py'},
+        {'message': 'symlink scan root', 'file': '/checkout'},
+    ]
+    detail = SkylosAdapter.failure_detail(raw(json.dumps({'analysis_errors': errors}), returncode=2), root=ROOT)
+    assert detail == 'pkg/a.py:3: syntax_error: invalid syntax; pkg/b.py: processing_error: boom; .: symlink scan root'
+
+
+@pytest.mark.parametrize(
+    'entry',
+    [
+        {'file': '/elsewhere/a.py', 'line': 3},
+        {'file': '../escape.py'},
+        {'file': 5},
+        {'file': ' '},
+    ],
+)
+def test_skylos_failure_detail_omits_unusable_locations(entry: dict[str, object]) -> None:
+    document = {'analysis_errors': [{'kind': 'k', 'message': 'm', **entry}]}
+    assert SkylosAdapter.failure_detail(raw(json.dumps(document), returncode=2), root=ROOT) == 'k: m'
+
+
+@pytest.mark.parametrize('line', [0, -1, True, '3', None])
+def test_skylos_failure_detail_ignores_invalid_lines(line: object) -> None:
+    document = {'analysis_errors': [{'message': 'm', 'file': 'pkg/a.py', 'line': line}]}
+    assert SkylosAdapter.failure_detail(raw(json.dumps(document), returncode=2), root=ROOT) == 'pkg/a.py: m'
+
+
+@pytest.mark.parametrize(
+    'stdout',
+    [
+        'not JSON',
+        '[]',
+        '{}',
+        '{"analysis_errors": {}}',
+        '{"analysis_errors": ["invalid"]}',
+        '{"analysis_errors": [{"kind": "missing-message"}]}',
+        '{"analysis_errors": [{"message": " "}]}',
+    ],
+)
+def test_skylos_failure_detail_rejects_unstructured_output(stdout: str) -> None:
+    assert SkylosAdapter.failure_detail(raw(stdout, returncode=2), root=ROOT) is None
+
+
 def test_vulture_findings_carry_no_invented_rule_id() -> None:
     # Reporting contract §3.1 and acceptance 4: a detector without a native
     # rule ID yields None, never an invented tool-specific code.
@@ -358,7 +420,7 @@ def test_skylos_ingests_diagnostic_buckets_with_per_bucket_kinds() -> None:
         'secrets': [{'rule_id': 'SKY-S101', 'severity': 'CRITICAL', 'message': 'AWS key', 'file': 'a.py', 'line': 2}],
         'quality': [{'rule_id': 'SKY-L014', 'severity': 'HIGH', 'message': 'bare except', 'file': 'a.py', 'line': 3}],
         'ai_defects': [{'rule_id': 'SKY-AI001', 'message': 'hallucinated API', 'file': 'a.py', 'line': 4}],
-        'circular_dependencies': [{'rule_id': 'SKY-CIRC'}],
+        'dependency_vulnerabilities': [{'rule_id': 'SKY-SCA-001'}],
     }
     findings = SkylosAdapter.parse(
         raw(json.dumps(document)),
@@ -376,6 +438,98 @@ def test_skylos_ingests_diagnostic_buckets_with_per_bucket_kinds() -> None:
     assert by_rule['SKY-D001'].severity is None
     assert by_rule['SKY-S101'].severity == 'CRITICAL'
     assert all(finding.confidence is None for finding in findings)
+
+
+def test_skylos_ingests_circular_dependencies_without_an_opt_in_analysis() -> None:
+    # SKY-CIRC is always on, so its bucket is ingested like the dead-code
+    # arrays rather than gated on a selected analysis (contract §4).
+    document = {
+        'circular_dependencies': [
+            {
+                'rule_id': 'SKY-CIRC',
+                'kind': 'circular_dependency',
+                'category': 'ARCHITECTURE',
+                'severity': 'MEDIUM',
+                'message': 'Circular dependency: pkg.b → pkg.a → pkg.b',
+                'cycle': ['pkg.b', 'pkg.a'],
+                'cycle_length': 2,
+                'suggested_break': 'pkg.a',
+                'file': '/checkout/pkg/b.py',
+                'line': 4,
+            }
+        ]
+    }
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.rule_id == 'SKY-CIRC'
+    assert finding.kind == 'circular_dependency'
+    # Skylos locates a cycle at the earliest import edge it recorded; the
+    # symbol names the cycle itself, which no single file does.
+    assert finding.path == 'pkg/b.py'
+    assert finding.start_line == finding.end_line == 4
+    assert finding.symbol == 'pkg.a, pkg.b'
+    assert finding.severity == 'MEDIUM'
+    assert finding.confidence is None
+    assert finding.raw_excerpt is not None
+    excerpt = json.loads(finding.raw_excerpt)
+    assert excerpt['cycle'] == ['pkg.b', 'pkg.a']
+    assert excerpt['suggested_break'] == 'pkg.a'
+    assert excerpt['file'] == '/checkout/pkg/b.py'
+    assert excerpt['line'] == 4
+    assert 'category' not in excerpt
+    assert 'cycle_length' not in excerpt
+
+
+def test_skylos_locationless_circular_entries_report_the_repository_root() -> None:
+    # A cycle skylos found without source evidence — and every cycle on a
+    # revision predating the SKY-CIRC location fix — names no file, so it
+    # takes the repository-level path at a point span on line 1.
+    document = {'circular_dependencies': [{'message': 'Circular dependency', 'cycle': ['pkg.b', 'pkg.a']}]}
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.path == '.'
+    assert finding.start_line == finding.end_line == 1
+    assert finding.symbol == 'pkg.a, pkg.b'
+
+
+def test_skylos_circular_findings_survive_a_rotated_cycle() -> None:
+    # Skylos keys cycle uniqueness on the module set, so a report starting
+    # the same cycle at another module must stay one finding identity
+    # rather than a dropped/new pair across the compared revisions.
+    def parse_cycle(cycle: list[str]) -> Finding:
+        document = {'circular_dependencies': [{'message': 'Circular dependency', 'cycle': cycle}]}
+        (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+        return finding
+
+    assert parse_cycle(['pkg.a', 'pkg.b', 'pkg.c']).identity == parse_cycle(['pkg.c', 'pkg.a', 'pkg.b']).identity
+    assert parse_cycle(['pkg.a', 'pkg.b']).identity != parse_cycle(['pkg.a', 'pkg.c']).identity
+
+
+def test_skylos_circular_entries_fall_back_to_the_bucket_rule_id() -> None:
+    # Single-rule bucket: the documented code is the fallback when an entry
+    # omits it (reporting contract §3.1), never invented from the message.
+    document = {'circular_dependencies': [{'message': 'Circular dependency', 'cycle': ['pkg.a', 'pkg.b']}]}
+    (finding,) = SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
+    assert finding.rule_id == 'SKY-CIRC'
+    assert finding.severity is None
+
+
+@pytest.mark.parametrize(
+    'entry',
+    [
+        # Guaranteed fields missing outright.
+        {'rule_id': 'SKY-CIRC'},
+        # A cycle finding without its cycle names no subject.
+        {'message': 'Circular dependency'},
+        {'message': 'Circular dependency', 'cycle': []},
+        # Skylos stamps a cycle's file and line together or reports
+        # neither, so half a location is malformed rather than a default.
+        {'message': 'Circular dependency', 'cycle': ['pkg.a', 'pkg.b'], 'file': 'pkg/b.py'},
+        {'message': 'Circular dependency', 'cycle': ['pkg.a', 'pkg.b'], 'line': 4},
+    ],
+)
+def test_skylos_rejects_malformed_circular_entries(entry: dict[str, object]) -> None:
+    document = {'circular_dependencies': [entry]}
+    with pytest.raises(AdapterError, match="malformed skylos entry in 'circular_dependencies'"):
+        SkylosAdapter.parse(raw(json.dumps(document)), project='demo', root=ROOT)
 
 
 def test_skylos_secret_entries_keep_undeclared_fields_out_of_the_excerpt() -> None:

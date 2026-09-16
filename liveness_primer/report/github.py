@@ -42,6 +42,7 @@ from liveness_primer.report.common import (
 )
 from liveness_primer.report.permalink import source_url, tree_url
 from liveness_primer.report.sanitize import (
+    FAILURE_DETAIL_RENDER_CAP,
     code_cell,
     code_span,
     escape_argv_text,
@@ -262,8 +263,12 @@ def _project_lines(project: ProjectReport, *, manifest: RunManifest, has_severit
             lines.append(f'- **corpus**: {repo_label} @ {sha_label}')
     lines.extend(f'- **rollup**: {sanitize_cell(rollup)}' for rollup in rollup_lines(project.rollups))
     # Error details quote detector stderr — attacker-influenced text that
-    # must not reach markdown unescaped (contract §9).
-    lines.extend(f'- **error[{error.side}]**: {sanitize_cell(error.detail)}' for error in project.errors)
+    # must not reach markdown unescaped (contract §9). They are rendered
+    # whole so the structured account after the stderr tail survives.
+    lines.extend(
+        f'- **error[{error.side}]**: {sanitize_cell(error.detail, max_length=FAILURE_DETAIL_RENDER_CAP)}'
+        for error in project.errors
+    )
     lines.extend(
         f'- **warning[corpus-integrity]**: {sanitize_cell(warning.detail)}' for warning in project.integrity_warnings
     )

@@ -5,11 +5,12 @@
 import hashlib
 import os
 import shutil
+import stat
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, BinaryIO, Literal, cast
 
 import pytest
 from filelock import FileLock
@@ -393,6 +394,37 @@ def test_ripgrep_artifact_for_rejects_unsupported_architecture() -> None:
         ripgrep_artifact_for('s390x')
 
 
+def linux_elf_bytes(
+    architecture: Literal['aarch64', 'x86_64'],
+    *,
+    elf_type: int = 2,
+    os_abi: int = 0,
+) -> bytes:
+    """Build the ELF header prefix used by native-helper tests.
+
+    Parameters
+    ----------
+    architecture : Literal['aarch64', 'x86_64']
+        Target machine architecture.
+    elf_type : int
+        ELF object type.
+    os_abi : int
+        ELF OS ABI.
+
+    Returns
+    -------
+    bytes
+        Synthetic ELF header bytes.
+    """
+    machine = {'x86_64': 62, 'aarch64': 183}[architecture]
+    header = bytearray(32)
+    header[:7] = b'\x7fELF\x02\x01\x01'
+    header[7] = os_abi
+    header[16:18] = elf_type.to_bytes(2, byteorder='little')
+    header[18:20] = machine.to_bytes(2, byteorder='little')
+    return bytes(header)
+
+
 def write_linux_elf(
     path: Path,
     architecture: Literal['aarch64', 'x86_64'],
@@ -407,13 +439,7 @@ def write_linux_elf(
     Path
         Executable test-file path.
     """
-    machine = {'x86_64': 62, 'aarch64': 183}[architecture]
-    header = bytearray(32)
-    header[:7] = b'\x7fELF\x02\x01\x01'
-    header[7] = os_abi
-    header[16:18] = elf_type.to_bytes(2, byteorder='little')
-    header[18:20] = machine.to_bytes(2, byteorder='little')
-    atomic_write_bytes(path, bytes(header))
+    atomic_write_bytes(path, linux_elf_bytes(architecture, elf_type=elf_type, os_abi=os_abi))
     path.chmod(0o755)
     return path
 
@@ -488,7 +514,8 @@ def test_stage_container_native_tool_names_an_invalid_operator_source(tmp_path: 
     target = tmp_path / 'engine'
     atomic_write_bytes(target, b'engine')
     missing.symlink_to(target)
-    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN is not a regular file: skylos-go'):
+    not_regular = 'native helper SKYLOS_GO_BIN is not a regular non-symlink file: skylos-go'
+    with pytest.raises(ContainerError, match=not_regular):
         stage_container_native_tool(tool, tmp_path / 'context' / tool.variable, machine='aarch64')
 
 
@@ -530,10 +557,11 @@ def test_validate_container_native_tool_rejects_invalid_elf(tmp_path: Path, payl
 def test_validate_container_native_tool_rejects_non_executable_or_non_linux_elf(
     tmp_path: Path, elf_type: int, os_abi: int
 ) -> None:
-    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64', elf_type=elf_type, os_abi=os_abi)
-    tool = ContainerNativeTool(
-        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
-    )
+    source = tmp_path / 'skylos-go'
+    payload = linux_elf_bytes('aarch64', elf_type=elf_type, os_abi=os_abi)
+    atomic_write_bytes(source, payload)
+    source.chmod(0o755)
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(payload).hexdigest())
     with pytest.raises(ContainerError, match='not a supported 64-bit Linux ELF executable'):
         validate_container_native_tool_platform(tool, 'aarch64')
 
@@ -549,19 +577,171 @@ def test_validate_container_native_tool_rejects_wrong_or_unsupported_architectur
         validate_container_native_tool_platform(tool, 's390x')
 
 
+def test_validate_container_native_tool_rejects_oversized_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    monkeypatch.setattr(container_module, 'MAX_NATIVE_TOOL_BYTES', source.stat().st_size - 1)
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN exceeds 31 bytes'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+def test_validate_container_native_tool_rejects_a_source_that_grows_while_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / 'skylos-go'
+    payload = linux_elf_bytes('aarch64')[:20]
+    atomic_write_bytes(source, payload)
+    source.chmod(0o755)
+    initial_status = source.stat()
+    real_open = os.open
+
+    # os.open is the only descriptor source the bounded open uses, so growing
+    # the file here lands between the lstat and the read without a real race.
+    def grow_then_open(path: Path, flags: int) -> int:
+        if Path(path) == source:
+            with source.open('ab') as stream:
+                stream.write(b'x')
+        return real_open(path, flags)
+
+    monkeypatch.setattr(container_module, 'MAX_NATIVE_TOOL_BYTES', len(payload))
+    monkeypatch.setattr(os, 'open', grow_then_open)
+    monkeypatch.setattr(os, 'fstat', lambda _descriptor: initial_status)
+    tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(payload).hexdigest())
+    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN exceeds 20 bytes'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+def test_validate_container_native_tool_rejects_opened_file_identity_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    replacement = write_linux_elf(tmp_path / 'replacement', 'aarch64')
+    real_open = os.open
+
+    def open_replacement(path: Path, flags: int) -> int:
+        return real_open(replacement if Path(path) == source else path, flags)
+
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    monkeypatch.setattr(os, 'open', open_replacement)
+    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN changed while it was being opened'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+def test_validate_container_native_tool_rejects_opened_file_growth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    source_status = source.stat()
+    status_values = list(source_status)
+    status_values[stat.ST_SIZE] = source_status.st_size + 1
+    opened_status = os.stat_result(status_values)
+    monkeypatch.setattr(container_module, 'MAX_NATIVE_TOOL_BYTES', source_status.st_size)
+    monkeypatch.setattr(os, 'fstat', lambda _descriptor: opened_status)
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN exceeds 32 bytes'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+def test_validate_container_native_tool_wraps_descriptor_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+    def deny_fstat(_descriptor: int) -> os.stat_result:
+        message = 'denied descriptor'
+        raise PermissionError(message)
+
+    monkeypatch.setattr(os, 'fstat', deny_fstat)
+    with pytest.raises(ContainerError, match='cannot read native helper SKYLOS_GO_BIN: denied descriptor'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
 def test_validate_container_native_tool_wraps_read_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
     tool = ContainerNativeTool(
         variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
     )
 
-    def deny_open(_path: Path, _mode: str) -> None:
-        message = 'denied'
-        raise PermissionError(message)
+    real_open = os.open
 
-    monkeypatch.setattr(Path, 'open', deny_open)
+    def deny_open(path: Path, flags: int) -> int:
+        if Path(path) == source:
+            message = 'denied'
+            raise PermissionError(message)
+        return real_open(path, flags)
+
+    monkeypatch.setattr(os, 'open', deny_open)
     with pytest.raises(ContainerError, match='cannot read native helper SKYLOS_GO_BIN: denied'):
         validate_container_native_tool_platform(tool, 'aarch64')
+
+
+def test_validate_container_native_tool_wraps_stream_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+    def deny_read(
+        _stream: BinaryIO,
+        *,
+        description: str,
+        destination: BinaryIO | None = None,
+    ) -> tuple[bytes, str]:
+        assert description == 'native helper SKYLOS_GO_BIN'
+        assert destination is None
+        message = 'denied stream'
+        raise PermissionError(message)
+
+    monkeypatch.setattr(container_module, '_native_tool_header_and_digest', deny_read)
+    with pytest.raises(ContainerError, match='cannot read native helper SKYLOS_GO_BIN: denied stream'):
+        validate_container_native_tool_platform(tool, 'aarch64')
+
+
+def test_stage_container_native_tool_wraps_replacement_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    destination = tmp_path / 'context' / 'native-tools' / 'SKYLOS_GO_BIN'
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+    def deny_replace(_source: Path, _target: Path) -> Path:
+        message = 'denied replacement'
+        raise PermissionError(message)
+
+    monkeypatch.setattr(Path, 'replace', deny_replace)
+    with pytest.raises(ContainerError, match='cannot stage native helper SKYLOS_GO_BIN: denied replacement'):
+        stage_container_native_tool(tool, destination, machine='aarch64')
+    assert not destination.exists()
+
+
+def test_stage_container_native_tool_closes_a_descriptor_when_stream_creation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = write_linux_elf(tmp_path / 'skylos-go', 'aarch64')
+    destination = tmp_path / 'context' / 'native-tools' / 'SKYLOS_GO_BIN'
+    tool = ContainerNativeTool(
+        variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+    def deny_fdopen(_descriptor: int, _mode: str) -> BinaryIO:
+        message = 'denied stream creation'
+        raise PermissionError(message)
+
+    monkeypatch.setattr(os, 'fdopen', deny_fdopen)
+    with pytest.raises(ContainerError, match='cannot stage native helper SKYLOS_GO_BIN: denied stream creation'):
+        stage_container_native_tool(tool, destination, machine='aarch64')
+    assert not destination.exists()
 
 
 def requirement_wheel(requirement: str) -> str:

@@ -1,4 +1,4 @@
-name: Dead Code
+name: Skylos Analysis
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deadcode-${{ github.ref }}
+  group: skylos-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -33,7 +33,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache-dependency-glob: "**/pyproject.toml"
 
-      # Dead-code / unreachable-symbol detection. Run unpinned (like the other
-      # uvx-based checks) so CI tracks the current release.
+      # Dead-code, security, secret, and AI-defect analysis. Run unpinned (like
+      # the other uvx-based checks) so CI tracks the current release.
       - name: Run skylos
-        run: uvx skylos liveness_primer tests
+        run: uvx skylos . --danger --secrets --ai-defects --strict

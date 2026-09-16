@@ -96,6 +96,15 @@ The Skylos JSON buckets currently ingested by `liveness_primer` map as follows:
 | `unused_variables` | `SKY-U003` | unused variable or constant |
 | `unused_classes` | `SKY-U004` | unused class or type |
 | `unused_parameters` | `SKY-U006` | unused parameter |
+| `circular_dependencies` | `SKY-CIRC` | import cycle among modules |
+
+Circular-dependency analysis is not opt-in — every supported Skylos revision runs it unless
+the analyzed repository turns it off — so the bucket is ingested alongside the dead-code
+arrays. A cycle's subject is its module set, not a symbol; the adapter uses that set, sorted,
+which is Skylos's own cycle-uniqueness key, so one cycle keeps one identity across revisions
+reporting it from a different starting module. Revisions since the SKY-CIRC location fix
+report the earliest import edge of the cycle; an entry reporting no location names no file
+and takes the repository-level `.` path at line 1.
 
 The `unused_files` bucket is also ingested but has no bucket fallback: it is a multi-rule
 bucket whose entries every supported Skylos revision stamps with an explicit `rule_id`

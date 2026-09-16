@@ -46,7 +46,12 @@ from liveness_primer.report.common import (
     totals_text,
 )
 from liveness_primer.report.permalink import source_url, tree_reference
-from liveness_primer.report.sanitize import escape_argv_text, sanitize_inline, sanitize_location
+from liveness_primer.report.sanitize import (
+    FAILURE_DETAIL_RENDER_CAP,
+    escape_argv_text,
+    sanitize_inline,
+    sanitize_location,
+)
 from liveness_primer.report.table import (
     Cell,
     Line,
@@ -689,7 +694,10 @@ def _project_lines(
         lines.append(_corpus_line(pin, options=options))
     lines.extend(_plain_line('  ' + rollup) for rollup in rollup_lines(project.rollups))
     lines.extend(
-        _plain_line(f'  error[{error.side}]: {sanitize_inline(error.detail)}', 'error') for error in project.errors
+        _plain_line(
+            f'  error[{error.side}]: {sanitize_inline(error.detail, max_length=FAILURE_DETAIL_RENDER_CAP)}', 'error'
+        )
+        for error in project.errors
     )
     lines.extend(
         _plain_line(f'  warning[corpus-integrity]: {sanitize_inline(warning.detail)}', 'warning')

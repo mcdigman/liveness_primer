@@ -33,8 +33,29 @@ independently of the package version; `liveness-primer --version` prints both.
   Vulture invocation its project commits upstream, so these are the first
   entries to pass `args:` and to pin a confidence floor.
 - **Corpus self-analysis** — Add `liveness-primer` itself, under both Vulture
-  and Skylos, scoped to `liveness_primer` and `tests` to match the committed
-  Dead Code workflow. Skylos is `expected_clean` at the pin; Vulture is not.
+  and Skylos, scoped to `liveness_primer` and `tests`. Skylos is
+  `expected_clean` at the pin; Vulture is not.
+
+### Changed
+
+- **Skylos CI check** — the `Dead Code` workflow is now `Skylos Analysis`
+  (`.github/workflows/skylos.yml`) and additionally runs Skylos's security,
+  secret, and AI-defect analyses.
+
+### Fixed
+
+- **Detector failure detail** — a failed invocation now records both its
+  stderr tail and the detector's own structured errors (Skylos
+  `analysis_errors`, up to five, each naming the file and line it is about),
+  so stderr noise no longer hides why a run failed. Truncated detail states
+  how much was omitted, and a failure with no diagnostic text no longer ends
+  in a dangling separator. The report schema and CLI are unchanged.
+
+### Fixed
+
+- The Skylos adapter now ingests `circular_dependencies` (`SKY-CIRC`).
+  Circular dependencies are on by default, so they go in the same bin
+  as dead code findings.
 
 ## [0.1.1] - 2026-08-21
 
@@ -52,6 +73,7 @@ independently of the package version; `liveness-primer --version` prints both.
 - **Corpus selection** — `-k` now selects a matching project even when the
   project's `include_tools` omits the tool being run. `exclude_tools` remains a
   hard exclusion under every selector.
+
 ### Fixed
 
 - The Skylos adapter now ingests `unused_files` (`SKY-E002` and `SKY-E003`)

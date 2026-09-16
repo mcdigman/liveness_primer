@@ -22,7 +22,8 @@ from liveness_primer.launcher import LauncherError, SyncLauncher, run_async, run
 from liveness_primer.testing import FakeFinding, create_fake_project, write_fake_detector_script
 from liveness_primer.testing.fake_detector import main
 from liveness_primer.testing.fake_project import DEFAULT_FILES, FakeProjectError
-from liveness_primer.tools.skylos import DEAD_CODE_KEYS
+from liveness_primer.tools.base import RawToolOutput
+from liveness_primer.tools.skylos import DEAD_CODE_KEYS, SkylosAdapter
 
 
 def test_fake_finding_report_line_matches_vulture_format() -> None:
@@ -315,6 +316,83 @@ def test_fake_skylos_unused_file_requires_an_explicit_rule_id() -> None:
         finding.skylos_entry()
 
 
+def test_main_emits_skylos_circular_entries(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The cycle bucket emits its own entry shape: the scripted modules, the
+    # rule ID and severity every supported skylos revision stamps on a
+    # cycle, and the import edge skylos locates the cycle at. An empty path
+    # scripts the locationless entry a source-less module graph produces.
+    command = write_fake_detector_script(
+        tmp_path / 'script.json',
+        [
+            FakeFinding(
+                path='pkg/b.py',
+                line=4,
+                symbol='pkg.a, pkg.b',
+                bucket='circular_dependencies',
+                cycle=('pkg.b', 'pkg.a'),
+                severity='MEDIUM',
+            ),
+            FakeFinding(
+                path='',
+                line=1,
+                symbol='pkg.c, pkg.d',
+                bucket='circular_dependencies',
+                cycle=('pkg.c', 'pkg.d'),
+            ),
+        ],
+        output_format='skylos',
+    )
+    assert main([*command[3:], '.']) == 0
+    document = json.loads(capsys.readouterr().out)
+    located, locationless = document['circular_dependencies']
+    assert located == {
+        'rule_id': 'SKY-CIRC',
+        'message': 'Circular dependency: pkg.b → pkg.a → pkg.b',
+        'cycle': ['pkg.b', 'pkg.a'],
+        'severity': 'MEDIUM',
+        'file': 'pkg/b.py',
+        'line': 4,
+    }
+    assert locationless == {
+        'rule_id': 'SKY-CIRC',
+        'message': 'Circular dependency: pkg.c → pkg.d → pkg.c',
+        'cycle': ['pkg.c', 'pkg.d'],
+        'severity': 'LOW',
+    }
+    # The whole point of the fake is that the real adapter ingests it.
+    output = RawToolOutput(returncode=0, stdout=json.dumps(document), stderr='')
+    cyclic = SkylosAdapter.parse(output, project='demo', root=Path('/checkout'))
+    assert [(finding.path, finding.start_line, finding.symbol) for finding in cyclic] == [
+        ('pkg/b.py', 4, 'pkg.a, pkg.b'),
+        ('.', 1, 'pkg.c, pkg.d'),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('cycle', 'severity'),
+    [
+        (('pkg.a', 'pkg.b'), 'LOW'),
+        (('pkg.a', 'pkg.b', 'pkg.c'), 'MEDIUM'),
+        (('pkg.a', 'pkg.b', 'pkg.c', 'pkg.d'), 'HIGH'),
+    ],
+)
+def test_fake_skylos_circular_severity_follows_cycle_length(cycle: tuple[str, ...], severity: str) -> None:
+    # Skylos grades a cycle by how many modules it spans, so an unscripted
+    # entry carries the label the real detector would have stamped.
+    finding = FakeFinding(path='', line=1, symbol=', '.join(cycle), bucket='circular_dependencies', cycle=cycle)
+    assert finding.skylos_entry()['severity'] == severity
+
+
+def test_fake_skylos_circular_finding_requires_a_cycle() -> None:
+    """Reject a scripted cycle finding naming no modules."""
+    # A cycle names modules rather than one symbol, so the fake cannot
+    # derive one from the scripted symbol; the adapter rejects a cycle-less
+    # entry in any case.
+    finding = FakeFinding(path='pkg/a.py', line=1, symbol='pkg.a', bucket='circular_dependencies')
+    with pytest.raises(ValueError, match=re.escape("circular_dependencies finding for 'pkg.a' needs a cycle")):
+        finding.skylos_entry()
+
+
 def test_main_skylos_format_clean_document(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     command = write_fake_detector_script(tmp_path / 'script.json', [], output_format='skylos')
     assert main(command[3:]) == 0
@@ -365,3 +443,8 @@ def test_main_tolerates_malformed_script_documents(tmp_path: Path, capsys: pytes
     script.write_text('{"findings": [42]}', encoding='utf-8')
     assert main([str(script)]) == 0
     assert 'nope' not in capsys.readouterr().out
+    # A cycle that is not an array names no modules rather than crashing.
+    entry = {'path': 'a.py', 'line': 1, 'symbol': 'x', 'kind': 'function', 'confidence': 60, 'cycle': 'nope'}
+    script.write_text(json.dumps({'findings': [entry]}), encoding='utf-8')
+    assert main([str(script)]) == 3
+    assert capsys.readouterr().out == "a.py:1: unused function 'x' (60% confidence)\n"

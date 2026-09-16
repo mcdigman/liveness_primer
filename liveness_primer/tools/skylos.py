@@ -3,17 +3,20 @@
 """Adapter for the ``skylos`` dead-code detector (contract §4).
 
 Skylos emits a JSON document on stdout under ``--json``. The dead-code
-arrays are always ingested; the diagnostic arrays (``danger``, ``secrets``,
-``quality``, ``ai_defects``) are ingested when present — each appears only
-when a corpus config opts into the matching analysis (contract §4, §5).
+arrays and ``circular_dependencies`` array are always
+ingested; the diagnostic arrays (``danger``, ``secrets``, ``quality``,
+``ai_defects``) are ingested when present — each appears only when a
+corpus config opts into the matching analysis (contract §4, §5).
 """
 
+import functools
 import json
 from collections.abc import Mapping
 from pathlib import Path, PurePath
 from types import MappingProxyType
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from liveness_primer.findings import Finding
 from liveness_primer.tools.base import (
@@ -25,9 +28,10 @@ from liveness_primer.tools.base import (
     normalize_finding_path,
 )
 
-# Dead-code finding arrays in the skylos JSON document; the complete
-# always-ingested bucket list, public so the fake detector emits the same
-# document shape as a real skylos run.
+# Dead-code finding arrays in the skylos JSON document; always ingested,
+# and public so the fake detector emits the same document shape as a real
+# skylos run. ``CIRCULAR_KEY`` is ingested unconditionally too, but skylos
+# emits it only when a cycle exists, so it is not part of this skeleton.
 DEAD_CODE_KEYS = (
     'unused_functions',
     'unused_imports',
@@ -36,6 +40,13 @@ DEAD_CODE_KEYS = (
     'unused_parameters',
     'unused_files',
 )
+
+# Cycle array in the skylos JSON document.
+# Skylos omits the key entirely when it finds no cycle.
+CIRCULAR_KEY = 'circular_dependencies'
+
+# Normalized kind stamped onto circular-dependency findings.
+_CIRCULAR_KIND = 'circular_dependency'
 
 # Diagnostic arrays, each emitted only under its opt-in analysis flag,
 # mapped to the normalized kind stamped onto its findings. Entries carry a
@@ -70,6 +81,74 @@ _NEUTRAL_CONFIG = Path(__file__).with_name('skylos_neutral_config.toml')
 # the pass cannot on its own starve the rest of the run.
 _GREP_BUDGET_SECONDS = '150'
 
+# One failed invocation can report an error per skipped file. Keep the
+# diagnostic useful without allowing that list to dominate the report.
+_ANALYSIS_ERROR_LIMIT = 5
+
+
+@functools.lru_cache(maxsize=1)
+def _load_document(stdout: str) -> object:
+    """Decode skylos stdout, remembering the most recent document.
+
+    A failed invocation that still produced output is decoded twice in a
+    row: once for its failure detail and once for its findings. A
+    single-entry cache spares the second decode of a document that can
+    run to megabytes on a large corpus project, while retaining at most
+    one document beyond the invocation that produced it.
+
+    Parameters
+    ----------
+    stdout : str
+        Captured skylos standard output.
+
+    Returns
+    -------
+    object
+        The decoded JSON value.
+
+    Raises
+    ------
+    AdapterError
+        If stdout is not valid JSON.
+    """
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        msg = f'skylos output is not valid JSON: {exc}'
+        raise AdapterError(msg) from exc
+
+
+def _analysis_error_location(raw_error: Mapping[str, object], root: PurePath) -> str:
+    """Name the file (and line) one skylos analysis error is about.
+
+    Parameters
+    ----------
+    raw_error : Mapping[str, object]
+        One ``analysis_errors`` entry (untrusted).
+    root : PurePath
+        Checkout directory skylos analyzed, for path normalization.
+
+    Returns
+    -------
+    str
+        ``path`` or ``path:line`` relative to the checkout, or the empty
+        string when the entry names no usable file.
+    """
+    file = raw_error.get('file')
+    if not isinstance(file, str) or not file.strip():
+        return ''
+    try:
+        path = normalize_finding_path(file, root, allow_root=True)
+    except AdapterError:
+        # A path outside the checkout is malformed detector output; keep
+        # the message but not the path (contract §11).
+        return ''
+    line = raw_error.get('line')
+    if isinstance(line, int) and not isinstance(line, bool) and line >= 1:
+        return f'{path}:{line}'
+    return path
+
+
 # Documented, versioned mapping from each ingested single-rule skylos
 # symbol bucket to its canonical rule ID (reporting contract §3.1). A rule
 # ID explicitly present on the detector finding takes precedence; a rule ID
@@ -85,6 +164,7 @@ BUCKET_RULE_IDS = {
     'unused_variables': 'SKY-U003',
     'unused_classes': 'SKY-U004',
     'unused_parameters': 'SKY-U006',
+    CIRCULAR_KEY: 'SKY-CIRC',
 }
 
 
@@ -118,6 +198,51 @@ class _SkylosDiagnosticEntry(BaseModel):
     line: int
     symbol: str | None = None
     name: str | None = None
+
+
+class _SkylosCircularEntry(BaseModel):
+    """One circular-dependency entry from the skylos JSON array (untrusted input).
+
+    A cycle names modules rather than one symbol, so ``cycle`` is the field
+    that distinguishes one cycle finding from another. Skylos stamps the
+    earliest recorded import edge of the cycle as ``file`` and ``line``;
+    both are absent when the module graph was built without source
+    evidence, and on revisions predating the SKY-CIRC location fix.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='ignore')
+
+    rule_id: str | None = None
+    severity: str | None = None
+    message: str
+    cycle: tuple[str, ...] = Field(min_length=1)
+    suggested_break: str | None = None
+    file: str | None = None
+    line: int | None = None
+
+    @model_validator(mode='after')
+    def _check_location(self) -> Self:
+        """Reject a half-located cycle entry.
+
+        Skylos assigns a cycle's ``file`` and ``line`` together or reports
+        neither, so an entry carrying one without the other is malformed
+        rather than a located cycle missing its line, or a locationless one
+        that somehow kept a line number.
+
+        Returns
+        -------
+        Self
+            The validated model.
+
+        Raises
+        ------
+        ValueError
+            If exactly one of ``file`` and ``line`` is present.
+        """
+        if (self.file is None) != (self.line is None):
+            msg = f'cycle location is half-reported: file={self.file!r}, line={self.line!r}'
+            raise ValueError(msg)
+        return self
 
 
 class _SkylosUnusedFileEntry(BaseModel):
@@ -207,6 +332,52 @@ class SkylosAdapter:
     build_recipe: BuildRecipe = BuildRecipe(backend='python-source')
 
     @staticmethod
+    def failure_detail(output: RawToolOutput, *, root: PurePath) -> str | None:
+        """Extract bounded analysis errors from skylos JSON output.
+
+        Parameters
+        ----------
+        output : RawToolOutput
+            Captured skylos output.
+        root : PurePath
+            Checkout directory skylos analyzed, for path normalization.
+
+        Returns
+        -------
+        str | None
+            At most ``_ANALYSIS_ERROR_LIMIT`` analysis-error entries joined
+            by ``; ``, each ``path:line: kind: message`` with whichever of
+            those parts the entry provides; ``None`` without any.
+        """
+        try:
+            document = _load_document(output.stdout)
+        except AdapterError:
+            return None
+        if not isinstance(document, dict):
+            return None
+        raw_errors = document.get('analysis_errors')
+        if not isinstance(raw_errors, list):
+            return None
+
+        details: list[str] = []
+        for raw_error in raw_errors:
+            if not isinstance(raw_error, dict):
+                continue
+            message = raw_error.get('message')
+            if not isinstance(message, str) or not message.strip():
+                continue
+            kind = raw_error.get('kind')
+            parts = (
+                _analysis_error_location(raw_error, root),
+                kind.strip() if isinstance(kind, str) else '',
+                message.strip(),
+            )
+            details.append(': '.join(part for part in parts if part))
+            if len(details) == _ANALYSIS_ERROR_LIMIT:
+                break
+        return '; '.join(details) or None
+
+    @staticmethod
     def parse(output: RawToolOutput, *, project: str, root: PurePath, analyses: tuple[str, ...] = ()) -> list[Finding]:
         """Parse the skylos JSON document into findings.
 
@@ -227,8 +398,8 @@ class SkylosAdapter:
         Returns
         -------
         list[Finding]
-            One finding per dead-code entry and per diagnostic in a
-            selected analysis array.
+            One finding per dead-code entry, per reported cycle, and per
+            diagnostic in a selected analysis array.
 
         Raises
         ------
@@ -243,28 +414,22 @@ class SkylosAdapter:
                 msg = f'skylos does not provide analysis {name!r}'
                 raise AdapterError(msg)
             selected.add(_ANALYSIS_BUCKETS[name])
-        try:
-            document = json.loads(output.stdout)
-        except json.JSONDecodeError as exc:
-            msg = f'skylos output is not valid JSON: {exc}'
-            raise AdapterError(msg) from exc
+        document = _load_document(output.stdout)
         if not isinstance(document, dict):
             msg = 'skylos output is not a JSON object'
             raise AdapterError(msg)
-        result_keys = (*DEAD_CODE_KEYS, *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected))
+        result_keys = (
+            *DEAD_CODE_KEYS,
+            CIRCULAR_KEY,
+            *(bucket for bucket in DIAGNOSTIC_KINDS if bucket in selected),
+        )
         findings: list[Finding] = []
         for key in result_keys:
             bucket = document.get(key, [])
             if not isinstance(bucket, list):
                 msg = f'skylos key {key!r} is not an array'
                 raise AdapterError(msg)
-            if key == 'unused_files':
-                parse_entry = _parse_unused_file_entry
-            elif key in DIAGNOSTIC_KINDS:
-                parse_entry = _parse_diagnostic_entry
-            else:
-                parse_entry = _parse_entry
-            findings.extend(parse_entry(raw, key=key, project=project, root=root) for raw in bucket)
+            findings.extend(_parse_bucket(bucket, key=key, project=project, root=root))
         if output.returncode not in SkylosAdapter.success_exit_codes and not findings:
             msg = 'failed skylos output has no findings in recognized result buckets'
             raise AdapterError(msg)
@@ -414,3 +579,91 @@ def _parse_diagnostic_entry(raw: object, *, key: str, project: str, root: PurePa
         rule_id=entry.rule_id,
         raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
     )
+
+
+def _parse_circular_entry(raw: object, *, key: str, project: str, root: PurePath) -> Finding:
+    """Convert one skylos circular-dependency entry into a finding.
+
+    The symbol is the cycle's module set, sorted — that set is skylos's own
+    cycle-uniqueness key, so the same cycle keeps one identity across the
+    two compared revisions even when they report it from a different
+    starting module. A located cycle takes the import edge skylos reported;
+    a cycle reported without one names no file, so it takes the
+    repository-level ``.`` path at a point span on line 1.
+
+    Parameters
+    ----------
+    raw : object
+        Untrusted JSON entry.
+    key : str
+        Array name the entry came from, for error context.
+    project : str
+        Corpus project name to stamp onto the finding.
+    root : PurePath
+        Checkout directory skylos analyzed.
+
+    Returns
+    -------
+    Finding
+        The normalized finding.
+
+    Raises
+    ------
+    AdapterError
+        If the entry does not carry the guaranteed skylos fields.
+    """
+    try:
+        entry = _SkylosCircularEntry.model_validate(raw)
+    except ValidationError as exc:
+        msg = f'malformed skylos entry in {key!r}: {exc}'
+        raise AdapterError(msg) from exc
+    # The model guarantees the reported location is a pair or absent.
+    if entry.file is None or entry.line is None:
+        path, line = '.', 1
+    else:
+        path, line = normalize_finding_path(entry.file, root, allow_root=True), max(entry.line, 1)
+    return Finding(
+        tool=SkylosAdapter.name,
+        project=project,
+        path=path,
+        symbol=', '.join(sorted(entry.cycle)),
+        kind=_CIRCULAR_KIND,
+        message=entry.message,
+        start_line=line,
+        end_line=line,
+        severity=entry.severity,
+        # An explicit detector rule ID wins; the documented bucket mapping
+        # is the fallback (reporting contract §3.1).
+        rule_id=entry.rule_id if entry.rule_id is not None else BUCKET_RULE_IDS[CIRCULAR_KEY],
+        raw_excerpt=json.dumps(entry.model_dump(), sort_keys=True),
+    )
+
+
+def _parse_bucket(entries: list[object], *, key: str, project: str, root: PurePath) -> list[Finding]:
+    """Convert one skylos result array into findings under its entry shape.
+
+    Parameters
+    ----------
+    entries : list[object]
+        Untrusted JSON entries of the array.
+    key : str
+        Array name the entries came from.
+    project : str
+        Corpus project name to stamp onto the findings.
+    root : PurePath
+        Checkout directory skylos analyzed.
+
+    Returns
+    -------
+    list[Finding]
+        One finding per entry.
+    """
+    if key == CIRCULAR_KEY:
+        parse_entry = _parse_circular_entry
+    elif key == 'unused_files':
+        parse_entry = _parse_unused_file_entry
+    elif key in DIAGNOSTIC_KINDS:
+        parse_entry = _parse_diagnostic_entry
+    else:
+        parse_entry = _parse_entry
+    return [parse_entry(raw, key=key, project=project, root=root) for raw in entries]

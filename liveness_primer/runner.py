@@ -14,7 +14,6 @@ import inspect
 import os
 import platform
 import shutil
-import stat
 import sysconfig
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -36,6 +35,7 @@ from liveness_primer.diffing import diff_findings, merge_rollups
 from liveness_primer.envcache import DetectorEnvironments, PreparedPair
 from liveness_primer.errors import LivenessPrimerError
 from liveness_primer.execution import ExecutionBackend, HostExecution, SideName, SideWorkspace
+from liveness_primer.filesystem import MAX_NATIVE_TOOL_BYTES, open_bounded_regular, read_bounded_chunks
 from liveness_primer.findings import (
     CorpusIntegrityWarning,
     CorpusPinRecord,
@@ -53,18 +53,11 @@ from liveness_primer.findings import (
 from liveness_primer.isolation import Isolation
 from liveness_primer.launcher import AsyncLauncher, LaunchResult, run_async
 from liveness_primer.locators import attach_locators
+from liveness_primer.report.sanitize import FAILURE_DETAIL_PART_CAP, truncate_end, truncate_start
 from liveness_primer.report.source import collect_source_evidence
 from liveness_primer.tools.base import AdapterError, DetectorAdapter, RawToolOutput, build_invocation
 
 GATE_CHOICES = ('new', 'dropped', 'changed', 'any', 'corpus-integrity')
-
-_STDERR_SNIPPET = 500
-
-_DIGEST_CHUNK = 1_048_576
-
-# Hashing is already chunked, so this cap bounds admission I/O and time rather
-# than peak memory. 256 MiB leaves room for ordinary native analyzer engines.
-_MAX_NATIVE_TOOL_BYTES = 268_435_456
 
 
 class RunnerError(LivenessPrimerError):
@@ -73,6 +66,12 @@ class RunnerError(LivenessPrimerError):
 
 def _executable_digest(path: Path) -> str:
     """Hash one bounded executable after verifying its opened-file identity.
+
+    The bounded open and chunked read are the shared filesystem primitives,
+    so a path that is not a regular non-symlink file, is replaced while it is
+    being opened, or outgrows the native-tool limit propagates their
+    ``FilesystemPolicyError``; ``resolve_native_tools`` already catches it as
+    a ``RuntimeError``.
 
     Parameters
     ----------
@@ -83,40 +82,12 @@ def _executable_digest(path: Path) -> str:
     -------
     str
         SHA-256 hex digest.
-
-    Raises
-    ------
-    OSError
-        If the resolved path is not a regular file, the opened file differs
-        from the one inspected, or the read exceeds the native-tool size
-        limit.
     """
-    path_stat = path.lstat()
-    if not stat.S_ISREG(path_stat.st_mode):
-        msg = 'native tool is not a regular non-symlink file'
-        raise OSError(msg)
-    if path_stat.st_size > _MAX_NATIVE_TOOL_BYTES:
-        msg = f'native tool exceeds {_MAX_NATIVE_TOOL_BYTES} bytes'
-        raise OSError(msg)
-
-    with path.open('rb') as stream:
-        opened_stat = os.fstat(stream.fileno())
-        if not stat.S_ISREG(opened_stat.st_mode) or (
-            opened_stat.st_dev,
-            opened_stat.st_ino,
-        ) != (path_stat.st_dev, path_stat.st_ino):
-            msg = 'native tool changed while it was being admitted'
-            raise OSError(msg)
-
-        digest = hashlib.sha256()
-        bytes_read = 0
-        for chunk in iter(lambda: stream.read(_DIGEST_CHUNK), b''):
-            bytes_read += len(chunk)
-            if bytes_read > _MAX_NATIVE_TOOL_BYTES:
-                msg = f'native tool exceeds {_MAX_NATIVE_TOOL_BYTES} bytes'
-                raise OSError(msg)
+    digest = hashlib.sha256()
+    with open_bounded_regular(path, description='native tool', max_bytes=MAX_NATIVE_TOOL_BYTES) as stream:
+        for chunk in read_bounded_chunks(stream, description='native tool', max_bytes=MAX_NATIVE_TOOL_BYTES):
             digest.update(chunk)
-        return digest.hexdigest()
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,9 +490,23 @@ class PrimerRunner:
         _SideOutcome
             The parsed outcome.
         """
+        raw = RawToolOutput(
+            returncode=result.returncode if result.returncode is not None else 0,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
         error: ToolError | None = None
         if result.returncode not in self._adapter.success_exit_codes:
-            detail = f'exit code {result.returncode}: {result.stderr.strip()[-_STDERR_SNIPPET:]}'
+            # Record both accounts of the failure: stderr keeps its tail (a
+            # traceback ends with the exception) and the detector's own
+            # structured detail keeps its head (the first reported errors).
+            # Incidental stderr noise must not hide the structured detail.
+            stderr_detail = truncate_start(result.stderr.strip(), FAILURE_DETAIL_PART_CAP)
+            adapter_detail = truncate_end(self._adapter.failure_detail(raw, root=root) or '', FAILURE_DETAIL_PART_CAP)
+            parts = [part for part in (stderr_detail, adapter_detail) if part]
+            detail = f'exit code {result.returncode}'
+            if parts:
+                detail += f': {"; ".join(parts)}'
             error = ToolError(side=side, exit_code=result.returncode, detail=detail)
             if not result.stdout.strip():
                 return _SideOutcome(
@@ -531,11 +516,6 @@ class PrimerRunner:
                     duration_seconds=result.duration_seconds,
                     returncode=result.returncode,
                 )
-        raw = RawToolOutput(
-            returncode=result.returncode if result.returncode is not None else 0,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
         try:
             findings = self._adapter.parse(raw, project=item.project.name, root=root, analyses=item.settings.analyses)
         except AdapterError as exc:
