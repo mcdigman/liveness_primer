@@ -389,7 +389,7 @@ def test_run_reports_native_tool_admission_cause(
     atomic_write_text(engine, '#!/bin/sh\nexit 0\n')
     engine.chmod(0o755)
     limit = engine.stat().st_size - 1
-    monkeypatch.setattr(runner_module, '_MAX_NATIVE_TOOL_BYTES', limit)
+    monkeypatch.setattr(runner_module, 'MAX_NATIVE_TOOL_BYTES', limit)
     monkeypatch.setenv('SKYLOS_GO_BIN', str(engine))
 
     code = main(
