@@ -9,6 +9,7 @@ on:
     paths:
       - liveness_primer/data/corpus.yaml
       - .github/workflows/corpus-license.yml
+  # zizmor: ignore[dangerous-triggers]
   pull_request_target:  # skylos: ignore[SKY-D290] trusted checker treats the PR corpus as data only
     paths: [liveness_primer/data/corpus.yaml]
   workflow_dispatch:
