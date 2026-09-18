@@ -156,3 +156,15 @@ jobs:
               raise SystemExit(f"::error::sdist install is missing declared package data: {', '.join(sorted(missing))}")
           print(f'declared package data is present ({len(EXPORTED_MODELS)} schemas, corpus, skylos config, py.typed)')
           PY
+
+      # Downstream packagers run the shipped tests. Use only the extracted
+      # artifact so a checkout cannot hide missing fixtures or helper modules.
+      - name: Run packaged tests
+        run: |
+          for sdist in dist/*.tar.gz; do
+            uv pip install "${sdist}[license]" pytest
+          done
+          mkdir sdist-tests
+          tar -xzf dist/*.tar.gz -C sdist-tests --strip-components=1
+          cd sdist-tests
+          ../.venv/bin/python -m pytest
