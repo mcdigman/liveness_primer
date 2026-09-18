@@ -386,8 +386,8 @@ design intentionally blocks it, but it is not gated in CI initially.
 - Runtime: `pydantic>=2`, `platformdirs>=4`, `filelock>=3`, `packaging>=24`, `PyYAML>=6`.
 - Extras: `[license]` → `httpx` (license verification only).
 - Stdlib elsewhere: `tomllib`, `argparse`, `subprocess`/`venv`, `asyncio`. Git via
-  subprocess; `uv` used opportunistically, never required. Detectors are never dependencies
-  of this package.
+  subprocess; `uv` is optional on the host, required in container builders. Detectors
+  are never dependencies of this package.
 - Container mode (§3): the `docker` CLI is a host requirement of `--container` runs only,
   probed at run time and driven via the audited launcher; it is never a Python dependency,
   and no Docker SDK is used.
