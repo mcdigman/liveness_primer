@@ -1894,10 +1894,6 @@ class ContainerEnvironments:
             context = Path(scratch)
             # Symlinks are copied as symlinks: following them could pull
             # content from outside the untrusted checkout into the image.
-            # ``.git`` is copied with the rest: a build backend deriving the
-            # version from git metadata needs it, and the builder stage
-            # already executes this checkout's build backend, so the
-            # repository adds no reach. It stays in the builder stage.
             shutil.copytree(source, context / 'detector', symlinks=True)
             stage_wheelhouses(wheelhouses, context / 'wheelhouse')
             for binary, provider in runtime_binaries.items():
