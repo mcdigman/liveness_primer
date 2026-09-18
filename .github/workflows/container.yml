@@ -1,47 +1,17 @@
 name: Container
 
-# Contract §3, §11: end-to-end smoke test of `--container`.
-#
-# tests/test_container.py drives the container logic through an injected
-# runtime (§15), so it never feeds the generated Containerfile to a real
-# `docker build`, never pulls the pinned Chainguard images, and never executes
-# an invocation container. This job covers exactly that gap by building both
-# detector environments for real and running one comparison through them.
-#
-# The weekly cron matters as much as the path triggers: the pinned digests are
-# public Chainguard `latest`/`latest-dev` pointers, which can become unpullable
-# without any change in this repo.
+# Real builds and invocations complement the injected-runtime unit tests.
+# The weekly run also detects unavailable image pins and binary downloads.
 on:
   push:
     branches: [main]
-    paths:
-      - liveness_primer/container.py
-      - liveness_primer/corpus.py
-      - liveness_primer/envcache.py
-      - liveness_primer/execution.py
-      - liveness_primer/filesystem.py
-      - liveness_primer/isolation.py
-      - liveness_primer/launcher.py
-      - liveness_primer/runner.py
-      - liveness_primer/tools/**
+    paths: &container-paths
+      - liveness_primer/**
       - pyproject.toml
       - .github/workflows/container.yml
   pull_request:
-    # GitHub Actions does not support YAML anchors, so this list is duplicated.
-    paths:
-      - liveness_primer/container.py
-      - liveness_primer/corpus.py
-      - liveness_primer/envcache.py
-      - liveness_primer/execution.py
-      - liveness_primer/filesystem.py
-      - liveness_primer/isolation.py
-      - liveness_primer/launcher.py
-      - liveness_primer/runner.py
-      - liveness_primer/tools/**
-      - pyproject.toml
-      - .github/workflows/container.yml
+    paths: *container-paths
   workflow_dispatch:
-  # Weekly (Mon 07:00 UTC), an hour after Test so the two do not contend.
   schedule:
     - cron: "0 7 * * 1"
 
@@ -52,19 +22,37 @@ concurrency:
 env:
   PYTHON_VERSION: "3.14"
 
-# This job builds and executes detector revisions from a PR's code, so no token
-# is passed to repository commands and checkout does not persist its read-only
-# credential.
 permissions:
   contents: read
 
 jobs:
   smoke:
+    name: smoke (${{ matrix.tool }} on ${{ matrix.project }})
     runs-on: ubuntu-latest
-    # A warm build is seconds; the cold cost here is pulling ~1.1GB of pinned
-    # Chainguard images. The ceiling is generous so a slow registry fails the
-    # job as a timeout only when something is genuinely wrong.
     timeout-minutes: 20
+    strategy:
+      # Keep the simple Python result even if native-helper integration fails.
+      fail-fast: false
+      matrix:
+        include:
+          - tool: vulture
+            project: pluggy
+            repo: https://github.com/jendrikseipp/vulture
+            # v2.15 -> v2.16
+            old: 6a4001fd69bd3042a109a0f7d6d36054416111c2
+            new: b0f67ba0044693aa9ec0d38fe460590facc98004
+          - tool: skylos
+            project: bubbletea
+            repo: https://github.com/duriantaco/skylos
+            # v4.37.0 -> v4.38.0; the helper below uses the same pinned head.
+            old: 2d899e605b98f935b86476ab2e0e208c5bbf5062
+            new: d8288c5837793e2c51be869714573ebb7f2a044d
+    env:
+      SMOKE_TOOL: ${{ matrix.tool }}
+      SMOKE_PROJECT: ${{ matrix.project }}
+      SMOKE_REPO: ${{ matrix.repo }}
+      SMOKE_OLD: ${{ matrix.old }}
+      SMOKE_NEW: ${{ matrix.new }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -82,59 +70,179 @@ jobs:
           uv venv
           uv pip install .
 
-      # Recorded in the log because the daemon version lands in the report's
-      # installer string, so a behavior change on the runner image is visible.
+      - name: Check out the pinned Go helper source
+        if: matrix.tool == 'skylos'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: duriantaco/skylos
+          ref: d8288c5837793e2c51be869714573ebb7f2a044d  # v4.38.0
+          path: .container-smoke/skylos
+          persist-credentials: false
+
+      - name: Install Go
+        if: matrix.tool == 'skylos'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: .container-smoke/skylos/skylos/engines/go/go.mod
+          # The helper uses only the standard library and has no go.sum.
+          cache: false
+
+      # Compile a static Linux executable for the distroless runtime. Both
+      # detector revisions receive exactly these bytes through native-tool
+      # admission and staging; this tests integration, not Go-engine changes.
+      - name: Build the shared Go helper
+        if: matrix.tool == 'skylos'
+        working-directory: .container-smoke/skylos/skylos/engines/go
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/skylos-go" ./cmd/skylos-go
+          "$RUNNER_TEMP/skylos-go" --version
+          echo "SKYLOS_GO_BIN=$RUNNER_TEMP/skylos-go" >> "$GITHUB_ENV"
+
       - name: Report Docker version
         run: docker version
 
-      # vulture on pluggy is the cheapest pair in the corpus (cost 1.0) and is
-      # the invocation documented in docs/usage.md. The point is to exercise the
-      # container path, so the smallest real pair is the right one.
       - name: Run containerized comparison
         run: |
           .venv/bin/liveness-primer run \
-            --tool vulture \
-            --repo https://github.com/jendrikseipp/vulture \
-            --old v2.15 \
-            --new v2.16 \
-            -k pluggy \
-            --container \
+            --tool "$SMOKE_TOOL" \
+            --repo "$SMOKE_REPO" \
+            --old "$SMOKE_OLD" \
+            --new "$SMOKE_NEW" \
+            -k "$SMOKE_PROJECT" \
+            --container --fresh \
             --json-out report.json
 
-      # Exit 0 alone would not prove containment engaged, so assert on the
-      # manifest. The expected digests are imported rather than duplicated here:
-      # bumping the pins in container.py updates this check automatically, while
-      # still proving the pinned bytes were the ones actually pulled.
-      - name: Assert the container path really ran
+      # Validate the backend provenance and completed comparison, without
+      # turning detector findings into an exact-count golden. These fields
+      # alone are not a behavioral test of the sandbox's security boundaries.
+      - name: Assert the container comparison completed
         run: |
           .venv/bin/python - <<'PY'
-          import json
+          import hashlib
+          import os
+          import platform
           from pathlib import Path
 
           from liveness_primer.container import (
               DEFAULT_CONTAINER_BUILDER_IMAGE,
               DEFAULT_CONTAINER_IMAGE,
+              ripgrep_artifact_for,
           )
+          from liveness_primer.findings import NativeToolRecord, Report
 
-          manifest = json.loads(Path('report.json').read_text())['manifest']
-          installer = manifest['installer']
-
-          failures = []
-          if not manifest['isolation_enforced']:
-              failures.append('isolation was not enforced')
-          if not manifest['comparable']:
-              failures.append('the pair was not comparable')
+          report = Report.model_validate_json(Path('report.json').read_text())
+          manifest = report.manifest
+          installer = manifest.installer or ''
+          failures: list[str] = []
+          if not manifest.isolation_enforced or not manifest.comparable:
+              failures.append('expected an isolated, comparable container run')
+          if manifest.tool != os.environ['SMOKE_TOOL'] or manifest.detector_repo != os.environ['SMOKE_REPO']:
+              failures.append('unexpected detector identity')
           if not installer.startswith('docker '):
               failures.append(f'installer is not docker: {installer!r}')
-          for label, image in (
-              ('builder', DEFAULT_CONTAINER_BUILDER_IMAGE),
-              ('runtime', DEFAULT_CONTAINER_IMAGE),
-          ):
+          for image in (DEFAULT_CONTAINER_BUILDER_IMAGE, DEFAULT_CONTAINER_IMAGE):
               if image not in installer:
-                  failures.append(f'{label} image {image} absent from installer: {installer!r}')
+                  failures.append(f'image {image} absent from installer')
+          for side, expected in ((manifest.base, os.environ['SMOKE_OLD']), (manifest.head, os.environ['SMOKE_NEW'])):
+              if side is None or side.sha != expected or not side.rebuilt or side.from_cache:
+                  failures.append(f'expected a fresh environment for {expected}')
+          project_name = os.environ['SMOKE_PROJECT']
+          if tuple(project.project for project in report.projects) != (project_name,):
+              failures.append(f'expected exactly one project: {project_name}')
+          for project in report.projects:
+              if project.errors or project.measured_cost_seconds is None:
+                  failures.append(f'{project.project}: analyses did not both complete successfully')
+              if project.base_findings <= 0 or project.head_findings <= 0:
+                  failures.append(f'{project.project}: expected findings on both sides of this fixture')
+          if tuple(pin.name for pin in manifest.corpus_pins) != (project_name,):
+              failures.append('missing or unexpected corpus provenance')
+          for pin in manifest.corpus_pins:
+              if pin.requested != pin.resolved_sha:
+                  failures.append(f'{pin.name}: expected an immutable corpus pin')
+
+          if manifest.tool == 'skylos':
+              helper_digest = hashlib.sha256(Path(os.environ['SKYLOS_GO_BIN']).read_bytes()).hexdigest()
+              expected_helper = NativeToolRecord(variable='SKYLOS_GO_BIN', sha256=helper_digest)
+              if manifest.native_tools != (expected_helper,):
+                  failures.append('the supplied Go helper was not admitted with its expected digest')
+              if f'SKYLOS_GO_BIN sha256:{helper_digest}' not in installer:
+                  failures.append('Go helper digest absent from installer')
+              artifact = ripgrep_artifact_for(platform.machine())
+              if not any(
+                  fetch.kind == 'binary' and fetch.name == artifact.filename
+                  and fetch.resolved == artifact.version and fetch.digest == artifact.archive_digest
+                  for fetch in manifest.fetches
+              ):
+                  failures.append('expected verified ripgrep download provenance')
+              if f'sha256:{artifact.binary_digest}' not in installer:
+                  failures.append('ripgrep binary digest absent from installer')
+          elif manifest.native_tools or any(fetch.kind == 'binary' for fetch in manifest.fetches):
+              failures.append('Vulture should exercise the path without auxiliary binaries')
 
           if failures:
               raise SystemExit('container smoke assertions failed:\n' + '\n'.join(f'  - {f}' for f in failures))
-
           print(f'container smoke OK: {installer}')
           PY
+
+      # Bubble Tea drives the Go engine through Skylos. Also execute both
+      # utilities explicitly in each built image, so ripgrep runtime support
+      # does not depend on which verification paths Bubble Tea happens to use.
+      - name: Verify native binaries inside both Skylos images
+        if: matrix.tool == 'skylos'
+        run: |
+          .venv/bin/python - <<'PY'
+          import hashlib
+          import os
+          import platform
+          import subprocess
+          from pathlib import Path
+
+          from liveness_primer.container import image_tag, ripgrep_artifact_for
+          from liveness_primer.findings import Report
+
+          report = Report.model_validate_json(Path('report.json').read_text())
+          artifact = ripgrep_artifact_for(platform.machine())
+          helper_digest = hashlib.sha256(Path(os.environ['SKYLOS_GO_BIN']).read_bytes()).hexdigest()
+          probe = '''
+          import hashlib
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          for path, digest, prefix in (
+              ('/usr/bin/rg', sys.argv[1], 'ripgrep '),
+              ('/liveness/native-tools/SKYLOS_GO_BIN', sys.argv[2], 'skylos-go '),
+          ):
+              if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
+                  raise SystemExit(f'{path}: staged binary digest mismatch')
+              result = subprocess.run([path, '--version'], check=True, capture_output=True, text=True, timeout=15)
+              if not result.stdout.startswith(prefix):
+                  raise SystemExit(f'{path}: unexpected version output: {result.stdout!r}')
+              print(result.stdout, end='')
+          '''
+          for side in (report.manifest.base, report.manifest.head):
+              if side is None:
+                  raise SystemExit('missing detector environment')
+              subprocess.run(
+                  [
+                      'docker', 'run', '--rm', '--network', 'none', '--read-only',
+                      '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+                      '--pids-limit', '64', '--user', '65532:65532', '--entrypoint', '',
+                      image_tag(side.fingerprint), '/liveness/venv/bin/python', '-c', probe,
+                      artifact.binary_digest, helper_digest,
+                  ],
+                  check=True,
+                  timeout=60,
+              )
+          PY
+
+      - name: Upload comparison report
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: container-${{ matrix.tool }}-${{ matrix.project }}
+          path: report.json
+          if-no-files-found: warn
