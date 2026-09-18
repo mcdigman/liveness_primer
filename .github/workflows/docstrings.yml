@@ -39,4 +39,4 @@ jobs:
       - name: Run pydoclint
         run: >
           uvx "pydoclint@${{ env.PYDOCLINT_VERSION }}"
-          liveness_primer
+          liveness_primer scripts

@@ -7,6 +7,8 @@ on:
     branches: [main]
     paths: &container-paths
       - liveness_primer/**
+      - scripts/container_smoke_check.py
+      - tests/test_container_smoke_check.py
       - pyproject.toml
       - .github/workflows/container.yml
   pull_request:
@@ -118,129 +120,12 @@ jobs:
       # Validate the backend provenance and completed comparison, without
       # turning detector findings into an exact-count golden. These fields
       # alone are not a behavioral test of the sandbox's security boundaries.
-      - name: Assert the container comparison completed
-        run: |
-          .venv/bin/python - <<'PY'
-          import hashlib
-          import os
-          import platform
-          from pathlib import Path
+      - name: Validate the report and verify runtime binaries
+        run: .venv/bin/python scripts/container_smoke_check.py report.json
 
-          from liveness_primer.container import (
-              DEFAULT_CONTAINER_BUILDER_IMAGE,
-              DEFAULT_CONTAINER_IMAGE,
-              ripgrep_artifact_for,
-          )
-          from liveness_primer.findings import NativeToolRecord, Report
-
-          report = Report.model_validate_json(Path('report.json').read_text())
-          manifest = report.manifest
-          installer = manifest.installer or ''
-          failures: list[str] = []
-          if not manifest.isolation_enforced or not manifest.comparable:
-              failures.append('expected an isolated, comparable container run')
-          if manifest.tool != os.environ['SMOKE_TOOL'] or manifest.detector_repo != os.environ['SMOKE_REPO']:
-              failures.append('unexpected detector identity')
-          if not installer.startswith('docker '):
-              failures.append(f'installer is not docker: {installer!r}')
-          for image in (DEFAULT_CONTAINER_BUILDER_IMAGE, DEFAULT_CONTAINER_IMAGE):
-              if image not in installer:
-                  failures.append(f'image {image} absent from installer')
-          for side, expected in ((manifest.base, os.environ['SMOKE_OLD']), (manifest.head, os.environ['SMOKE_NEW'])):
-              if side is None or side.sha != expected or not side.rebuilt or side.from_cache:
-                  failures.append(f'expected a fresh environment for {expected}')
-          project_name = os.environ['SMOKE_PROJECT']
-          if tuple(project.project for project in report.projects) != (project_name,):
-              failures.append(f'expected exactly one project: {project_name}')
-          for project in report.projects:
-              if project.errors or project.measured_cost_seconds is None:
-                  failures.append(f'{project.project}: analyses did not both complete successfully')
-              if project.base_findings <= 0 or project.head_findings <= 0:
-                  failures.append(f'{project.project}: expected findings on both sides of this fixture')
-          if tuple(pin.name for pin in manifest.corpus_pins) != (project_name,):
-              failures.append('missing or unexpected corpus provenance')
-          for pin in manifest.corpus_pins:
-              if pin.requested != pin.resolved_sha:
-                  failures.append(f'{pin.name}: expected an immutable corpus pin')
-
-          if manifest.tool == 'skylos':
-              helper_digest = hashlib.sha256(Path(os.environ['SKYLOS_GO_BIN']).read_bytes()).hexdigest()
-              expected_helper = NativeToolRecord(variable='SKYLOS_GO_BIN', sha256=helper_digest)
-              if manifest.native_tools != (expected_helper,):
-                  failures.append('the supplied Go helper was not admitted with its expected digest')
-              if f'SKYLOS_GO_BIN sha256:{helper_digest}' not in installer:
-                  failures.append('Go helper digest absent from installer')
-              artifact = ripgrep_artifact_for(platform.machine())
-              if not any(
-                  fetch.kind == 'binary' and fetch.name == artifact.filename
-                  and fetch.resolved == artifact.version and fetch.digest == artifact.archive_digest
-                  for fetch in manifest.fetches
-              ):
-                  failures.append('expected verified ripgrep download provenance')
-              if f'sha256:{artifact.binary_digest}' not in installer:
-                  failures.append('ripgrep binary digest absent from installer')
-          elif manifest.native_tools or any(fetch.kind == 'binary' for fetch in manifest.fetches):
-              failures.append('Vulture should exercise the path without auxiliary binaries')
-
-          if failures:
-              raise SystemExit('container smoke assertions failed:\n' + '\n'.join(f'  - {f}' for f in failures))
-          print(f'container smoke OK: {installer}')
-          PY
-
-      # Bubble Tea drives the Go engine through Skylos. Also execute both
-      # utilities explicitly in each built image, so ripgrep runtime support
-      # does not depend on which verification paths Bubble Tea happens to use.
-      - name: Verify native binaries inside both Skylos images
-        if: matrix.tool == 'skylos'
-        run: |
-          .venv/bin/python - <<'PY'
-          import hashlib
-          import os
-          import platform
-          import subprocess
-          from pathlib import Path
-
-          from liveness_primer.container import image_tag, ripgrep_artifact_for
-          from liveness_primer.findings import Report
-
-          report = Report.model_validate_json(Path('report.json').read_text())
-          artifact = ripgrep_artifact_for(platform.machine())
-          helper_digest = hashlib.sha256(Path(os.environ['SKYLOS_GO_BIN']).read_bytes()).hexdigest()
-          probe = '''
-          import hashlib
-          import subprocess
-          import sys
-          from pathlib import Path
-
-          for path, digest, prefix in (
-              ('/usr/bin/rg', sys.argv[1], 'ripgrep '),
-              ('/liveness/native-tools/SKYLOS_GO_BIN', sys.argv[2], 'skylos-go '),
-          ):
-              if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
-                  raise SystemExit(f'{path}: staged binary digest mismatch')
-              result = subprocess.run([path, '--version'], check=True, capture_output=True, text=True, timeout=15)
-              if not result.stdout.startswith(prefix):
-                  raise SystemExit(f'{path}: unexpected version output: {result.stdout!r}')
-              print(result.stdout, end='')
-          '''
-          for side in (report.manifest.base, report.manifest.head):
-              if side is None:
-                  raise SystemExit('missing detector environment')
-              subprocess.run(
-                  [
-                      'docker', 'run', '--rm', '--network', 'none', '--read-only',
-                      '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-                      '--pids-limit', '64', '--user', '65532:65532', '--entrypoint', '',
-                      image_tag(side.fingerprint), '/liveness/venv/bin/python', '-c', probe,
-                      artifact.binary_digest, helper_digest,
-                  ],
-                  check=True,
-                  timeout=60,
-              )
-          PY
-
+      # Pre-report failures have nothing to upload; once present, require it.
       - name: Upload comparison report
-        if: ${{ always() && !cancelled() && hashFiles('report.json') != '' }}
+        if: ${{ !cancelled() && hashFiles('report.json') != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: container-${{ matrix.tool }}-${{ matrix.project }}
