@@ -186,14 +186,13 @@ import urllib.request
 
 def download(artifact: tuple[str, str, str, int | None]) -> None:
     url, name, expected_digest, size = artifact
-    limit = size if size is not None else 1_073_741_824
     digest = hashlib.sha256()
     total = 0
     with urllib.request.urlopen(url, timeout=300) as response:
         with (Path("/liveness/wheelhouse") / name).open("xb") as target:
             while chunk := response.read(1_048_576):
                 total += len(chunk)
-                if total > limit:
+                if size is not None and total > size:
                     raise RuntimeError("distribution exceeds expected size: " + name)
                 digest.update(chunk)
                 target.write(chunk)
@@ -249,7 +248,7 @@ _DOCKER_TIMEOUT = 1800.0
 #   4: compatible-image preflight, non-root detector builds, and
 #      adapter-declared runtime binaries.
 #   5: uv-driven offline build with precompiled bytecode.
-_CONTAINER_CACHE_FORMAT = 6
+_CONTAINER_CACHE_FORMAT = 7
 
 # Fork-bomb backstop for every container this module starts; generous enough
 # for any real detector or pip invocation.
@@ -282,7 +281,7 @@ _DOCKERFILE = """\
 FROM {builder_image} AS builder
 USER 0
 RUN mkdir -p /liveness/home && chown -R {build_user} /liveness
-ENV HOME=/liveness/home
+ENV HOME=/liveness/home UV_VENV_SEED=0
 USER {build_user}
 RUN ["uv", "venv", "--python", "/usr/bin/python", "/liveness/venv"]
 COPY --chown={build_user} wheelhouse /liveness/wheelhouse
@@ -290,6 +289,7 @@ COPY --chown={build_user} detector /liveness/detector
 RUN uv pip install --quiet --compile-bytecode --no-index \
     --python /liveness/venv/bin/python \
     --find-links /liveness/wheelhouse /liveness/detector
+RUN uv pip uninstall --python /liveness/venv/bin/python pip
 RUN uv pip freeze --python /liveness/venv/bin/python > /liveness/freeze.txt
 
 FROM {runtime_image}
@@ -1054,7 +1054,7 @@ class _Distribution(BaseModel, strict=True):
     name: str | None = None
     url: str | None = None
     path: str | None = None
-    size: int | None = Field(default=None, ge=0, le=1_073_741_824)
+    size: int | None = Field(default=None, ge=0)
     hashes: _DistributionHashes
 
 
@@ -1099,7 +1099,18 @@ def locked_downloads(lock: str, *, reuse_base: bool) -> list[tuple[str, str, str
         raise ContainerError(msg) from error
     downloads: dict[str, tuple[str, str, str, int | None]] = {}
     for package in packages:
-        archive = package.wheels[0] if package.wheels else package.sdist or package.archive
+        archive = (
+            next(
+                (
+                    wheel
+                    for wheel in package.wheels
+                    if wheel.path is not None or urlsplit(wheel.url or '').scheme == 'file'
+                ),
+                package.wheels[0],
+            )
+            if package.wheels
+            else package.sdist or package.archive
+        )
         if archive is None:
             msg = 'uv dependency lock requires a wheel or source archive'
             raise ContainerError(msg)
@@ -1598,7 +1609,9 @@ class DockerCli:
             '/liveness/venv/bin/python',
             '-c',
             (
-                'import json, platform; from pathlib import Path; '
+                'import importlib.util, json, platform; from pathlib import Path\n'
+                'if importlib.util.find_spec("pip") is not None:\n'
+                '    raise RuntimeError("managed environment contains pip")\n'
                 'print(json.dumps(dict(python_version=platform.python_version(), '
                 'freeze=[line for line in Path("/liveness/freeze.txt").read_text().splitlines() if line.strip()])))'
             ),

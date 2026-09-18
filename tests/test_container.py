@@ -3,6 +3,8 @@
 """Tests for the container-backed detector environments (contract §3, §11, §15)."""
 
 import hashlib
+import importlib.machinery
+import importlib.util
 import io
 import json
 import os
@@ -214,11 +216,13 @@ def test_prefetch_without_posix_ids_omits_the_user_mapping(tmp_path: Path, monke
     assert '--user' not in launcher.calls[0]
 
 
-def test_prefetch_reuses_base_archives_read_only(tmp_path: Path) -> None:
+@pytest.mark.parametrize('local_first', [True, False])
+def test_prefetch_reuses_base_archives_read_only(tmp_path: Path, *, local_first: bool) -> None:
     base_links = tmp_path / 'base-wheels'
-    lock = PREFETCH_LOCK.replace(
-        'url = "https://example.invalid/tomli.whl"', 'path = "/liveness/base-links/tomli.whl"'
-    ).replace('sha256 = "' + 'a' * 64 + '"', '')
+    local = '{url = "file:///liveness/base-links/tomli.whl", hashes = {}}'
+    remote = '{url = "https://example.invalid/tomli.whl", size = 100, hashes = {sha256 = "' + 'a' * 64 + '"}}'
+    wheels = [local, remote] if local_first else [remote, local]
+    lock = '[[packages]]\nwheels = [' + ', '.join(wheels) + ']'
     launcher = RecordingLauncher(stdout=lock)
     DockerCli(launcher=launcher).prefetch('builder:1', ('tomli>=2',), tmp_path, find_links=base_links)
     run_argv, _rm_argv = launcher.calls
@@ -234,11 +238,13 @@ def testlocked_downloads_supports_source_and_direct_archives(kind: str) -> None:
     ]
 
 
-def testlocked_downloads_selects_one_wheel_and_deduplicates() -> None:
+def test_locked_downloads_deduplicates() -> None:
     assert len(locked_downloads(PREFETCH_LOCK + '\n' + PREFETCH_LOCK, reuse_base=False)) == 1
     lock = PREFETCH_LOCK.replace('url =', 'size = 10, name = "download.whl", url =')
     assert locked_downloads(lock, reuse_base=False)[0][1:] == ('download.whl', 'a' * 64, 10)
     assert locked_downloads('packages = []', reuse_base=False) == []
+    large = PREFETCH_LOCK.replace('url =', 'size = 1073741825, url =')
+    assert locked_downloads(large, reuse_base=False)[0][-1] == 1_073_741_825
 
 
 @pytest.mark.parametrize(
@@ -247,7 +253,7 @@ def testlocked_downloads_selects_one_wheel_and_deduplicates() -> None:
         ('invalid', 'invalid uv dependency lock'),
         ('packages = 1', 'invalid uv dependency lock'),
         (PREFETCH_LOCK.replace('"' + 'a' * 64 + '"', '1'), 'invalid uv dependency lock'),
-        (PREFETCH_LOCK.replace('url =', 'size = 1073741825, url ='), 'invalid uv dependency lock'),
+        (PREFETCH_LOCK.replace('url =', 'size = -1, url ='), 'invalid uv dependency lock'),
         ('[[packages]]\nname = "git-package"', 'requires a wheel or source archive'),
         (PREFETCH_LOCK.replace('sha256 = "' + 'a' * 64 + '"', ''), 'missing an archive SHA-256'),
         (
@@ -468,6 +474,32 @@ def test_environment_probe_uses_the_exact_venv_interpreter() -> None:
     assert rm_argv == ('docker', 'rm', '--force', name)
     with pytest.raises(ContainerError, match='environment probe failed'):
         DockerCli(launcher=RecordingLauncher(returncode=1)).probe_environment('t:1')
+
+
+def test_environment_probe_script_rejects_pip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = RecordingLauncher(stdout='{"python_version":"3.14.7","freeze":[]}')
+    DockerCli(launcher=launcher).probe_environment('t:1')
+    freeze = tmp_path / 'freeze.txt'
+    atomic_write_text(freeze, 'tomli==2.4.0\n\n')
+    script = tmp_path / 'probe.py'
+    atomic_write_text(script, launcher.calls[0][-1].replace('/liveness/freeze.txt', str(freeze)))
+    pip_spec: importlib.machinery.ModuleSpec | None = importlib.machinery.ModuleSpec('pip', loader=None)
+
+    def find_pip(name: str) -> importlib.machinery.ModuleSpec | None:
+        assert name == 'pip'
+        return pip_spec
+
+    monkeypatch.setattr(importlib.util, 'find_spec', find_pip)
+    with pytest.raises(RuntimeError, match='managed environment contains pip'):
+        runpy.run_path(str(script))
+    assert not capsys.readouterr().out
+    pip_spec = None
+    runpy.run_path(str(script))
+    assert EnvironmentProbe.model_validate_json(capsys.readouterr().out).freeze == ('tomli==2.4.0',)
 
 
 @pytest.mark.parametrize(
@@ -1267,6 +1299,9 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         assert 'COPY tools/rg /usr/bin/rg' not in runtime_stage
         assert '"uv", "venv"' in dockerfile
         assert '--compile-bytecode' in dockerfile
+        assert 'ENV HOME=/liveness/home UV_VENV_SEED=0' in dockerfile
+        uninstall = 'uv pip uninstall --python /liveness/venv/bin/python pip'
+        assert dockerfile.index('uv pip install') < dockerfile.index(uninstall) < dockerfile.index('uv pip freeze')
         assert dockerfile.index('USER 0') < dockerfile.index('RUN mkdir -p /liveness/home')
         assert dockerfile.index('USER 65532:65532') < dockerfile.index('uv pip install')
         assert dockerfile.count('USER 0') == 1
