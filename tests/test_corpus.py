@@ -191,6 +191,42 @@ def test_materialize_fetches_only_the_pinned_commit(store: CheckoutStore, origin
     assert read_small_text(checkout / 'module.py') == 'SECOND = 2\n'
 
 
+def test_materialize_with_history_carries_tags_and_ancestry(store: CheckoutStore, origin: RepoFixture) -> None:
+    # A detector whose backend derives its version from git metadata needs
+    # the tag *and* the ancestry connecting it to the pin: tags alone leave
+    # ``git describe`` with "no tags can describe" (§4).
+    git('config', 'uploadpack.allowAnySHA1InWant', 'true', cwd=origin.path)
+    git('commit', '--quiet', '--allow-empty', '-m', 'third', cwd=origin.path)
+    checkout = store.materialize(origin.url, origin.second_sha, history=True)
+    assert git('rev-parse', 'HEAD', cwd=checkout) == origin.second_sha
+    assert not (checkout / '.git' / 'shallow').exists()
+    assert git('tag', cwd=checkout) == 'v1'
+    assert git('describe', '--tags', cwd=checkout).startswith('v1-1-g')
+    assert checkout.with_name(checkout.name + '.history').exists()
+
+
+def test_materialize_deepens_a_cached_shallow_checkout(store: CheckoutStore, origin: RepoFixture) -> None:
+    # A corpus project can cache the same (repo, sha) at depth 1 before a
+    # detector needs its history, so the entry is deepened in place.
+    shallow = store.materialize(origin.url, origin.second_sha)
+    assert (shallow / '.git' / 'shallow').exists()
+    deepened = store.materialize(origin.url, origin.second_sha, history=True)
+    assert deepened == shallow
+    assert not (deepened / '.git' / 'shallow').exists()
+    assert git('describe', '--tags', cwd=deepened).startswith('v1-1-g')
+    assert read_small_text(deepened / 'module.py') == 'SECOND = 2\n'
+
+
+def test_materialize_reuses_a_deep_checkout(tmp_path: Path, origin: RepoFixture) -> None:
+    counting = CountingLauncher()
+    store = CheckoutStore(tmp_path / 'cache', launcher=counting)
+    first = store.materialize(origin.url, origin.second_sha, history=True)
+    calls_after_first = len(counting.calls)
+    second = store.materialize(origin.url, origin.second_sha, history=True)
+    assert first == second
+    assert len(counting.calls) == calls_after_first
+
+
 @dataclass
 class RefusingLauncher:
     """Forwarding launcher that fails direct commit fetches, like a server refusing unadvertised commits."""
@@ -228,6 +264,35 @@ def test_materialize_falls_back_to_a_deep_fetch_when_refused(tmp_path: Path, ori
     assert not (checkout / '.git' / 'shallow').exists()
     fetches = [call for call in refusing.calls if call[1] == 'fetch']
     assert [('--depth' in call, '--tags' in call) for call in fetches] == [(True, False), (False, True)]
+
+
+def test_materialize_deep_fallback_satisfies_a_later_history_request(tmp_path: Path, origin: RepoFixture) -> None:
+    # The refused-fetch fallback is already deep and tagged, so it meets a
+    # detector's requirement without a second fetch.
+    refusing = RefusingLauncher()
+    store = CheckoutStore(tmp_path / 'cache', launcher=refusing)
+    store.materialize(origin.url, origin.first_sha)
+    calls_after_first = len(refusing.calls)
+    checkout = store.materialize(origin.url, origin.first_sha, history=True)
+    assert len(refusing.calls) == calls_after_first
+    assert git('describe', '--tags', cwd=checkout) == 'v1'
+
+
+def test_materialize_deepens_an_entry_without_a_history_marker(tmp_path: Path, origin: RepoFixture) -> None:
+    # Entries cached before the marker existed carry none, so a detector
+    # request re-checks them instead of trusting their depth; an entry that
+    # is already complete is topped up without ``--unshallow``, which git
+    # rejects on a complete repository.
+    refusing = RefusingLauncher()
+    store = CheckoutStore(tmp_path / 'cache', launcher=refusing)
+    checkout = store.materialize(origin.url, origin.first_sha)
+    checkout.with_name(checkout.name + '.history').unlink()
+    refusing.calls.clear()
+    deepened = store.materialize(origin.url, origin.first_sha, history=True)
+    assert deepened == checkout
+    assert git('describe', '--tags', cwd=deepened) == 'v1'
+    assert not any('--unshallow' in call for call in refusing.calls)
+    assert checkout.with_name(checkout.name + '.history').exists()
 
 
 def test_materialize_keeps_the_checkout_tree_pristine(store: CheckoutStore, origin: RepoFixture) -> None:

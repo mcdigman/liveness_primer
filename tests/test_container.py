@@ -1039,7 +1039,8 @@ def test_build_refuses_checkout_outside_the_cache(
 ) -> None:
     store = CheckoutStore(tmp_path / 'cache')
 
-    def misdirected_materialize(_repo: str, _sha: str) -> Path:
+    def misdirected_materialize(_repo: str, _sha: str, *, history: bool = False) -> Path:
+        assert history  # detector checkouts always ask for history (§4)
         return detector_repo.path
 
     monkeypatch.setattr(store, 'materialize', misdirected_materialize)
@@ -1105,7 +1106,7 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
     tool_fetches = [record for record in pair.fetches if record.kind == 'binary']
     assert tool_fetches == []
     # Build contexts are offline and self-contained: Dockerfile, the
-    # .git-less checkout, and the shared wheelhouse (contract §3, §11).
+    # checkout, and the shared wheelhouse (contract §3, §11).
     for names, dockerfile in docker.built_contexts:
         assert dockerfile.startswith(f'FROM {DEFAULT_CONTAINER_BUILDER_IMAGE} AS builder\n')
         runtime_stage = dockerfile.split(f'FROM {DEFAULT_CONTAINER_IMAGE}\n', maxsplit=1)[1]
@@ -1124,7 +1125,9 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         assert 'wheelhouse/tomli-1.0-py3-none-any.whl' in names
         assert 'wheelhouse/setuptools-1.0-py3-none-any.whl' in names
         assert 'tools/rg' not in names
-        assert not any(name.startswith('detector/.git') for name in names)
+        # ``.git`` reaches the builder stage so a dynamic version resolves,
+        # and stays out of the runtime image (§4).
+        assert any(name.startswith('detector/.git/') for name in names)
 
 
 def test_cached_pair_skips_builds(tmp_path: Path, detector_repo: DetectorRepo) -> None:
