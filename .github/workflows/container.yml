@@ -1,0 +1,140 @@
+name: Container
+
+# Contract §3, §11: end-to-end smoke test of `--container`.
+#
+# tests/test_container.py drives the container logic through an injected
+# runtime (§15), so it never feeds the generated Containerfile to a real
+# `docker build`, never pulls the pinned Chainguard images, and never executes
+# an invocation container. This job covers exactly that gap by building both
+# detector environments for real and running one comparison through them.
+#
+# The weekly cron matters as much as the path triggers: the pinned digests are
+# public Chainguard `latest`/`latest-dev` pointers, which can become unpullable
+# without any change in this repo.
+on:
+  push:
+    branches: [main]
+    paths:
+      - liveness_primer/container.py
+      - liveness_primer/corpus.py
+      - liveness_primer/envcache.py
+      - liveness_primer/execution.py
+      - liveness_primer/filesystem.py
+      - liveness_primer/isolation.py
+      - liveness_primer/launcher.py
+      - liveness_primer/runner.py
+      - liveness_primer/tools/**
+      - pyproject.toml
+      - .github/workflows/container.yml
+  pull_request:
+    # GitHub Actions does not support YAML anchors, so this list is duplicated.
+    paths:
+      - liveness_primer/container.py
+      - liveness_primer/corpus.py
+      - liveness_primer/envcache.py
+      - liveness_primer/execution.py
+      - liveness_primer/filesystem.py
+      - liveness_primer/isolation.py
+      - liveness_primer/launcher.py
+      - liveness_primer/runner.py
+      - liveness_primer/tools/**
+      - pyproject.toml
+      - .github/workflows/container.yml
+  workflow_dispatch:
+  # Weekly (Mon 07:00 UTC), an hour after Test so the two do not contend.
+  schedule:
+    - cron: "0 7 * * 1"
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+# This job builds and executes detector revisions from a PR's code, so no token
+# is passed to repository commands and checkout does not persist its read-only
+# credential.
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # A warm build is seconds; the cold cost here is pulling ~1.1GB of pinned
+    # Chainguard images. The ceiling is generous so a slow registry fails the
+    # job as a timeout only when something is genuinely wrong.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Install project
+        run: |
+          uv venv
+          uv pip install .
+
+      # Recorded in the log because the daemon version lands in the report's
+      # installer string, so a behavior change on the runner image is visible.
+      - name: Report Docker version
+        run: docker version
+
+      # vulture on pluggy is the cheapest pair in the corpus (cost 1.0) and is
+      # the invocation documented in docs/usage.md. The point is to exercise the
+      # container path, so the smallest real pair is the right one.
+      - name: Run containerized comparison
+        run: |
+          .venv/bin/liveness-primer run \
+            --tool vulture \
+            --repo https://github.com/jendrikseipp/vulture \
+            --old v2.15 \
+            --new v2.16 \
+            -k pluggy \
+            --container \
+            --json-out report.json
+
+      # Exit 0 alone would not prove containment engaged, so assert on the
+      # manifest. The expected digests are imported rather than duplicated here:
+      # bumping the pins in container.py updates this check automatically, while
+      # still proving the pinned bytes were the ones actually pulled.
+      - name: Assert the container path really ran
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from liveness_primer.container import (
+              DEFAULT_CONTAINER_BUILDER_IMAGE,
+              DEFAULT_CONTAINER_IMAGE,
+          )
+
+          manifest = json.loads(Path('report.json').read_text())['manifest']
+          installer = manifest['installer']
+
+          failures = []
+          if not manifest['isolation_enforced']:
+              failures.append('isolation was not enforced')
+          if not manifest['comparable']:
+              failures.append('the pair was not comparable')
+          if not installer.startswith('docker '):
+              failures.append(f'installer is not docker: {installer!r}')
+          for label, image in (
+              ('builder', DEFAULT_CONTAINER_BUILDER_IMAGE),
+              ('runtime', DEFAULT_CONTAINER_IMAGE),
+          ):
+              if image not in installer:
+                  failures.append(f'{label} image {image} absent from installer: {installer!r}')
+
+          if failures:
+              raise SystemExit('container smoke assertions failed:\n' + '\n'.join(f'  - {f}' for f in failures))
+
+          print(f'container smoke OK: {installer}')
+          PY
