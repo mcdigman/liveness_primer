@@ -37,6 +37,12 @@ from tests.test_findings import make_manifest
 Tool = Literal['vulture', 'skylos']
 HELPER_BYTES = b'controlled Go helper fixture'
 HELPER_DIGEST = hashlib.sha256(HELPER_BYTES).hexdigest()
+pytestmark = pytest.mark.usefixtures('_workflow_workspace')
+
+
+@pytest.fixture
+def _workflow_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
 
 
 def smoke_environment(tmp_path: Path, tool: Tool = 'vulture') -> dict[str, str]:
@@ -432,6 +438,27 @@ def test_main_success(
 def test_main_usage(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
     assert smoke.main(argv) == 2
     assert 'usage:' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('use_symlink', [False, True])
+def test_workspace_escape_rejected(*, use_symlink: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    environ = smoke_environment(tmp_path, 'skylos')
+    report = valid_report(environ)
+    path = tmp_path / 'report.json'
+    path.write_text(report.model_dump_json(), encoding='utf-8')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    if use_symlink:
+        report_link = workspace / 'report.json'
+        report_link.symlink_to(path)
+        path = report_link
+        helper_link = workspace / 'skylos-go'
+        helper_link.symlink_to(environ['SKYLOS_GO_BIN'])
+        environ['SKYLOS_GO_BIN'] = str(helper_link)
+    assert smoke.main([str(path)]) == 1
+    with pytest.raises(smoke.SmokeCheckError, match='escapes the workspace'):
+        smoke.validate_report(report, environ)
 
 
 @pytest.mark.parametrize(

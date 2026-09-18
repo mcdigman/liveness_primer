@@ -78,6 +78,31 @@ class BinaryCheck:
     version_prefix: str
 
 
+def _workspace_path(value: str) -> Path:
+    """Resolve an input file beneath the workflow workspace.
+
+    Parameters
+    ----------
+    value : str
+        Report or helper path supplied by the workflow.
+
+    Returns
+    -------
+    Path
+        Resolved path inside the current working directory.
+
+    Raises
+    ------
+    SmokeCheckError
+        If the path escapes the workspace.
+    """
+    path = Path(value).resolve()
+    if not path.is_relative_to(Path.cwd().resolve()):
+        msg = f'smoke input escapes the workspace: {value}'
+        raise SmokeCheckError(msg)
+    return path
+
+
 def _manifest_failures(manifest: RunManifest, environ: Mapping[str, str]) -> list[str]:
     """Check detector and image provenance.
 
@@ -214,7 +239,7 @@ def validate_report(report: Report, environ: Mapping[str, str]) -> tuple[BinaryC
     failures.extend(_project_failures(report, environ['SMOKE_PROJECT']))
     binaries: tuple[BinaryCheck, ...] = ()
     if report.manifest.tool == 'skylos':
-        binaries, binary_failures = _skylos_checks(report.manifest, Path(environ['SKYLOS_GO_BIN']))
+        binaries, binary_failures = _skylos_checks(report.manifest, _workspace_path(environ['SKYLOS_GO_BIN']))
         failures.extend(binary_failures)
     elif report.manifest.native_tools or any(fetch.kind == 'binary' for fetch in report.manifest.fetches):
         failures.append('Vulture should exercise the path without auxiliary binaries')
@@ -293,7 +318,7 @@ def main(argv: Sequence[str]) -> int:
     Parameters
     ----------
     argv : Sequence[str]
-        One report path.
+        One report path beneath the current workflow workspace.
 
     Returns
     -------
@@ -304,7 +329,7 @@ def main(argv: Sequence[str]) -> int:
         sys.stderr.write('usage: container_smoke_check.py REPORT_JSON\n')
         return 2
     try:
-        report = Report.model_validate_json(read_small_text(Path(argv[0])))
+        report = Report.model_validate_json(read_small_text(_workspace_path(argv[0])))
         binaries = validate_report(report, os.environ)
         if binaries:
             verify_images(report, binaries)
