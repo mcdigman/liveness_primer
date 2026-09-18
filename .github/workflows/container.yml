@@ -53,6 +53,7 @@ jobs:
       SMOKE_REPO: ${{ matrix.repo }}
       SMOKE_OLD: ${{ matrix.old }}
       SMOKE_NEW: ${{ matrix.new }}
+      SKYLOS_GO_BIN: ${{ matrix.tool == 'skylos' && format('{0}/.container-smoke/skylos-go', github.workspace) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -97,9 +98,8 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: linux
         run: |
-          go build -trimpath -o "$RUNNER_TEMP/skylos-go" ./cmd/skylos-go
-          "$RUNNER_TEMP/skylos-go" --version
-          echo "SKYLOS_GO_BIN=$RUNNER_TEMP/skylos-go" >> "$GITHUB_ENV"
+          go build -trimpath -o "$SKYLOS_GO_BIN" ./cmd/skylos-go
+          "$SKYLOS_GO_BIN" --version
 
       - name: Report Docker version
         run: docker version
@@ -240,9 +240,9 @@ jobs:
           PY
 
       - name: Upload comparison report
-        if: ${{ always() && !cancelled() }}
+        if: ${{ always() && !cancelled() && hashFiles('report.json') != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: container-${{ matrix.tool }}-${{ matrix.project }}
           path: report.json
-          if-no-files-found: warn
+          if-no-files-found: error
