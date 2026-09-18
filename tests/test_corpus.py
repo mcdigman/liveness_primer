@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for checkout and pin resolution against throwaway git repositories (contract §15)."""
 
+import re
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -17,6 +18,10 @@ from liveness_primer.filesystem import atomic_write_text, read_small_text
 from liveness_primer.launcher import LauncherError, LaunchResult, SyncLauncher, run_async, run_sync
 
 PIN_MISSING = 'd' * 40
+# A bare commit SHA as it appears in a fetch argv, i.e. the ``want`` a server
+# refusing unadvertised commits rejects. Kept local: importing the private
+# pattern from ``corpus`` would reach across the module boundary.
+_SHA_ARG_RE = re.compile(r'^[0-9a-f]{40}$')
 
 
 def git(*args: str, cwd: Path | None = None) -> str:
@@ -217,6 +222,26 @@ def test_materialize_deepens_a_cached_shallow_checkout(store: CheckoutStore, ori
     assert read_small_text(deepened / 'module.py') == 'SECOND = 2\n'
 
 
+def test_materialize_deepens_a_shallow_checkout_of_an_unadvertised_pin(
+    store: CheckoutStore, origin: RepoFixture
+) -> None:
+    # Real pins sit below a tip, so no ref names the commit the deepen has to
+    # reach: its ancestry arrives through the branch it descends from, under
+    # the default refspec, and only then can ``git describe`` walk to the tag.
+    git('config', 'uploadpack.allowAnySHA1InWant', 'true', cwd=origin.path)
+    git('commit', '--quiet', '--allow-empty', '-m', 'third', cwd=origin.path)
+    advertised = {line.split('\t')[0] for line in git('ls-remote', origin.url).splitlines()}
+    assert origin.second_sha not in advertised
+    shallow = store.materialize(origin.url, origin.second_sha)
+    assert (shallow / '.git' / 'shallow').exists()
+    deepened = store.materialize(origin.url, origin.second_sha, history=True)
+    assert git('rev-parse', 'HEAD', cwd=deepened) == origin.second_sha
+    # The graft is resolved, not merely dropped: the pin's parent arrived too.
+    assert not (deepened / '.git' / 'shallow').exists()
+    assert git('rev-list', '--count', 'HEAD', cwd=deepened) == '2'
+    assert git('describe', '--tags', cwd=deepened).startswith('v1-1-g')
+
+
 def test_materialize_reuses_a_deep_checkout(tmp_path: Path, origin: RepoFixture) -> None:
     counting = CountingLauncher()
     store = CheckoutStore(tmp_path / 'cache', launcher=counting)
@@ -241,7 +266,12 @@ class RefusingLauncher:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> LaunchResult:
-        """Refuse any ``git fetch`` that names a depth, forwarding everything else.
+        """Refuse any ``git fetch`` that names a commit SHA, forwarding everything else.
+
+        The refusal is keyed on the ``want``, not on the depth: a server that
+        serves only its advertised tips rejects a commit fetch whether or not
+        it asks for a depth, so a detector's deep, tagged fetch is refused
+        exactly like a corpus project's shallow one.
 
         Returns
         -------
@@ -249,7 +279,7 @@ class RefusingLauncher:
             A synthetic refusal, or the forwarded launch outcome.
         """
         self.calls.append(tuple(argv))
-        if '--depth' in argv:
+        if argv[1] == 'fetch' and any(_SHA_ARG_RE.match(arg) for arg in argv):
             return LaunchResult(
                 argv=tuple(argv), returncode=128, stdout='', stderr='not our ref', duration_seconds=0.0, timed_out=False
             )
@@ -264,6 +294,20 @@ def test_materialize_falls_back_to_a_deep_fetch_when_refused(tmp_path: Path, ori
     assert not (checkout / '.git' / 'shallow').exists()
     fetches = [call for call in refusing.calls if call[1] == 'fetch']
     assert [('--depth' in call, '--tags' in call) for call in fetches] == [(True, False), (False, True)]
+
+
+def test_materialize_with_history_falls_back_when_refused(tmp_path: Path, origin: RepoFixture) -> None:
+    # A server serving only its tips refuses the detector's commit fetch too,
+    # so the fallback is what has to carry the tags and the ancestry the
+    # version is derived from -- and neither fetch may ask for a depth (§4).
+    refusing = RefusingLauncher()
+    store = CheckoutStore(tmp_path / 'cache', launcher=refusing)
+    checkout = store.materialize(origin.url, origin.first_sha, history=True)
+    fetches = [call for call in refusing.calls if call[1] == 'fetch']
+    assert [('--depth' in call, '--tags' in call) for call in fetches] == [(False, True), (False, True)]
+    assert not (checkout / '.git' / 'shallow').exists()
+    assert git('describe', '--tags', cwd=checkout) == 'v1'
+    assert checkout.with_name(checkout.name + '.history').exists()
 
 
 def test_materialize_deep_fallback_satisfies_a_later_history_request(tmp_path: Path, origin: RepoFixture) -> None:
