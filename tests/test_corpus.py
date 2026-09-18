@@ -173,6 +173,54 @@ def test_materialize_reuses_completed_checkouts(tmp_path: Path, origin: RepoFixt
     assert len(counting.calls) == calls_after_first
 
 
+def test_materialize_fetches_only_the_pinned_commit(store: CheckoutStore, origin: RepoFixture) -> None:
+    # History is never read downstream, so the pinned commit is fetched at
+    # depth 1 instead of downloading the whole pack history.
+    checkout = store.materialize(origin.url, origin.second_sha)
+    assert (checkout / '.git' / 'shallow').exists()
+    assert git('rev-list', '--count', 'HEAD', cwd=checkout) == '1'
+    assert read_small_text(checkout / 'module.py') == 'SECOND = 2\n'
+
+
+@dataclass
+class RefusingLauncher:
+    """Forwarding launcher that fails direct commit fetches, like a server refusing unadvertised commits."""
+
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> LaunchResult:
+        """Refuse any ``git fetch`` that names a depth, forwarding everything else.
+
+        Returns
+        -------
+        LaunchResult
+            A synthetic refusal, or the forwarded launch outcome.
+        """
+        self.calls.append(tuple(argv))
+        if '--depth' in argv:
+            return LaunchResult(
+                argv=tuple(argv), returncode=128, stdout='', stderr='not our ref', duration_seconds=0.0, timed_out=False
+            )
+        return run_sync(argv, cwd=cwd, env=env, timeout=timeout)
+
+
+def test_materialize_falls_back_to_a_deep_fetch_when_refused(tmp_path: Path, origin: RepoFixture) -> None:
+    refusing = RefusingLauncher()
+    store = CheckoutStore(tmp_path / 'cache', launcher=refusing)
+    checkout = store.materialize(origin.url, origin.first_sha)
+    assert read_small_text(checkout / 'module.py') == 'FIRST = 1\n'
+    assert not (checkout / '.git' / 'shallow').exists()
+    fetches = [call for call in refusing.calls if call[1] == 'fetch']
+    assert [('--depth' in call, '--tags' in call) for call in fetches] == [(True, False), (False, True)]
+
+
 def test_materialize_keeps_the_checkout_tree_pristine(store: CheckoutStore, origin: RepoFixture) -> None:
     # The completion marker lives *next to* the checkout, so the analyzed
     # tree is exactly the pristine repo tree (contract §3).

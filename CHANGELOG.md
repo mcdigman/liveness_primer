@@ -38,6 +38,11 @@ independently of the package version; `liveness-primer --version` prints both.
 
 ### Changed
 
+- **Shallow checkouts** — corpus and detector checkouts now fetch only the
+  pinned commit (`git fetch --depth 1`) instead of the whole pack history.
+  Nothing downstream reads history (every copy drops `.git`), and the full
+  corpus fetch drops from about 760 MB to about 180 MB on the wire. Servers
+  that refuse unadvertised commits still fall back to a full tag fetch.
 - **Skylos CI check** — the `Dead Code` workflow is now `Skylos Analysis`
   (`.github/workflows/skylos.yml`) and additionally runs Skylos's security,
   secret, and AI-defect analyses.

@@ -235,7 +235,9 @@ class CheckoutStore:
         The checkout is created on first use (network permitted: fetch step)
         and reused byte-identically afterwards; a completion marker guards
         against interrupted materializations, and ``filelock`` guards against
-        concurrent runs.
+        concurrent runs. Only the pinned commit is fetched (depth 1): every
+        consumer copies the tree with ``.git`` dropped, so history is never
+        read and full pack downloads would be wasted.
 
         Parameters
         ----------
@@ -275,8 +277,10 @@ class CheckoutStore:
                 shutil.rmtree(dest)
             self._git(['init', '--quiet', str(dest)])
             self._git(['remote', 'add', 'origin', repo], cwd=dest)
-            fetched = self._git(['fetch', '--quiet', 'origin', sha], cwd=dest, check=False)
+            fetched = self._git(['fetch', '--quiet', '--depth', '1', 'origin', sha], cwd=dest, check=False)
             if not fetched.ok:
+                # A server refusing unadvertised commits only serves its tips,
+                # and the pin may sit below one, so the fallback stays deep.
                 self._git(['fetch', '--quiet', '--tags', 'origin'], cwd=dest)
             exists = self._git(['cat-file', '-e', f'{sha}^{{commit}}'], cwd=dest, check=False)
             if not exists.ok:
