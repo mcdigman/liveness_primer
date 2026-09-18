@@ -235,9 +235,11 @@ class CheckoutStore:
         The checkout is created on first use (network permitted: fetch step)
         and reused byte-identically afterwards; a completion marker guards
         against interrupted materializations, and ``filelock`` guards against
-        concurrent runs. Only the pinned commit is fetched (depth 1): every
-        consumer copies the tree with ``.git`` dropped, so history is never
-        read and full pack downloads would be wasted.
+        concurrent runs. Only the pinned commit is fetched (depth 1), with no
+        tags: nothing reads history, and every consumer that copies the tree
+        drops ``.git``. The host install path builds the checkout in place, so
+        a detector whose build backend derives its version from git metadata
+        would see a shallow, tagless repository there.
 
         Parameters
         ----------
