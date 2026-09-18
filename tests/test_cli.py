@@ -325,13 +325,13 @@ def test_run_analyses_override_corpus_selections(
         pin=origin.head_sha,
         tools={'skylos': ToolSettings(analyses=('danger',))},
     )
-    # model_construct skips the corpus-level GitHub-hosting rule so the run
-    # can target the local fixture repository.
-    monkeypatch.setattr(
-        liveness_primer.cli,
-        'load_corpus',
-        lambda *_args, **_kwargs: Corpus.model_construct(projects=(project,)),
-    )
+
+    def fake_load_corpus(*_args: object, **_kwargs: object) -> Corpus:
+        # model_construct skips the corpus-level GitHub-hosting rule so the run
+        # can target the local fixture repository.
+        return Corpus.model_construct(projects=(project,))
+
+    monkeypatch.setattr(liveness_primer.cli, 'load_corpus', fake_load_corpus)
     secret = FakeFinding(path='pkg/mod.py', line=4, symbol='API_KEY', bucket='secrets', rule_id='SKY-S101')
     danger = FakeFinding(path='pkg/mod.py', line=9, symbol='run', bucket='danger', rule_id='SKY-D209')
     base_cmd = write_fake_detector_script(tmp_path / 'sky-base.json', [], output_format='skylos')
@@ -480,7 +480,10 @@ def test_version_prints_package_and_schema_versions(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(liveness_primer.cli, 'metadata_version', lambda _name: '9.9.9')
+    def fake_metadata_version(_name: str) -> str:
+        return '9.9.9'
+
+    monkeypatch.setattr(liveness_primer.cli, 'metadata_version', fake_metadata_version)
     with pytest.raises(SystemExit) as excinfo:
         main(['--version'])
     assert excinfo.value.code == 0
@@ -823,11 +826,11 @@ def test_interactive_terminal_width_resolution(
     monkeypatch.setenv('TERM', 'dumb')
     monkeypatch.setattr(sys.stdout, 'isatty', lambda: True)
     for columns in (111, 0):
-        monkeypatch.setattr(
-            shutil,
-            'get_terminal_size',
-            lambda *_args, _columns=columns, **_kwargs: os.terminal_size((_columns, 24)),
-        )
+
+        def fake_get_terminal_size(*_args: object, _columns: int = columns, **_kwargs: object) -> os.terminal_size:
+            return os.terminal_size((_columns, 24))
+
+        monkeypatch.setattr(shutil, 'get_terminal_size', fake_get_terminal_size)
         code = main(escape_argv(tmp_path, project_url, [BASE], [BASE]))
         captured = capsys.readouterr()
         assert code == EXIT_OK

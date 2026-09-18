@@ -607,9 +607,12 @@ def test_validate_container_native_tool_rejects_a_source_that_grows_while_readin
                 stream.write(b'x')
         return real_open(path, flags)
 
+    def fake_fstat(_descriptor: int) -> os.stat_result:
+        return initial_status
+
     monkeypatch.setattr(container_module, 'MAX_NATIVE_TOOL_BYTES', len(payload))
     monkeypatch.setattr(os, 'open', grow_then_open)
-    monkeypatch.setattr(os, 'fstat', lambda _descriptor: initial_status)
+    monkeypatch.setattr(os, 'fstat', fake_fstat)
     tool = ContainerNativeTool(variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(payload).hexdigest())
     with pytest.raises(ContainerError, match='native helper SKYLOS_GO_BIN exceeds 20 bytes'):
         validate_container_native_tool_platform(tool, 'aarch64')
@@ -641,8 +644,12 @@ def test_validate_container_native_tool_rejects_opened_file_growth(
     status_values = list(source_status)
     status_values[stat.ST_SIZE] = source_status.st_size + 1
     opened_status = os.stat_result(status_values)
+
+    def fake_fstat(_descriptor: int) -> os.stat_result:
+        return opened_status
+
     monkeypatch.setattr(container_module, 'MAX_NATIVE_TOOL_BYTES', source_status.st_size)
-    monkeypatch.setattr(os, 'fstat', lambda _descriptor: opened_status)
+    monkeypatch.setattr(os, 'fstat', fake_fstat)
     tool = ContainerNativeTool(
         variable='SKYLOS_GO_BIN', source=source, sha256=hashlib.sha256(source.read_bytes()).hexdigest()
     )
@@ -1356,7 +1363,11 @@ def test_runtime_binary_registry_rejects_a_mismatched_executable(
         member='helper-tool/helper',
         binary_digest='c' * 64,
     )
-    monkeypatch.setattr(container_module, '_runtime_binary_artifact', lambda _binary, _machine: mismatched)
+
+    def fake_runtime_binary_artifact(_binary: 'RuntimeBinary', _machine: str) -> StaticBinaryArtifact:
+        return mismatched
+
+    monkeypatch.setattr(container_module, '_runtime_binary_artifact', fake_runtime_binary_artifact)
     docker = FakeDocker()
     with (
         pytest.raises(ContainerError, match="registry mismatch: requested 'rg', artifact provides 'helper'"),
