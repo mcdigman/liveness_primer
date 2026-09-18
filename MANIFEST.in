@@ -13,3 +13,7 @@ include CONTRIBUTING.md
 include SECURITY.md
 recursive-include tests *.py
 recursive-include tests/fixtures *
+# The packaged smoke-check tests import this CI helper. Include only their
+# support modules, without shipping unrelated development scripts.
+include scripts/__init__.py
+include scripts/container_smoke_check.py

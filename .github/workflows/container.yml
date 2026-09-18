@@ -1,0 +1,133 @@
+name: Container
+
+# Real builds and invocations complement the injected-runtime unit tests.
+# The weekly run also detects unavailable image pins and binary downloads.
+on:
+  push:
+    branches: [main]
+    paths: &container-paths
+      - liveness_primer/**
+      - scripts/container_smoke_check.py
+      - tests/test_container_smoke_check.py
+      - pyproject.toml
+      - .github/workflows/container.yml
+  pull_request:
+    paths: *container-paths
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.tool }} on ${{ matrix.project }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Keep the simple Python result even if native-helper integration fails.
+      fail-fast: false
+      matrix:
+        include:
+          - tool: vulture
+            project: pluggy
+            repo: https://github.com/jendrikseipp/vulture
+            # v2.15 -> v2.16
+            old: 6a4001fd69bd3042a109a0f7d6d36054416111c2
+            new: b0f67ba0044693aa9ec0d38fe460590facc98004
+          - tool: skylos
+            project: bubbletea
+            repo: https://github.com/duriantaco/skylos
+            # v4.37.0 -> v4.38.0; the helper below uses the same pinned head.
+            old: 2d899e605b98f935b86476ab2e0e208c5bbf5062
+            new: d8288c5837793e2c51be869714573ebb7f2a044d
+    env:
+      SMOKE_TOOL: ${{ matrix.tool }}
+      SMOKE_PROJECT: ${{ matrix.project }}
+      SMOKE_REPO: ${{ matrix.repo }}
+      SMOKE_OLD: ${{ matrix.old }}
+      SMOKE_NEW: ${{ matrix.new }}
+      SKYLOS_GO_BIN: ${{ matrix.tool == 'skylos' && format('{0}/.container-smoke/skylos-go', github.workspace) || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Install project
+        run: |
+          uv venv
+          uv pip install .
+
+      - name: Check out the pinned Go helper source
+        if: matrix.tool == 'skylos'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: duriantaco/skylos
+          ref: d8288c5837793e2c51be869714573ebb7f2a044d  # v4.38.0
+          path: .container-smoke/skylos
+          persist-credentials: false
+
+      - name: Install Go
+        if: matrix.tool == 'skylos'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: .container-smoke/skylos/skylos/engines/go/go.mod
+          # The helper uses only the standard library and has no go.sum.
+          cache: false
+
+      # Compile a static Linux executable for the distroless runtime. Both
+      # detector revisions receive exactly these bytes through native-tool
+      # admission and staging; this tests integration, not Go-engine changes.
+      - name: Build the shared Go helper
+        if: matrix.tool == 'skylos'
+        working-directory: .container-smoke/skylos/skylos/engines/go
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+        run: |
+          go build -trimpath -o "$SKYLOS_GO_BIN" ./cmd/skylos-go
+          "$SKYLOS_GO_BIN" --version
+
+      - name: Report Docker version
+        run: docker version
+
+      - name: Run containerized comparison
+        run: |
+          .venv/bin/liveness-primer run \
+            --tool "$SMOKE_TOOL" \
+            --repo "$SMOKE_REPO" \
+            --old "$SMOKE_OLD" \
+            --new "$SMOKE_NEW" \
+            -k "$SMOKE_PROJECT" \
+            --container --fresh \
+            --json-out report.json
+
+      # Validate the backend provenance and completed comparison, without
+      # turning detector findings into an exact-count golden. These fields
+      # alone are not a behavioral test of the sandbox's security boundaries.
+      - name: Validate the report and verify runtime binaries
+        run: .venv/bin/python scripts/container_smoke_check.py report.json
+
+      # Pre-report failures have nothing to upload; once present, require it.
+      - name: Upload comparison report
+        if: ${{ !cancelled() && hashFiles('report.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: container-${{ matrix.tool }}-${{ matrix.project }}
+          path: report.json
+          if-no-files-found: error
