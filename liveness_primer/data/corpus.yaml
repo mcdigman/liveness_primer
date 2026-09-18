@@ -319,9 +319,7 @@ projects:
       skylos:
         analyses:
           - danger
-          - secrets
           - quality
-          - ai-defects
         cost: 18.0
 
   # numerical and scientific python
@@ -335,7 +333,6 @@ projects:
       skylos:
         analyses:
           - danger
-          - secrets
           - quality
           - ai-defects
         cost: 83.0
@@ -665,6 +662,8 @@ projects:
         expected_clean: true
         cost: 11.0
       skylos:
+        args:
+         - --exclude .venv,contrib
         cost: 368.0
 
   # Dynamically selected visualization backends, observer-decorated
