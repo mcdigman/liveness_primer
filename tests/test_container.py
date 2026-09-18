@@ -1115,9 +1115,10 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         assert 'pip' not in runtime_stage
         assert '/liveness/detector' not in runtime_stage
         assert 'COPY tools/rg /usr/bin/rg' not in runtime_stage
-        assert '"pip", "uninstall"' in dockerfile
+        assert '"/usr/bin/uv", "venv"' in dockerfile
+        assert '--compile-bytecode' in dockerfile
         assert dockerfile.index('USER 0') < dockerfile.index('RUN mkdir -p /liveness/home')
-        assert dockerfile.index('USER 65532:65532') < dockerfile.index('/liveness/venv/bin/python -m pip install')
+        assert dockerfile.index('USER 65532:65532') < dockerfile.index('/usr/bin/uv pip install')
         assert dockerfile.count('USER 0') == 1
         assert 'COPY --chown=65532:65532 wheelhouse /liveness/wheelhouse' in dockerfile
         assert 'COPY --chown=65532:65532 detector /liveness/detector' in dockerfile

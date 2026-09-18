@@ -211,7 +211,8 @@ _DOCKER_TIMEOUT = 1800.0
 #      pinned static ripgrep utility for Skylos verification.
 #   4: compatible-image preflight, non-root detector builds, and
 #      adapter-declared runtime binaries.
-_CONTAINER_CACHE_FORMAT = 4
+#   5: uv-driven offline build with precompiled bytecode.
+_CONTAINER_CACHE_FORMAT = 5
 
 # Fork-bomb backstop for every container this module starts; generous enough
 # for any real detector or pip invocation.
@@ -246,13 +247,13 @@ USER 0
 RUN mkdir -p /liveness/home && chown -R {build_user} /liveness
 ENV HOME=/liveness/home
 USER {build_user}
-RUN ["/usr/bin/python", "-m", "venv", "/liveness/venv"]
+RUN ["/usr/bin/uv", "venv", "--python", "/usr/bin/python", "/liveness/venv"]
 COPY --chown={build_user} wheelhouse /liveness/wheelhouse
 COPY --chown={build_user} detector /liveness/detector
-RUN /liveness/venv/bin/python -m pip install --quiet --no-index \
+RUN /usr/bin/uv pip install --quiet --compile-bytecode --no-index \
+    --python /liveness/venv/bin/python \
     --find-links /liveness/wheelhouse /liveness/detector
-RUN /liveness/venv/bin/python -m pip freeze > /liveness/freeze.txt
-RUN ["/liveness/venv/bin/python", "-m", "pip", "uninstall", "--yes", "pip"]
+RUN /usr/bin/uv pip freeze --python /liveness/venv/bin/python > /liveness/freeze.txt
 
 FROM {runtime_image}
 COPY --from=builder /liveness/venv /liveness/venv
