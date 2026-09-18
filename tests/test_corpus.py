@@ -175,16 +175,17 @@ def test_materialize_reuses_completed_checkouts(tmp_path: Path, origin: RepoFixt
 
 def test_materialize_fetches_only_the_pinned_commit(store: CheckoutStore, origin: RepoFixture) -> None:
     # Real pins are historical commits that no branch or tag advertises
-    # (``first_sha`` is the peeled target of ``v1``), so add a commit above
-    # ``second_sha`` and pin the now-unadvertised middle one. History is
+    # (``first_sha`` is the peeled target of ``v1``), so add an empty commit
+    # above ``second_sha`` and pin the now-unadvertised middle one. History is
     # never read downstream, so it arrives at depth 1 without the pack history.
     git('config', 'uploadpack.allowAnySHA1InWant', 'true', cwd=origin.path)
-    (origin.path / 'module.py').write_text('THIRD = 3\n', encoding='utf-8')
-    git('commit', '--quiet', '--all', '-m', 'third', cwd=origin.path)
+    git('commit', '--quiet', '--allow-empty', '-m', 'third', cwd=origin.path)
     advertised = {line.split('\t')[0] for line in git('ls-remote', origin.url).splitlines()}
     assert origin.second_sha not in advertised
     checkout = store.materialize(origin.url, origin.second_sha)
     assert (checkout / '.git' / 'shallow').exists()
+    # The empty tip carries the pinned tree, so assert the commit, not content.
+    assert git('rev-parse', 'HEAD', cwd=checkout) == origin.second_sha
     assert git('rev-list', '--count', 'HEAD', cwd=checkout) == '1'
     assert not git('tag', cwd=checkout)
     assert read_small_text(checkout / 'module.py') == 'SECOND = 2\n'
