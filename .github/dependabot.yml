@@ -24,6 +24,23 @@ updates:
       actions:
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
+
+  # Keep the hook revisions in .pre-commit-config.yaml current.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(pre-commit)"
+    groups:
+      hooks:
+        patterns:
+          - "*"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: pip
     directory: /
@@ -35,6 +52,8 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    cooldown:
+      default-days: 7
 
   # The explorer front end (explorer/package-lock.json) pins an exact tree,
   # so npm updates here are real version movements rather than no-ops.
@@ -57,3 +76,5 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: eslint
         update-types: ["version-update:semver-major"]
+    cooldown:
+      default-days: 7

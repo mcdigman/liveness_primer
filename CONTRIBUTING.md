@@ -22,8 +22,8 @@ uv run prek run --all-files
 ```
 
 The `prek` hooks include `ruff check --fix --preview`, `ruff format`, `ssort`,
-`pyrefly`, and `actionlint`. CI additionally runs `mypy --strict`, `pyright`,
-`pydoclint`, a `skylos` dead-code job, and a coverage job.
+`pyrefly`, `zizmor`, and `actionlint`. CI additionally runs `mypy --strict`,
+`pyright`, `pydoclint`, a `skylos` dead-code job, and a coverage job.
 
 The explorer front end in [explorer/](explorer/) is a separate toolchain with
 its own gates; see [Explorer changes](#explorer-changes) below.
