@@ -50,7 +50,7 @@ jobs:
           uv pip install ".[dev]" coverage
 
       - name: Run tests under coverage
-        run: .venv/bin/python -m coverage run --branch --source=liveness_primer --omit='*/demos/*' -m pytest
+        run: .venv/bin/python -m coverage run --branch --source=liveness_primer,scripts --omit='*/demos/*' -m pytest
 
       # Pick the coverage gate from the target branch: PRs use github.base_ref
       # (the branch being merged into); pushes fall back to github.ref_name. main
