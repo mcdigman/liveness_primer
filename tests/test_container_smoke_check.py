@@ -440,16 +440,18 @@ def test_main_usage(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None
     assert 'usage:' in capsys.readouterr().err
 
 
-@pytest.mark.parametrize('use_symlink', [False, True])
-def test_workspace_escape_rejected(*, use_symlink: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    environ = smoke_environment(tmp_path, 'skylos')
+@pytest.mark.parametrize('escape', ['parent', 'sibling', 'symlink'])
+def test_workspace_escape_rejected(escape: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    outside = tmp_path / 'workspace-sibling' if escape == 'sibling' else tmp_path
+    outside.mkdir(exist_ok=True)
+    environ = smoke_environment(outside, 'skylos')
     report = valid_report(environ)
-    path = tmp_path / 'report.json'
+    path = outside / 'report.json'
     path.write_text(report.model_dump_json(), encoding='utf-8')
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     monkeypatch.chdir(workspace)
-    if use_symlink:
+    if escape == 'symlink':
         report_link = workspace / 'report.json'
         report_link.symlink_to(path)
         path = report_link

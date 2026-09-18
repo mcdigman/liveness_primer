@@ -96,11 +96,18 @@ def _workspace_path(value: str) -> Path:
     SmokeCheckError
         If the path escapes the workspace.
     """
-    path = Path(value).resolve()
-    if not path.is_relative_to(Path.cwd().resolve()):
+    root = str(Path.cwd().resolve()).rstrip(os.sep) + os.sep
+    normalized = os.path.normpath(Path.cwd() / value)
+    if not normalized.startswith(root):
         msg = f'smoke input escapes the workspace: {value}'
         raise SmokeCheckError(msg)
-    return path
+    # Resolve links only after the lexical check, then enforce the boundary
+    # again. The separator prevents accepting a similarly named sibling root.
+    resolved = str(Path(normalized).resolve())
+    if not resolved.startswith(root):
+        msg = f'smoke input escapes the workspace through a symlink: {value}'
+        raise SmokeCheckError(msg)
+    return Path(resolved)
 
 
 def _manifest_failures(manifest: RunManifest, environ: Mapping[str, str]) -> list[str]:
