@@ -1715,7 +1715,7 @@ class ContainerEnvironments:
             Extras are deliberately left out, exactly as in the host-venv
             path: the offline install selects no extras (contract §3).
         """
-        checkout = self._store.materialize(repo, sha)
+        checkout = self._store.materialize(repo, sha, history=True)
         metadata = parse_static_metadata(checkout)
         return tuple(dict.fromkeys((*metadata.dependencies, *metadata.build_requires)))
 
@@ -1894,7 +1894,7 @@ class ContainerEnvironments:
             context = Path(scratch)
             # Symlinks are copied as symlinks: following them could pull
             # content from outside the untrusted checkout into the image.
-            shutil.copytree(source, context / 'detector', symlinks=True, ignore=shutil.ignore_patterns('.git'))
+            shutil.copytree(source, context / 'detector', symlinks=True)
             stage_wheelhouses(wheelhouses, context / 'wheelhouse')
             for binary, provider in runtime_binaries.items():
                 stage_static_binary(provider(), context / 'tools' / binary)
@@ -1973,7 +1973,7 @@ class ContainerEnvironments:
         cached = not force_rebuild and self._docker.image_exists(tag)
         if not cached:
             houses = wheelhouses()
-            checkout = self._store.materialize(repo, sha)
+            checkout = self._store.materialize(repo, sha, history=True)
             self._build(tag, checkout, houses, runtime_binaries, native_tools, machine)
         environment_python_version = self._docker.environment_python_version(tag)
         if environment_python_version != expected_python_version:

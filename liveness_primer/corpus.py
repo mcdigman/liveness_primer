@@ -27,6 +27,11 @@ _SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 # never inside it, so the analyzed tree is exactly the pristine repo tree.
 _COMPLETE_SUFFIX = '.complete'
 
+# Suffix of the sibling marker recording that an entry carries full history
+# and tags. Kept separate from completion so a shallow entry materialized for
+# the corpus is deepened in place when a detector later needs it.
+_HISTORY_SUFFIX = '.history'
+
 
 class CheckoutError(LivenessPrimerError):
     """Raised when a repository, ref, or checkout cannot be resolved."""
@@ -229,17 +234,31 @@ class CheckoutStore:
             sha = self.default_branch_sha(project.repo)
         return CorpusPinRecord(name=project.name, repo=project.repo, requested=requested, resolved_sha=sha)
 
-    def materialize(self, repo: str, sha: str) -> Path:
+    def _deepen(self, dest: Path) -> None:
+        """Give an existing checkout the full history and tags of its origin.
+
+        Parameters
+        ----------
+        dest : Path
+            Checkout directory to deepen in place.
+        """
+        probe = self._git(['rev-parse', '--is-shallow-repository'], cwd=dest)
+        unshallow = ['--unshallow'] if probe.stdout.strip() == 'true' else []
+        self._git(['fetch', '--quiet', *unshallow, '--tags', 'origin'], cwd=dest)
+
+    def materialize(self, repo: str, sha: str, *, history: bool = False) -> Path:
         """Produce the cached checkout of one (repository, SHA) pair (contract §3).
 
         The checkout is created on first use (network permitted: fetch step)
         and reused byte-identically afterwards; a completion marker guards
         against interrupted materializations, and ``filelock`` guards against
-        concurrent runs. Only the pinned commit is fetched (depth 1), with no
-        tags: nothing reads history, and every consumer that copies the tree
-        drops ``.git``. The host install path builds the checkout in place, so
-        a detector whose build backend derives its version from git metadata
-        would see a shallow, tagless repository there.
+        concurrent runs. Corpus checkouts fetch only the pinned commit
+        (depth 1), with no tags: nothing reads their history, and every
+        consumer copies the tree with ``.git`` dropped. Detector checkouts
+        pass ``history``, because the host install path builds the checkout in
+        place and the container build context copies ``.git``, so a build
+        backend deriving the version from git metadata needs tags and the
+        ancestry connecting them to the pin (§4).
 
         Parameters
         ----------
@@ -247,6 +266,9 @@ class CheckoutStore:
             Repository URL.
         sha : str
             Full commit SHA to check out.
+        history : bool
+            Whether the entry must carry full history and tags. A shallow
+            entry already in the cache is deepened in place.
 
         Returns
         -------
@@ -272,14 +294,21 @@ class CheckoutStore:
             raise CheckoutError(msg) from exc
         try:
             marker = dest.with_name(dest.name + _COMPLETE_SUFFIX)
+            deep = dest.with_name(dest.name + _HISTORY_SUFFIX)
             if marker.exists() and dest.is_dir():
+                if history and not deep.exists():
+                    self._deepen(dest)
+                    deep.touch()
                 return dest
             marker.unlink(missing_ok=True)
+            deep.unlink(missing_ok=True)
             if dest.exists():
                 shutil.rmtree(dest)
             self._git(['init', '--quiet', str(dest)])
             self._git(['remote', 'add', 'origin', repo], cwd=dest)
-            fetched = self._git(['fetch', '--quiet', '--depth', '1', 'origin', sha], cwd=dest, check=False)
+            depth = [] if history else ['--depth', '1']
+            tags = ['--tags'] if history else []
+            fetched = self._git(['fetch', '--quiet', *depth, *tags, 'origin', sha], cwd=dest, check=False)
             if not fetched.ok:
                 # A server refusing unadvertised commits only serves its tips,
                 # and the pin may sit below one, so the fallback stays deep.
@@ -290,6 +319,10 @@ class CheckoutStore:
                 msg = f'commit {sha} not found in {repo}'
                 raise CheckoutError(msg)
             self._git(['-c', 'advice.detachedHead=false', 'checkout', '--quiet', '--detach', sha], cwd=dest)
+            # The deep fallback fetches tags too, so it satisfies ``history``
+            # whether or not the caller asked for it.
+            if history or not fetched.ok:
+                deep.touch()
             marker.touch()
         finally:
             lock.release()

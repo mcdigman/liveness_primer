@@ -174,7 +174,10 @@ def parse_static_metadata(checkout: Path) -> DetectorMetadata:
     Enforces the §4 static-metadata rule: ``dependencies`` and
     ``optional-dependencies`` must not be listed in ``[project].dynamic``;
     other dynamic fields (e.g. ``version``) are fine and resolve during the
-    sandboxed build.
+    sandboxed build. Detector checkouts therefore carry full history and
+    tags, and the container build context keeps ``.git``, so a backend
+    deriving the version from git metadata resolves the same version in both
+    execution modes.
 
     Parameters
     ----------
@@ -1089,7 +1092,7 @@ class DetectorEnvironments:
         """
         requirements: list[str] = []
         for sha in dict.fromkeys(shas):
-            checkout = self._store.materialize(repo, sha)
+            checkout = self._store.materialize(repo, sha, history=True)
             metadata = parse_static_metadata(checkout)
             requirements.extend(metadata.dependencies)
             # Extras are deliberately left out: the offline install targets
@@ -1178,7 +1181,7 @@ class DetectorEnvironments:
             )
         else:
             house = wheelhouse()
-            checkout = self._store.materialize(repo, sha)
+            checkout = self._store.materialize(repo, sha, history=True)
             freeze = self._build(fingerprint, checkout, house)
             _write_env_manifest(env_manifest, fingerprint, freeze)
             record = EnvironmentRecord(
