@@ -1144,11 +1144,18 @@ def test_executable_digest_stops_if_the_file_grows_while_reading(
     bounded_values = list(actual_stat)
     bounded_values[stat.ST_SIZE] = actual_stat.st_size - 1
     bounded_stat = os.stat_result(bounded_values)
+
+    def fake_lstat(_path: Path) -> os.stat_result:
+        return bounded_stat
+
+    def fake_fstat(_descriptor: int) -> os.stat_result:
+        return bounded_stat
+
     # A concurrent grow during this short read would be flaky to schedule.
     # Fixed stat results keep the admission checks below the lowered cap while
     # the real stream crosses it, pinning only the post-open growth guard.
-    monkeypatch.setattr(Path, 'lstat', lambda _path: bounded_stat)
-    monkeypatch.setattr(os, 'fstat', lambda _descriptor: bounded_stat)
+    monkeypatch.setattr(Path, 'lstat', fake_lstat)
+    monkeypatch.setattr(os, 'fstat', fake_fstat)
     monkeypatch.setattr(runner_module, 'MAX_NATIVE_TOOL_BYTES', actual_stat.st_size - 1)
     with pytest.raises(RunnerError, match='native tool exceeds'):
         resolve_native_tools(get_adapter('skylos'), {'SKYLOS_GO_BIN': str(engine)})

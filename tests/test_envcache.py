@@ -306,10 +306,18 @@ def test_installer_failure_raises_env_cache_error(tmp_path: Path) -> None:
         timing_out.freeze(tmp_path / 'env')
 
 
+def fake_which_uv(name: str) -> str | None:
+    return '/opt/uv' if name == 'uv' else None
+
+
+def fake_which_missing(_name: str) -> str | None:
+    return None
+
+
 def test_choose_installer_returns_installer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, 'which', lambda name: '/opt/uv' if name == 'uv' else None)
+    monkeypatch.setattr(shutil, 'which', fake_which_uv)
     assert isinstance(choose_installer(), Installer)
-    monkeypatch.setattr(shutil, 'which', lambda _name: None)
+    monkeypatch.setattr(shutil, 'which', fake_which_missing)
     assert isinstance(choose_installer(), Installer)
 
 
@@ -319,9 +327,9 @@ def test_choose_installer_rejects_async_launcher() -> None:
 
 
 def test_choose_installer_prefers_uv(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, 'which', lambda name: '/opt/uv' if name == 'uv' else None)
+    monkeypatch.setattr(shutil, 'which', fake_which_uv)
     assert isinstance(choose_installer(), UvInstaller)
-    monkeypatch.setattr(shutil, 'which', lambda _name: None)
+    monkeypatch.setattr(shutil, 'which', fake_which_missing)
     assert isinstance(choose_installer(), PipInstaller)
 
 
