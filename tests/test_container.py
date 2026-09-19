@@ -2,10 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the container-backed detector environments (contract §3, §11, §15)."""
 
+import concurrent.futures
 import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import json
 import os
+import runpy
 import shutil
 import stat
+import sys
+import threading
+import urllib.request
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -28,10 +37,13 @@ from liveness_primer.container import (
     ContainerNativeTool,
     DockerCli,
     DockerRuntime,
+    EnvironmentProbe,
+    ImageProbe,
     StaticBinaryArtifact,
     container_fingerprint,
     container_user,
     image_tag,
+    locked_downloads,
     promote_prefetched,
     ripgrep_artifact_for,
     stage_container_native_tool,
@@ -117,34 +129,6 @@ def test_build_image_fresh_bypasses_the_layer_cache(tmp_path: Path) -> None:
         DockerCli(launcher=RecordingLauncher(returncode=1)).build_image('t:1', tmp_path, fresh=True)
 
 
-def test_architecture_queries_the_builder_image_offline() -> None:
-    launcher = RecordingLauncher(stdout='aarch64\n')
-    assert DockerCli(launcher=launcher).architecture('builder:1') == 'aarch64'
-    run_argv, rm_argv = launcher.calls
-    assert run_argv[run_argv.index('--network') + 1] == 'none'
-    assert not run_argv[run_argv.index('--entrypoint') + 1]
-    assert 'builder:1' in run_argv
-    name = run_argv[run_argv.index('--name') + 1]
-    assert name.startswith('liveness-primer-arch-')
-    assert rm_argv == ('docker', 'rm', '--force', name)
-    with pytest.raises(ContainerError, match='container architecture probe failed'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).architecture('builder:1')
-
-
-def test_platform_queries_the_runtime_image_offline() -> None:
-    launcher = RecordingLauncher(stdout='linux-aarch64\n')
-    assert DockerCli(launcher=launcher).platform('runtime:1') == 'linux-aarch64'
-    run_argv, rm_argv = launcher.calls
-    assert run_argv[run_argv.index('--network') + 1] == 'none'
-    assert 'runtime:1' in run_argv
-    assert 'sysconfig.get_platform()' in run_argv[-1]
-    name = run_argv[run_argv.index('--name') + 1]
-    assert name.startswith('liveness-primer-platform-')
-    assert rm_argv == ('docker', 'rm', '--force', name)
-    with pytest.raises(ContainerError, match='container platform probe failed'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).platform('runtime:1')
-
-
 def assert_hardened(argv: tuple[str, ...]) -> None:
     assert argv[argv.index('--cap-drop') + 1] == 'ALL'
     assert argv[argv.index('--security-opt') + 1] == 'no-new-privileges'
@@ -153,46 +137,307 @@ def assert_hardened(argv: tuple[str, ...]) -> None:
     assert argv[argv.index('--tmpfs') + 1] == str(CONTAINER_TMP_ROOT)
 
 
-def test_prefetch_runs_pip_download_in_the_base_image(tmp_path: Path) -> None:
-    launcher = RecordingLauncher()
-    DockerCli(launcher=launcher).prefetch('python:3.12-slim', ('tomli>=2',), tmp_path)
+@pytest.mark.parametrize('require_uv', [False, True])
+def test_image_probe_queries_one_image_offline(*, require_uv: bool) -> None:
+    launcher = RecordingLauncher(stdout='{"architecture":"aarch64","python_version":"3.14.7","platform":"linux"}')
+    assert DockerCli(launcher=launcher).probe_image('builder:1', require_uv=require_uv) == ImageProbe(
+        architecture='aarch64',
+        python_version='3.14.7',
+        platform='linux',
+    )
     run_argv, rm_argv = launcher.calls
-    assert run_argv[:3] == ('docker', 'run', '--rm')
-    name = run_argv[run_argv.index('--name') + 1]
-    assert name.startswith('liveness-primer-fetch-')
-    # The fetch container is tracked: a client-side timeout cannot leave an
-    # anonymous container running.
-    assert rm_argv == ('docker', 'rm', '--force', name)
+    assert run_argv[run_argv.index('--network') + 1] == 'none'
     assert_hardened(run_argv)
     assert not run_argv[run_argv.index('--entrypoint') + 1]
-    assert run_argv[run_argv.index('--user') + 1] == container_user()
-    assert f'{tmp_path}:/liveness/wheelhouse' in run_argv
-    assert run_argv[run_argv.index('--env') + 1] == f'HOME={CONTAINER_TMP_ROOT}'
-    assert run_argv[-1] == 'tomli>=2'
-    assert 'python:3.12-slim' in run_argv
+    assert '--volume' not in run_argv
+    assert 'builder:1' in run_argv
+    assert run_argv[-1] == ('1' if require_uv else '0')
+    name = run_argv[run_argv.index('--name') + 1]
+    assert name.startswith('liveness-primer-image-probe-')
+    assert rm_argv == ('docker', 'rm', '--force', name)
+    with pytest.raises(ContainerError, match='container image probe failed'):
+        DockerCli(launcher=RecordingLauncher(returncode=1)).probe_image('builder:1')
+
+
+@pytest.mark.parametrize(
+    'output',
+    [
+        'not json',
+        '{}',
+        '[]',
+        '{"architecture":"aarch64","python_version":314,"platform":"linux"}',
+        '{"architecture":"","python_version":"3.14.7","platform":"linux"}',
+        '{"architecture":"aarch64","python_version":"3.14.7","platform":"linux","extra":true}',
+    ],
+)
+def test_image_probe_rejects_invalid_output(output: str) -> None:
+    with pytest.raises(ContainerError, match='invalid container image probe'):
+        DockerCli(launcher=RecordingLauncher(stdout=output)).probe_image('builder:1')
+
+
+PREFETCH_LOCK = '\n'.join(
+    (
+        '[[packages]]',
+        'name = "tomli"',
+        'version = "2.0"',
+        'wheels = [{url = "https://example.invalid/tomli.whl", hashes = {sha256 = "' + 'a' * 64 + '"}}]',
+    )
+)
+
+
+def test_prefetch_resolves_with_uv_and_downloads_in_separate_containers(tmp_path: Path) -> None:
+    launcher = RecordingLauncher(stdout=PREFETCH_LOCK)
+    DockerCli(launcher=launcher).prefetch('builder:1', ('tomli>=2',), tmp_path)
+    resolve, resolve_rm, fetch, fetch_rm = launcher.calls
+    assert resolve[resolve.index('builder:1') + 1 :][:3] == ('uv', 'pip', 'compile')
+    assert '--generate-hashes' in resolve
+    assert '--format' in resolve
+    assert resolve[resolve.index('--format') + 1] == 'pylock.toml'
+    assert f'{tmp_path}:/liveness/wheelhouse' not in resolve
+    inputs_mount = next(volume for volume in resolve if volume.endswith(':/liveness/inputs:ro'))
+    inputs = Path(inputs_mount.removesuffix(':/liveness/inputs:ro'))
+    assert inputs.parent == tmp_path.parent
+    assert not inputs.exists()
+    assert f'{tmp_path}:/liveness/wheelhouse' in fetch
+    assert json.loads(fetch[-1]) == [['https://example.invalid/tomli.whl', 'tomli.whl', 'a' * 64, None]]
+    for argv, rm in ((resolve, resolve_rm), (fetch, fetch_rm)):
+        assert argv[:3] == ('docker', 'run', '--rm')
+        assert '--network' not in argv
+        assert_hardened(argv)
+        assert not argv[argv.index('--entrypoint') + 1]
+        assert argv[argv.index('--user') + 1] == container_user()
+        assert argv[argv.index('--env') + 1] == f'HOME={CONTAINER_TMP_ROOT}'
+        assert rm == ('docker', 'rm', '--force', argv[argv.index('--name') + 1])
     failing = RecordingLauncher(returncode=1)
-    with pytest.raises(ContainerError, match='dependency prefetch'):
-        DockerCli(launcher=failing).prefetch('python:3.12-slim', ('tomli>=2',), tmp_path)
-    # The tracked cleanup still runs on the failure path.
+    with pytest.raises(ContainerError, match='dependency resolution'):
+        DockerCli(launcher=failing).prefetch('builder:1', ('tomli>=2',), tmp_path)
     assert failing.calls[-1][:3] == ('docker', 'rm', '--force')
 
 
 def test_prefetch_without_posix_ids_omits_the_user_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delattr(os, 'getuid')
-    launcher = RecordingLauncher()
-    DockerCli(launcher=launcher).prefetch('python:3.12-slim', ('tomli>=2',), tmp_path)
-    run_argv = launcher.calls[0]
-    assert '--user' not in run_argv
+    launcher = RecordingLauncher(stdout=PREFETCH_LOCK)
+    DockerCli(launcher=launcher).prefetch('builder:1', ('tomli>=2',), tmp_path)
+    assert '--user' not in launcher.calls[0]
 
 
-def test_prefetch_mounts_find_links_read_only(tmp_path: Path) -> None:
+@pytest.mark.parametrize('local_first', [True, False])
+def test_prefetch_reuses_base_archives_read_only(tmp_path: Path, *, local_first: bool) -> None:
     base_links = tmp_path / 'base-wheels'
-    launcher = RecordingLauncher()
-    DockerCli(launcher=launcher).prefetch('python:3.12-slim', ('tomli>=2.1',), tmp_path, find_links=base_links)
-    run_argv = launcher.calls[0]
-    # The base wheelhouse is offered read-only for reuse, never writable.
+    local = '{url = "file:///liveness/base-links/tomli.whl", hashes = {}}'
+    remote = '{url = "https://example.invalid/tomli.whl", size = 100, hashes = {sha256 = "' + 'a' * 64 + '"}}'
+    wheels = [local, remote] if local_first else [remote, local]
+    lock = '[[packages]]\nwheels = [' + ', '.join(wheels) + ']'
+    launcher = RecordingLauncher(stdout=lock)
+    DockerCli(launcher=launcher).prefetch('builder:1', ('tomli>=2',), tmp_path, find_links=base_links)
+    run_argv, _rm_argv = launcher.calls
     assert f'{base_links}:/liveness/base-links:ro' in run_argv
     assert run_argv[run_argv.index('--find-links') + 1] == '/liveness/base-links'
+
+
+@pytest.mark.parametrize('kind', ['sdist', 'archive'])
+def testlocked_downloads_supports_source_and_direct_archives(kind: str) -> None:
+    lock = PREFETCH_LOCK.replace('wheels = [', kind + ' = ').replace('}]', '}')
+    assert locked_downloads(lock, reuse_base=False) == [
+        ('https://example.invalid/tomli.whl', 'tomli.whl', 'a' * 64, None),
+    ]
+
+
+def test_locked_downloads_deduplicates() -> None:
+    assert len(locked_downloads(PREFETCH_LOCK + '\n' + PREFETCH_LOCK, reuse_base=False)) == 1
+    lock = PREFETCH_LOCK.replace('url =', 'size = 10, name = "download.whl", url =')
+    assert locked_downloads(lock, reuse_base=False)[0][1:] == ('download.whl', 'a' * 64, 10)
+    assert locked_downloads('packages = []', reuse_base=False) == []
+    large = PREFETCH_LOCK.replace('url =', 'size = 1073741825, url =')
+    assert locked_downloads(large, reuse_base=False)[0][-1] == 1_073_741_825
+
+
+@pytest.mark.parametrize(
+    ('lock', 'message'),
+    [
+        ('invalid', 'invalid uv dependency lock'),
+        ('packages = 1', 'invalid uv dependency lock'),
+        (PREFETCH_LOCK.replace('"' + 'a' * 64 + '"', '1'), 'invalid uv dependency lock'),
+        (PREFETCH_LOCK.replace('url =', 'size = -1, url ='), 'invalid uv dependency lock'),
+        (
+            '[[packages]]\nvcs = {type = "git", url = "https://example.invalid/repo.git"}',
+            'VCS and directories are unsupported',
+        ),
+        ('[[packages]]\ndirectory = {path = "/src/package"}', 'VCS and directories are unsupported'),
+        (PREFETCH_LOCK.replace('sha256 = "' + 'a' * 64 + '"', ''), 'missing an archive SHA-256'),
+        (
+            PREFETCH_LOCK.replace('https://example.invalid/tomli.whl', 'file:///tmp/tomli.whl'),
+            'outside the base wheelhouse',
+        ),
+        (PREFETCH_LOCK.replace('https://example.invalid/tomli.whl', 'https:///tomli.whl'), 'HTTP'),
+        (PREFETCH_LOCK.replace('url = "https://example.invalid/tomli.whl", ', ''), 'HTTP'),
+        (PREFETCH_LOCK + '\n' + PREFETCH_LOCK.replace('a' * 64, 'b' * 64), 'conflicting archives'),
+    ],
+)
+def testlocked_downloads_rejects_invalid_archives(lock: str, message: str) -> None:
+    with pytest.raises(ContainerError, match=message):
+        locked_downloads(lock, reuse_base=False)
+
+
+@pytest.mark.parametrize('name', ['', '.', '..', '%2Fescape.whl', '%5Cescape.whl', '%00'])
+def testlocked_downloads_rejects_unsafe_filenames(name: str) -> None:
+    lock = PREFETCH_LOCK.replace('/tomli.whl', '/' + name)
+    with pytest.raises(ContainerError, match='invalid archive filename'):
+        locked_downloads(lock, reuse_base=False)
+
+
+def testlocked_downloads_rejects_explicit_path_filename() -> None:
+    lock = PREFETCH_LOCK.replace('url =', 'name = "../escape.whl", url =')
+    with pytest.raises(ContainerError, match='invalid archive filename'):
+        locked_downloads(lock, reuse_base=False)
+
+
+@pytest.mark.parametrize(
+    'location',
+    [
+        'path = "/liveness/base-links/dep.whl"',
+        'url = "file:///liveness/base-links/dep.whl"',
+    ],
+)
+def testlocked_downloads_reuses_local_archives_without_network_hash(location: str) -> None:
+    lock = '[[packages]]\nwheels = [{' + location + ', hashes = {}}]'
+    assert locked_downloads(lock, reuse_base=True) == []
+
+
+@pytest.mark.parametrize(
+    ('path', 'reuse'),
+    [
+        ('/liveness/base-links/tomli.whl', False),
+        ('/etc/passwd', True),
+        ('/liveness/base-links/..', True),
+        ('/liveness/base-links/sub/dep.whl', True),
+    ],
+)
+def testlocked_downloads_rejects_paths_outside_mounted_base(path: str, *, reuse: bool) -> None:
+    lock = PREFETCH_LOCK.replace('url = "https://example.invalid/tomli.whl"', 'path = ' + json.dumps(path))
+    with pytest.raises(ContainerError, match='outside the base wheelhouse'):
+        locked_downloads(lock, reuse_base=reuse)
+
+
+@pytest.mark.parametrize(
+    ('size', 'digest', 'error'),
+    [
+        (None, hashlib.sha256(b'payload').hexdigest(), None),
+        (7, hashlib.sha256(b'payload').hexdigest(), None),
+        (6, hashlib.sha256(b'payload').hexdigest(), 'exceeds expected size'),
+        (8, hashlib.sha256(b'payload').hexdigest(), 'size mismatch'),
+        (7, '0' * 64, 'digest mismatch'),
+    ],
+)
+def test_distribution_fetch_script_verifies_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    size: int | None,
+    digest: str,
+    error: str | None,
+) -> None:
+    def open_response(url: str, *, timeout: int) -> io.BytesIO:
+        assert url == 'https://example.invalid/dep.whl'
+        assert timeout == 300
+        return io.BytesIO(b'payload')
+
+    monkeypatch.setattr(urllib.request, 'urlopen', open_response)
+    launcher = RecordingLauncher(stdout=PREFETCH_LOCK)
+    DockerCli(launcher=launcher).prefetch('builder:1', ('tomli>=2',), tmp_path)
+    script = tmp_path / 'fetch.py'
+    atomic_write_text(
+        script,
+        launcher.calls[2][-2].replace(
+            '"/liveness/wheelhouse"',
+            repr(str(tmp_path)),
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        'argv',
+        [
+            str(script),
+            json.dumps(
+                [
+                    ('https://example.invalid/dep.whl', 'dep.whl', digest, size),
+                ]
+            ),
+        ],
+    )
+    if error is None:
+        runpy.run_path(str(script))
+        assert (tmp_path / 'dep.whl').read_bytes() == b'payload'
+        with pytest.raises(FileExistsError):
+            runpy.run_path(str(script))
+    else:
+        with pytest.raises(RuntimeError, match=error):
+            runpy.run_path(str(script))
+
+
+def test_distribution_fetch_stops_on_failure_before_earlier_downloads_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release = threading.Event()
+    started: list[str] = []
+    shutdown = concurrent.futures.ThreadPoolExecutor.shutdown
+
+    def stop_pool(
+        pool: concurrent.futures.ThreadPoolExecutor, *, wait: bool = True, cancel_futures: bool = False
+    ) -> None:
+        shutdown(pool, wait=False, cancel_futures=cancel_futures)
+        release.set()
+        shutdown(pool, wait=wait)
+
+    def open_response(url: str, *, timeout: int) -> io.BytesIO:
+        assert timeout == 300
+        started.append(url)
+        if url.endswith('/1'):
+            return io.BytesIO(b'corrupt')
+        assert release.wait(10), 'failure was hidden behind an earlier download'
+        return io.BytesIO(b'payload')
+
+    monkeypatch.setattr(concurrent.futures.ThreadPoolExecutor, 'shutdown', stop_pool)
+    monkeypatch.setattr(urllib.request, 'urlopen', open_response)
+    launcher = RecordingLauncher(stdout=PREFETCH_LOCK)
+    DockerCli(launcher=launcher).prefetch('builder:1', ('tomli>=2',), tmp_path)
+    script = tmp_path / 'fetch.py'
+    atomic_write_text(script, launcher.calls[2][-2].replace('/liveness/wheelhouse', str(tmp_path)))
+    artifacts = [
+        (f'https://example.invalid/{index}', f'{index}.whl', hashlib.sha256(b'payload').hexdigest(), 7)
+        for index in range(70)
+    ]
+    monkeypatch.setattr(sys, 'argv', [str(script), json.dumps(artifacts)])
+    with pytest.raises(RuntimeError, match=r'digest mismatch: 1\.whl'):
+        runpy.run_path(str(script))
+    assert 1 < len(started) <= 9
+
+
+def test_image_probe_script_requires_uv_only_for_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = RecordingLauncher(stdout='{"architecture":"aarch64","python_version":"3.14.7","platform":"linux"}')
+    DockerCli(launcher=launcher).probe_image('builder:1', require_uv=True)
+    script = tmp_path / 'probe.py'
+    atomic_write_text(script, launcher.calls[0][-2])
+    uv_path: str | None = None
+
+    def find_uv(name: str) -> str | None:
+        assert name == 'uv'
+        return uv_path
+
+    monkeypatch.setattr(shutil, 'which', find_uv)
+    monkeypatch.setattr(sys, 'argv', [str(script), '1'])
+    with pytest.raises(RuntimeError, match='requires uv on PATH'):
+        runpy.run_path(str(script))
+    monkeypatch.setattr(sys, 'argv', [str(script), '0'])
+    runpy.run_path(str(script))
+    assert ImageProbe.model_validate_json(capsys.readouterr().out).python_version
+    uv_path = '/usr/local/bin/uv'
+    monkeypatch.setattr(sys, 'argv', [str(script), '1'])
+    runpy.run_path(str(script))
+    assert ImageProbe.model_validate_json(capsys.readouterr().out).architecture
 
 
 def test_prefetch_static_binary_uses_artifact_executable_name(tmp_path: Path) -> None:
@@ -259,49 +504,66 @@ def test_prefetch_static_binary_rejects_failed_or_invalid_output(tmp_path: Path)
         DockerCli(launcher=RecordingLauncher()).prefetch_static_binary('builder:1', artifact, tmp_path)
 
 
-def test_freeze_parses_lines() -> None:
-    launcher = RecordingLauncher(stdout='tomli==2.4.0\n\nvulture @ file:///x\n')
-    assert DockerCli(launcher=launcher).freeze('t:1') == ('tomli==2.4.0', 'vulture @ file:///x')
+def test_environment_probe_uses_the_exact_venv_interpreter() -> None:
+    launcher = RecordingLauncher(stdout='{"python_version":"3.14.7","freeze":["tomli==2.4.0","vulture @ file:///x"]}')
+    assert DockerCli(launcher=launcher).probe_environment('t:1') == EnvironmentProbe(
+        python_version='3.14.7',
+        freeze=('tomli==2.4.0', 'vulture @ file:///x'),
+    )
     run_argv, rm_argv = launcher.calls
-    assert run_argv[:3] == ('docker', 'run', '--rm')
-    name = run_argv[run_argv.index('--name') + 1]
-    assert name.startswith('liveness-primer-freeze-')
-    assert rm_argv == ('docker', 'rm', '--force', name)
     assert run_argv[run_argv.index('--network') + 1] == 'none'
     assert_hardened(run_argv)
-    assert run_argv[-3:-1] == ('python', '-c')
-    assert '/liveness/freeze.txt' in run_argv[-1]
-    assert 't:1' in run_argv
-    with pytest.raises(ContainerError, match='environment freeze failed'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).freeze('t:1')
-
-
-def test_python_version_queries_the_image_offline() -> None:
-    launcher = RecordingLauncher(stdout='3.12.5\n')
-    assert DockerCli(launcher=launcher).python_version('t:1') == '3.12.5'
-    run_argv, rm_argv = launcher.calls
-    assert run_argv[:3] == ('docker', 'run', '--rm')
-    assert run_argv[run_argv.index('--network') + 1] == 'none'
-    name = run_argv[run_argv.index('--name') + 1]
-    assert name.startswith('liveness-primer-pyver-')
-    assert rm_argv == ('docker', 'rm', '--force', name)
-    assert_hardened(run_argv)
-    assert 't:1' in run_argv
-    with pytest.raises(ContainerError, match='container python version failed'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).python_version('t:1')
-
-
-def test_environment_python_version_uses_the_exact_venv_interpreter() -> None:
-    launcher = RecordingLauncher(stdout='3.14.7\n')
-    assert DockerCli(launcher=launcher).environment_python_version('t:1') == '3.14.7'
-    run_argv, rm_argv = launcher.calls
-    assert run_argv[run_argv.index('--network') + 1] == 'none'
+    assert '--volume' not in run_argv
     assert run_argv[-3] == '/liveness/venv/bin/python'
+    assert '/liveness/freeze.txt' in run_argv[-1]
     name = run_argv[run_argv.index('--name') + 1]
-    assert name.startswith('liveness-primer-env-pyver-')
+    assert name.startswith('liveness-primer-env-probe-')
     assert rm_argv == ('docker', 'rm', '--force', name)
-    with pytest.raises(ContainerError, match='environment interpreter probe failed'):
-        DockerCli(launcher=RecordingLauncher(returncode=1)).environment_python_version('t:1')
+    with pytest.raises(ContainerError, match='environment probe failed'):
+        DockerCli(launcher=RecordingLauncher(returncode=1)).probe_environment('t:1')
+
+
+def test_environment_probe_script_rejects_pip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = RecordingLauncher(stdout='{"python_version":"3.14.7","freeze":[]}')
+    DockerCli(launcher=launcher).probe_environment('t:1')
+    freeze = tmp_path / 'freeze.txt'
+    atomic_write_text(freeze, 'tomli==2.4.0\n\n')
+    script = tmp_path / 'probe.py'
+    atomic_write_text(script, launcher.calls[0][-1].replace('/liveness/freeze.txt', str(freeze)))
+    pip_spec: importlib.machinery.ModuleSpec | None = importlib.machinery.ModuleSpec('pip', loader=None)
+
+    def find_pip(name: str) -> importlib.machinery.ModuleSpec | None:
+        assert name == 'pip'
+        return pip_spec
+
+    monkeypatch.setattr(importlib.util, 'find_spec', find_pip)
+    with pytest.raises(RuntimeError, match='managed environment contains pip'):
+        runpy.run_path(str(script))
+    assert not capsys.readouterr().out
+    pip_spec = None
+    runpy.run_path(str(script))
+    assert EnvironmentProbe.model_validate_json(capsys.readouterr().out).freeze == ('tomli==2.4.0',)
+
+
+@pytest.mark.parametrize(
+    'output',
+    [
+        'not json',
+        '{}',
+        '{"python_version":"3.14.7"}',
+        '{"python_version":"3.14.7","freeze":"tomli==2"}',
+        '{"python_version":"3.14.7","freeze":[1]}',
+        '{"python_version":"","freeze":[]}',
+        '{"python_version":"3.14.7","freeze":[],"extra":true}',
+    ],
+)
+def test_environment_probe_rejects_invalid_output(output: str) -> None:
+    with pytest.raises(ContainerError, match='invalid environment probe'):
+        DockerCli(launcher=RecordingLauncher(stdout=output)).probe_environment('t:1')
 
 
 def test_remove_container_reports_the_outcome() -> None:
@@ -823,28 +1085,20 @@ class FakeDocker:
         self.events.append('inspect')
         return self.always_cached or tag in self.existing_images
 
-    def architecture(self, image: str) -> str:
-        """Report a fixed builder architecture.
+    def probe_image(self, image: str, *, require_uv: bool = False) -> ImageProbe:
+        """Return scripted image properties.
 
         Returns
         -------
-        str
-            ``aarch64``.
+        ImageProbe
+            Image properties.
         """
-        self.events.append('arch')
-        return self.architectures.get(image, 'aarch64')
-
-    def platform(self, image: str) -> str:
-        """Report a fixed container platform tag.
-
-        Returns
-        -------
-        str
-            ``linux-aarch64`` unless scripted otherwise.
-        """
-        del image
-        self.events.append('platform')
-        return self.platform_value
+        self.events.append(f'image-probe:{image}:{require_uv}')
+        return ImageProbe(
+            architecture=self.architectures.get(image, 'aarch64'),
+            python_version=self.python_versions.get(image, '3.14.99'),
+            platform=self.platform_value,
+        )
 
     def build_image(self, tag: str, context: Path, *, fresh: bool) -> None:
         """Record the build and remember the context contents."""
@@ -860,7 +1114,7 @@ class FakeDocker:
         """Record the request and materialize scripted wheel files.
 
         Every resolved requirement's wheel is written into the staging
-        destination — including ones a real ``pip download`` would copy back
+        destination — including ones a downloader could copy back
         from the read-only ``find_links`` source — so the promotion's
         exclusion of base-owned names is exercised. A head fetch (the one
         with a ``find_links`` source) additionally writes any fabricated
@@ -891,42 +1145,17 @@ class FakeDocker:
         else:
             target.symlink_to(self.ripgrep_symlink_target)
 
-    def freeze(self, tag: str) -> tuple[str, ...]:
-        """Pop the next scripted freeze.
+    def probe_environment(self, tag: str) -> EnvironmentProbe:
+        """Return scripted environment properties.
 
         Returns
         -------
-        tuple[str, ...]
-            The scripted freeze lines, or a fixed default when exhausted.
+        EnvironmentProbe
+            Managed interpreter version and freeze.
         """
-        del tag
-        self.events.append('freeze')
-        if not self.freezes:
-            return ('vulture @ file:///fake',)
-        return self.freezes.popleft()
-
-    def python_version(self, tag: str) -> str:
-        """Report a fixed interpreter version.
-
-        Returns
-        -------
-        str
-            ``3.14.99``.
-        """
-        self.events.append('pyver')
-        return self.python_versions.get(tag, '3.14.99')
-
-    def environment_python_version(self, tag: str) -> str:
-        """Report the scripted managed-environment interpreter version.
-
-        Returns
-        -------
-        str
-            Scripted environment version.
-        """
-        del tag
-        self.events.append('env-pyver')
-        return self.environment_python_version_value
+        self.events.append(f'env-probe:{tag}')
+        freeze = self.freezes.popleft() if self.freezes else ('vulture @ file:///fake',)
+        return EnvironmentProbe(python_version=self.environment_python_version_value, freeze=freeze)
 
     def remove_container(self, name: str) -> bool:
         """Record the removal.
@@ -996,7 +1225,7 @@ def test_image_pair_python_mismatch_fails_before_cache_or_build(tmp_path: Path, 
         pass
     assert 'inspect' not in docker.events
     assert 'build' not in docker.events
-    assert 'freeze' not in docker.events
+    assert not any(event.startswith('env-probe:') for event in docker.events)
     assert docker.prefetches == []
 
 
@@ -1029,7 +1258,7 @@ def test_cached_environment_requires_the_exact_managed_interpreter(tmp_path: Pat
     ):
         pass
     assert docker.built == []
-    assert 'freeze' not in docker.events
+    assert sum(event.startswith('env-probe:') for event in docker.events) == 1
 
 
 def test_build_refuses_checkout_outside_the_cache(
@@ -1115,9 +1344,13 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         assert 'pip' not in runtime_stage
         assert '/liveness/detector' not in runtime_stage
         assert 'COPY tools/rg /usr/bin/rg' not in runtime_stage
-        assert '"pip", "uninstall"' in dockerfile
+        assert '"uv", "venv"' in dockerfile
+        assert '--compile-bytecode' in dockerfile
+        assert 'ENV HOME=/liveness/home UV_VENV_SEED=0' in dockerfile
+        assert 'uv pip uninstall' not in dockerfile
+        assert dockerfile.index('uv pip install') < dockerfile.index('uv pip freeze')
         assert dockerfile.index('USER 0') < dockerfile.index('RUN mkdir -p /liveness/home')
-        assert dockerfile.index('USER 65532:65532') < dockerfile.index('/liveness/venv/bin/python -m pip install')
+        assert dockerfile.index('USER 65532:65532') < dockerfile.index('uv pip install')
         assert dockerfile.count('USER 0') == 1
         assert 'COPY --chown=65532:65532 wheelhouse /liveness/wheelhouse' in dockerfile
         assert 'COPY --chown=65532:65532 detector /liveness/detector' in dockerfile

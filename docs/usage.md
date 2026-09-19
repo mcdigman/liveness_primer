@@ -149,8 +149,8 @@ following compatibility rules apply:
 
 - `--container-builder-image IMAGE` and `--container-image IMAGE` select custom
   images and require `--container`. The images must provide matching Python
-  versions and architectures. They still use the multi-stage build, but a
-  custom runtime may include tools omitted from the default distroless image.
+  versions and architectures, and the builder must provide `uv` on `PATH`.
+  Custom runtimes may include tools omitted from the default distroless image.
 - Skylos container runs support `x86_64` and `aarch64`, the architectures for
   which its pinned ripgrep executable is available.
 - `--fresh` forces image rebuilds.

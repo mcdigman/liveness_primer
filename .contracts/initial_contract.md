@@ -39,12 +39,14 @@ point*: pre-triage, triage, or post-triage (§10).
     identities, and Docker identity.
     Builder and runtime images must report matching Python versions and architectures,
     and the result must expose the managed virtual-environment interpreter. An offline
-    multi-stage `docker build --network none` installs the detector as a non-root user,
-    captures its package freeze, removes `pip`, and copies the environment into the
-    runtime. The default builder and distroless runtime are digest-pinned Chainguard
-    images. Adapter-declared runtime executables come from pinned artifacts whose archive
-    and extracted executable are SHA-256 checked before the build.
-  - **Dependency provenance:** base and head use separate wheelhouses. The head fetch may
+    multi-stage `docker build --network none` installs the detector as a non-root user
+    with `uv` from the builder image, captures its package freeze, and copies the
+    environment into the runtime; environments containing pip are rejected. The default
+    builder and distroless runtime are digest-pinned Chainguard images. Adapter-declared
+    runtime executables come from pinned artifacts whose archive and extracted executable
+    are SHA-256 checked before the build.
+  - **Dependency provenance:** container fetch supports index and direct-archive requirements,
+    excluding VCS and directories. Base and head use separate wheelhouses. The head fetch may
     reuse the base wheelhouse read-only, but the base image consumes only base-owned
     artifacts and the head wheelhouse cannot replace their names. Fetch promotion and
     build-context assembly accept only regular, non-symlink files and never follow a
@@ -385,8 +387,8 @@ design intentionally blocks it, but it is not gated in CI initially.
 - Runtime: `pydantic>=2`, `platformdirs>=4`, `filelock>=3`, `packaging>=24`, `PyYAML>=6`.
 - Extras: `[license]` → `httpx` (license verification only).
 - Stdlib elsewhere: `tomllib`, `argparse`, `subprocess`/`venv`, `asyncio`. Git via
-  subprocess; `uv` used opportunistically, never required. Detectors are never dependencies
-  of this package.
+  subprocess; `uv` is optional on the host, required in container builders. Detectors
+  are never dependencies of this package.
 - Container mode (§3): the `docker` CLI is a host requirement of `--container` runs only,
   probed at run time and driven via the audited launcher; it is never a Python dependency,
   and no Docker SDK is used.

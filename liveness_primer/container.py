@@ -25,13 +25,16 @@ import secrets
 import shutil
 import stat
 import tempfile
+import tomllib
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Literal, Protocol, runtime_checkable
+from urllib.parse import unquote, urlsplit
 
 from filelock import BaseFileLock, FileLock, Timeout
+from pydantic import BaseModel, Field, ValidationError
 
 from liveness_primer.corpus import CheckoutStore
 from liveness_primer.envcache import (
@@ -46,6 +49,7 @@ from liveness_primer.filesystem import (
     MAX_NATIVE_TOOL_BYTES,
     FilesystemPolicyError,
     atomic_write_stream,
+    atomic_write_text,
     open_bounded_regular,
     read_bounded_chunks,
 )
@@ -171,6 +175,43 @@ target.write_bytes(binary)
 target.chmod(0o555)
 """
 
+_DISTRIBUTION_FETCH_SCRIPT = """\
+import hashlib
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+import sys
+import urllib.request
+
+
+def download(artifact: tuple[str, str, str, int | None]) -> None:
+    url, name, expected_digest, size = artifact
+    digest = hashlib.sha256()
+    total = 0
+    with urllib.request.urlopen(url, timeout=300) as response:
+        with (Path("/liveness/wheelhouse") / name).open("xb") as target:
+            while chunk := response.read(1_048_576):
+                total += len(chunk)
+                if size is not None and total > size:
+                    raise RuntimeError("distribution exceeds expected size: " + name)
+                digest.update(chunk)
+                target.write(chunk)
+    if size is not None and total != size:
+        raise RuntimeError("distribution size mismatch: " + name)
+    if digest.hexdigest() != expected_digest:
+        raise RuntimeError("distribution digest mismatch: " + name)
+
+
+pool = ThreadPoolExecutor(max_workers=8)
+try:
+    futures = [pool.submit(download, artifact) for artifact in json.loads(sys.argv[1])]
+    for future in as_completed(futures):
+        future.result()
+finally:
+    pool.shutdown(cancel_futures=True)
+"""
+
+
 # Both sides' containers run with networking disabled; unlike the host netns
 # probe this is enforced by the container runtime on every platform (§11).
 CONTAINER_ISOLATION = Isolation(enforced=True, description='container:docker-network-none', prefix=())
@@ -211,7 +252,11 @@ _DOCKER_TIMEOUT = 1800.0
 #      pinned static ripgrep utility for Skylos verification.
 #   4: compatible-image preflight, non-root detector builds, and
 #      adapter-declared runtime binaries.
-_CONTAINER_CACHE_FORMAT = 4
+#   5: uv-driven offline build with precompiled bytecode.
+#   6: PATH-resolved uv and verified archive fetch.
+#   7: disable venv seeding and validate pip-free environments.
+#   8: reject pip dependencies without removing them.
+_CONTAINER_CACHE_FORMAT = 8
 
 # Fork-bomb backstop for every container this module starts; generous enough
 # for any real detector or pip invocation.
@@ -244,15 +289,15 @@ _DOCKERFILE = """\
 FROM {builder_image} AS builder
 USER 0
 RUN mkdir -p /liveness/home && chown -R {build_user} /liveness
-ENV HOME=/liveness/home
+ENV HOME=/liveness/home UV_VENV_SEED=0
 USER {build_user}
-RUN ["/usr/bin/python", "-m", "venv", "/liveness/venv"]
+RUN ["uv", "venv", "--python", "/usr/bin/python", "/liveness/venv"]
 COPY --chown={build_user} wheelhouse /liveness/wheelhouse
 COPY --chown={build_user} detector /liveness/detector
-RUN /liveness/venv/bin/python -m pip install --quiet --no-index \
+RUN uv pip install --quiet --compile-bytecode --no-index \
+    --python /liveness/venv/bin/python \
     --find-links /liveness/wheelhouse /liveness/detector
-RUN /liveness/venv/bin/python -m pip freeze > /liveness/freeze.txt
-RUN ["/liveness/venv/bin/python", "-m", "pip", "uninstall", "--yes", "pip"]
+RUN uv pip freeze --python /liveness/venv/bin/python > /liveness/freeze.txt
 
 FROM {runtime_image}
 COPY --from=builder /liveness/venv /liveness/venv
@@ -1004,6 +1049,145 @@ def _validate_prefetched_binary(path: Path, expected_digest: str) -> None:
     path.chmod(0o555)
 
 
+class _DistributionHashes(BaseModel):
+    """Expected artifact digest."""
+
+    sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+
+
+class _Distribution(BaseModel, strict=True):
+    """One uv-resolved archive."""
+
+    name: str | None = None
+    url: str | None = None
+    path: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    hashes: _DistributionHashes
+
+
+class _LockedPackage(BaseModel):
+    """Archives for one resolved package."""
+
+    wheels: list[_Distribution] = Field(default_factory=list)
+    sdist: _Distribution | None = None
+    archive: _Distribution | None = None
+
+
+class _DependencyLock(BaseModel):
+    """A target-specific uv dependency resolution."""
+
+    packages: list[_LockedPackage]
+
+
+def locked_downloads(lock: str, *, reuse_base: bool) -> list[tuple[str, str, str, int | None]]:
+    """Select target-compatible archives from uv's non-universal lock.
+
+    Parameters
+    ----------
+    lock : str
+        Resolved pylock TOML.
+    reuse_base : bool
+        Whether the base wheelhouse is mounted read-only.
+
+    Returns
+    -------
+    list[tuple[str, str, str, int | None]]
+        URL, filename, digest, and optional size per download.
+
+    Raises
+    ------
+    ContainerError
+        If the lock or archive location is invalid.
+    """
+    try:
+        packages = _DependencyLock.model_validate(tomllib.loads(lock)).packages
+    except (tomllib.TOMLDecodeError, ValidationError) as error:
+        msg = 'invalid uv dependency lock'
+        raise ContainerError(msg) from error
+    downloads: dict[str, tuple[str, str, str, int | None]] = {}
+    for package in packages:
+        archive = (
+            next(
+                (
+                    wheel
+                    for wheel in package.wheels
+                    if wheel.path is not None or urlsplit(wheel.url or '').scheme == 'file'
+                ),
+                package.wheels[0],
+            )
+            if package.wheels
+            else package.sdist or package.archive
+        )
+        if archive is None:
+            msg = (
+                'container dependency fetch supports only index and direct-archive requirements; '
+                'VCS and directories are unsupported'
+            )
+            raise ContainerError(msg)
+        url = archive.url or ''
+        parsed = urlsplit(url)
+        if archive.path is not None or parsed.scheme == 'file':
+            path = PurePosixPath(archive.path if archive.path is not None else unquote(parsed.path))
+            if (
+                not reuse_base
+                or parsed.netloc
+                or path.parent != PurePosixPath('/liveness/base-links')
+                or path.name in {'.', '..'}
+            ):
+                msg = 'uv dependency lock references a path outside the base wheelhouse'
+                raise ContainerError(msg)
+            continue
+        if archive.hashes.sha256 is None:
+            msg = 'uv dependency lock is missing an archive SHA-256'
+            raise ContainerError(msg)
+        name = archive.name or unquote(parsed.path.rsplit('/', 1)[-1])
+        if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+            msg = 'uv dependency lock requires an HTTP(S) archive URL'
+            raise ContainerError(msg)
+        if not name or name in {'.', '..'} or '/' in name or '\\' in name or '\x00' in name:
+            msg = 'uv dependency lock contains an invalid archive filename'
+            raise ContainerError(msg)
+        item = (url, name, archive.hashes.sha256, archive.size)
+        if name in downloads and downloads[name] != item:
+            msg = f'uv dependency lock contains conflicting archives: {name}'
+            raise ContainerError(msg)
+        downloads[name] = item
+    return list(downloads.values())
+
+
+class ImageProbe(BaseModel, strict=True, extra='forbid', frozen=True):
+    """Validated image properties.
+
+    Attributes
+    ----------
+    architecture : str
+        Machine architecture.
+    python_version : str
+        Interpreter version.
+    platform : str
+        Python platform tag.
+    """
+
+    architecture: str = Field(min_length=1)
+    python_version: str = Field(min_length=1)
+    platform: str = Field(min_length=1)
+
+
+class EnvironmentProbe(BaseModel, strict=True, extra='forbid', frozen=True):
+    """Validated managed-environment properties.
+
+    Attributes
+    ----------
+    python_version : str
+        Managed interpreter version.
+    freeze : tuple[str, ...]
+        Installed distribution records.
+    """
+
+    python_version: str = Field(min_length=1)
+    freeze: tuple[str, ...]
+
+
 @runtime_checkable
 class DockerRuntime(Protocol):
     """Injectable Docker runtime operations (contract §15)."""
@@ -1061,33 +1245,20 @@ class DockerRuntime(Protocol):
         """
         ...
 
-    def architecture(self, image: str) -> str:
-        """Report the machine architecture inside an image.
+    def probe_image(self, image: str, *, require_uv: bool = False) -> ImageProbe:
+        """Probe one image offline.
 
         Parameters
         ----------
         image : str
-            Builder image to inspect.
+            Image to inspect.
+        require_uv : bool
+            Require uv on the image's PATH.
 
         Returns
         -------
-        str
-            Python's normalized machine name inside the image.
-        """
-        ...
-
-    def platform(self, image: str) -> str:
-        """Report the Python platform tag inside an image.
-
-        Parameters
-        ----------
-        image : str
-            Runtime image to inspect.
-
-        Returns
-        -------
-        str
-            Container-side ``sysconfig.get_platform()``.
+        ImageProbe
+            Architecture, interpreter version, and platform.
         """
         ...
 
@@ -1096,7 +1267,7 @@ class DockerRuntime(Protocol):
     ) -> None:
         """Download distributions into a staging directory (fetch step, §3).
 
-        Runs pip inside the builder image so the fetched wheels match the
+        Runs uv inside the builder image so the fetched wheels match the
         runtime platform, not the host. The destination is a fresh
         staging directory, never the persistent cache: the caller validates
         and promotes the results (contract §11). ``find_links``, when given,
@@ -1107,9 +1278,9 @@ class DockerRuntime(Protocol):
         Parameters
         ----------
         image : str
-            Builder image whose pip performs the download.
+            Builder image providing uv on PATH.
         requirements : Sequence[str]
-            Requirement strings to download, wheels preferred.
+            Requirement strings to resolve and download.
         destination : Path
             Fresh host staging directory mounted into the fetch container.
         find_links : Path | None
@@ -1132,23 +1303,8 @@ class DockerRuntime(Protocol):
         """
         ...
 
-    def freeze(self, tag: str) -> tuple[str, ...]:
-        """Capture the resolved dependency freeze of an environment image.
-
-        Parameters
-        ----------
-        tag : str
-            Environment image to freeze.
-
-        Returns
-        -------
-        tuple[str, ...]
-            Freeze lines.
-        """
-        ...
-
-    def python_version(self, tag: str) -> str:
-        """Report the interpreter version inside an environment image.
+    def probe_environment(self, tag: str) -> EnvironmentProbe:
+        """Probe the managed interpreter and freeze offline.
 
         Parameters
         ----------
@@ -1157,23 +1313,8 @@ class DockerRuntime(Protocol):
 
         Returns
         -------
-        str
-            The container-side ``platform.python_version()``.
-        """
-        ...
-
-    def environment_python_version(self, tag: str) -> str:
-        """Report the exact managed interpreter version in an environment.
-
-        Parameters
-        ----------
-        tag : str
-            Built or cached environment image to inspect.
-
-        Returns
-        -------
-        str
-            ``/liveness/venv/bin/python``'s Python version.
+        EnvironmentProbe
+            Managed interpreter version and freeze.
         """
         ...
 
@@ -1332,77 +1473,97 @@ class DockerCli:
         finally:
             self._remove_auxiliary(name)
 
-    def architecture(self, image: str) -> str:
-        """Report the machine architecture inside an image, offline.
+    def probe_image(self, image: str, *, require_uv: bool = False) -> ImageProbe:
+        """Probe one image offline.
 
         Parameters
         ----------
         image : str
-            Builder image to inspect.
+            Image to inspect.
+        require_uv : bool
+            Require uv on the image's PATH.
 
         Returns
         -------
-        str
-            Python's machine name inside the image.
+        ImageProbe
+            Architecture, interpreter version, and platform.
+
+        Raises
+        ------
+        ContainerError
+            If the probe fails or returns invalid properties.
         """
-        command = ('python', '-c', 'import platform; print(platform.machine())')
-        result = self._run_auxiliary('arch', image, command, action='container architecture probe', offline=True)
-        return result.stdout.strip()
-
-    def platform(self, image: str) -> str:
-        """Report the Python platform tag inside an image, offline.
-
-        Parameters
-        ----------
-        image : str
-            Runtime image to inspect.
-
-        Returns
-        -------
-        str
-            Container-side ``sysconfig.get_platform()``.
-        """
-        command = ('python', '-c', 'import sysconfig; print(sysconfig.get_platform())')
-        result = self._run_auxiliary('platform', image, command, action='container platform probe', offline=True)
-        return result.stdout.strip()
+        command = (
+            'python',
+            '-c',
+            (
+                'import json, platform, shutil, sys, sysconfig\n'
+                'if sys.argv[1] == "1" and shutil.which("uv") is None:\n'
+                '    raise RuntimeError("container builder requires uv on PATH")\n'
+                'print(json.dumps(dict(architecture=platform.machine(), '
+                'python_version=platform.python_version(), platform=sysconfig.get_platform())))'
+            ),
+            '1' if require_uv else '0',
+        )
+        result = self._run_auxiliary('image-probe', image, command, action='container image probe', offline=True)
+        try:
+            return ImageProbe.model_validate_json(result.stdout)
+        except ValidationError as error:
+            msg = f'invalid container image probe from {image}'
+            raise ContainerError(msg) from error
 
     def prefetch(
         self, image: str, requirements: Sequence[str], destination: Path, *, find_links: Path | None = None
     ) -> None:
-        """Download distributions with the builder image's pip (fetch step, §3).
-
-        The fetch container is named and force-removed afterwards, so a
-        client-side timeout cannot leak an untracked running container. A
-        ``find_links`` wheelhouse is mounted read-only, so the head fetch
-        reuses base-side wheels it cannot modify (contract §3, §11).
+        """Resolve with uv and fetch verified archives in matching containers.
 
         Parameters
         ----------
         image : str
-            Builder image whose pip performs the download.
+            Builder image providing uv on PATH.
         requirements : Sequence[str]
-            Requirement strings to download, wheels preferred.
+            Statically extracted requirement strings.
         destination : Path
-            Fresh host staging directory mounted into the fetch container.
+            Fresh host staging directory for downloaded archives.
         find_links : Path | None
-            Base-side wheelhouse mounted read-only as an extra resolver
-            source, or ``None`` for the base fetch itself.
+            Base wheelhouse offered read-only for reuse.
         """
-        volumes = [f'{destination}:/liveness/wheelhouse']
-        download_flags = ['--prefer-binary']
-        if find_links is not None:
-            volumes.append(f'{find_links}:/liveness/base-links:ro')
-            download_flags.extend(['--find-links', '/liveness/base-links'])
-        command = ['python', '-m', 'pip', 'download', '--quiet', '--dest', '/liveness/wheelhouse', *download_flags]
-        command.extend(requirements)
-        self._run_auxiliary(
-            'fetch',
-            image,
-            command,
-            action='dependency prefetch (pip download)',
-            offline=False,
-            volumes=volumes,
-        )
+        volumes = [] if find_links is None else [f'{find_links}:/liveness/base-links:ro']
+        with tempfile.TemporaryDirectory(prefix='liveness-primer-requirements-', dir=destination.parent) as scratch:
+            inputs = Path(scratch)
+            atomic_write_text(inputs / 'requirements.in', '\n'.join(requirements) + '\n')
+            command = [
+                'uv',
+                'pip',
+                'compile',
+                '/liveness/inputs/requirements.in',
+                '--python',
+                '/usr/bin/python',
+                '--format',
+                'pylock.toml',
+                '--generate-hashes',
+                '--quiet',
+            ]
+            if find_links is not None:
+                command.extend(('--find-links', '/liveness/base-links'))
+            result = self._run_auxiliary(
+                'resolve',
+                image,
+                command,
+                action='dependency resolution (uv)',
+                offline=False,
+                volumes=(*volumes, f'{inputs}:/liveness/inputs:ro'),
+            )
+        downloads = locked_downloads(result.stdout, reuse_base=find_links is not None)
+        if downloads:
+            self._run_auxiliary(
+                'fetch',
+                image,
+                ('python', '-c', _DISTRIBUTION_FETCH_SCRIPT, json.dumps(downloads)),
+                action='dependency archive fetch',
+                offline=False,
+                volumes=(f'{destination}:/liveness/wheelhouse',),
+            )
 
     def prefetch_static_binary(self, image: str, artifact: StaticBinaryArtifact, destination: Path) -> None:
         """Fetch and digest-verify one static runtime release binary.
@@ -1436,29 +1597,8 @@ class DockerCli:
         )
         _validate_prefetched_binary(destination / artifact.executable, artifact.binary_digest)
 
-    def freeze(self, tag: str) -> tuple[str, ...]:
-        """Capture the freeze of an environment image, offline.
-
-        Parameters
-        ----------
-        tag : str
-            Environment image to freeze.
-
-        Returns
-        -------
-        tuple[str, ...]
-            Freeze lines.
-        """
-        command = (
-            'python',
-            '-c',
-            "from pathlib import Path; print(Path('/liveness/freeze.txt').read_text(), end='')",
-        )
-        result = self._run_auxiliary('freeze', tag, command, action='environment freeze', offline=True)
-        return tuple(line for line in result.stdout.splitlines() if line.strip())
-
-    def python_version(self, tag: str) -> str:
-        """Report the interpreter version inside an environment image, offline.
+    def probe_environment(self, tag: str) -> EnvironmentProbe:
+        """Probe the exact managed interpreter and freeze offline.
 
         Parameters
         ----------
@@ -1467,38 +1607,31 @@ class DockerCli:
 
         Returns
         -------
-        str
-            The container-side ``platform.python_version()``.
+        EnvironmentProbe
+            Managed interpreter version and freeze.
+
+        Raises
+        ------
+        ContainerError
+            If the probe fails or returns invalid properties.
         """
-        command = ('python', '-c', 'import platform; print(platform.python_version())')
-        result = self._run_auxiliary('pyver', tag, command, action='container python version', offline=True)
-        return result.stdout.strip()
-
-    def environment_python_version(self, tag: str) -> str:
-        """Report the exact managed interpreter version, offline.
-
-        The absolute interpreter path prevents a dangling virtual-environment
-        symlink from silently falling through to the runtime image's Python.
-
-        Parameters
-        ----------
-        tag : str
-            Built or cached environment image to inspect.
-
-        Returns
-        -------
-        str
-            Managed interpreter's ``platform.python_version()``.
-        """
-        command = ('/liveness/venv/bin/python', '-c', 'import platform; print(platform.python_version())')
-        result = self._run_auxiliary(
-            'env-pyver',
-            tag,
-            command,
-            action='environment interpreter probe',
-            offline=True,
+        command = (
+            '/liveness/venv/bin/python',
+            '-c',
+            (
+                'import importlib.util, json, platform; from pathlib import Path\n'
+                'if importlib.util.find_spec("pip") is not None:\n'
+                '    raise RuntimeError("managed environment contains pip")\n'
+                'print(json.dumps(dict(python_version=platform.python_version(), '
+                'freeze=[line for line in Path("/liveness/freeze.txt").read_text().splitlines() if line.strip()])))'
+            ),
         )
-        return result.stdout.strip()
+        result = self._run_auxiliary('env-probe', tag, command, action='environment probe', offline=True)
+        try:
+            return EnvironmentProbe.model_validate_json(result.stdout)
+        except ValidationError as error:
+            msg = f'invalid environment probe from {tag}'
+            raise ContainerError(msg) from error
 
     def remove_container(self, name: str) -> bool:
         """Force-remove one analysis container and confirm the outcome.
@@ -1738,16 +1871,18 @@ class ContainerEnvironments:
             If the images have different architectures or Python versions.
         """
         docker_identity = self._docker.identity()
-        builder_architecture = self._docker.architecture(self._builder_image)
-        runtime_architecture = self._docker.architecture(self._runtime_image)
+        builder = self._docker.probe_image(self._builder_image, require_uv=True)
+        runtime = self._docker.probe_image(self._runtime_image)
+        builder_architecture = builder.architecture
+        runtime_architecture = runtime.architecture
         if _normalized_architecture(builder_architecture) != _normalized_architecture(runtime_architecture):
             msg = (
                 'container builder/runtime architecture mismatch: '
                 f'builder {builder_architecture}; runtime {runtime_architecture}'
             )
             raise ContainerError(msg)
-        builder_python_version = self._docker.python_version(self._builder_image)
-        runtime_python_version = self._docker.python_version(self._runtime_image)
+        builder_python_version = builder.python_version
+        runtime_python_version = runtime.python_version
         if builder_python_version != runtime_python_version:
             msg = (
                 'container builder/runtime Python version mismatch: '
@@ -1762,7 +1897,7 @@ class ContainerEnvironments:
             architecture=_normalized_architecture(runtime_architecture),
             docker_identity=docker_identity,
             python_version=runtime_python_version,
-            platform=self._docker.platform(self._runtime_image),
+            platform=runtime.platform,
             artifacts=artifacts,
             runtime_binary_identities=identities,
         )
@@ -1975,7 +2110,8 @@ class ContainerEnvironments:
             houses = wheelhouses()
             checkout = self._store.materialize(repo, sha, history=True)
             self._build(tag, checkout, houses, runtime_binaries, native_tools, machine)
-        environment_python_version = self._docker.environment_python_version(tag)
+        probe = self._docker.probe_environment(tag)
+        environment_python_version = probe.python_version
         if environment_python_version != expected_python_version:
             msg = (
                 'container environment interpreter mismatch: '
@@ -1986,7 +2122,7 @@ class ContainerEnvironments:
             ref=ref,
             sha=sha,
             fingerprint=fingerprint,
-            freeze=self._docker.freeze(tag),
+            freeze=probe.freeze,
             from_cache=cached,
             rebuilt=not cached,
         )
