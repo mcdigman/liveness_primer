@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Report and manifest payloads carry their own `schema_version`, versioned
 independently of the package version; `liveness-primer --version` prints both.
 
-## [Unreleased]
+## [0.2.0] - 2026-09-18
 
 ### Added
 
@@ -40,7 +40,8 @@ independently of the package version; `liveness-primer --version` prints both.
 
 - **Shallow checkouts** — corpus checkouts now fetch only the
   pinned commit (`git fetch --depth 1`, no tags) instead of the whole pack
-  history. Nothing reads history and every copy drops `.git`
+  history. Nothing reads history and every copy drops `.git`. Detector
+  checkouts still get full checkouts.
 - **Skylos CI check** — the `Dead Code` workflow is now `Skylos Analysis`
   (`.github/workflows/skylos.yml`) and additionally runs Skylos's security,
   secret, and AI-defect analyses.
@@ -53,12 +54,10 @@ independently of the package version; `liveness-primer --version` prints both.
   so stderr noise no longer hides why a run failed. Truncated detail states
   how much was omitted, and a failure with no diagnostic text no longer ends
   in a dangling separator. The report schema and CLI are unchanged.
-
-### Fixed
-
 - The Skylos adapter now ingests `circular_dependencies` (`SKY-CIRC`).
   Circular dependencies are on by default, so they go in the same bin
   as dead code findings.
+- Detectors with SCM-derived dynamic versions now build the right version in container mode.
 
 ## [0.1.1] - 2026-08-21
 
