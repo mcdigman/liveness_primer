@@ -178,7 +178,7 @@ target.chmod(0o555)
 _DISTRIBUTION_FETCH_SCRIPT = """\
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import sys
 import urllib.request
@@ -202,8 +202,13 @@ def download(artifact: tuple[str, str, str, int | None]) -> None:
         raise RuntimeError("distribution digest mismatch: " + name)
 
 
-with ThreadPoolExecutor(max_workers=8) as pool:
-    list(pool.map(download, json.loads(sys.argv[1])))
+pool = ThreadPoolExecutor(max_workers=8)
+try:
+    futures = [pool.submit(download, artifact) for artifact in json.loads(sys.argv[1])]
+    for future in as_completed(futures):
+        future.result()
+finally:
+    pool.shutdown(cancel_futures=True)
 """
 
 
@@ -248,7 +253,10 @@ _DOCKER_TIMEOUT = 1800.0
 #   4: compatible-image preflight, non-root detector builds, and
 #      adapter-declared runtime binaries.
 #   5: uv-driven offline build with precompiled bytecode.
-_CONTAINER_CACHE_FORMAT = 7
+#   6: PATH-resolved uv and verified archive fetch.
+#   7: disable venv seeding and validate pip-free environments.
+#   8: reject pip dependencies without removing them.
+_CONTAINER_CACHE_FORMAT = 8
 
 # Fork-bomb backstop for every container this module starts; generous enough
 # for any real detector or pip invocation.
@@ -289,7 +297,6 @@ COPY --chown={build_user} detector /liveness/detector
 RUN uv pip install --quiet --compile-bytecode --no-index \
     --python /liveness/venv/bin/python \
     --find-links /liveness/wheelhouse /liveness/detector
-RUN uv pip uninstall --python /liveness/venv/bin/python pip
 RUN uv pip freeze --python /liveness/venv/bin/python > /liveness/freeze.txt
 
 FROM {runtime_image}
@@ -1112,7 +1119,10 @@ def locked_downloads(lock: str, *, reuse_base: bool) -> list[tuple[str, str, str
             else package.sdist or package.archive
         )
         if archive is None:
-            msg = 'uv dependency lock requires a wheel or source archive'
+            msg = (
+                'container dependency fetch supports only index and direct-archive requirements; '
+                'VCS and directories are unsupported'
+            )
             raise ContainerError(msg)
         url = archive.url or ''
         parsed = urlsplit(url)
@@ -1519,7 +1529,7 @@ class DockerCli:
             Base wheelhouse offered read-only for reuse.
         """
         volumes = [] if find_links is None else [f'{find_links}:/liveness/base-links:ro']
-        with tempfile.TemporaryDirectory(prefix='liveness-primer-requirements-') as scratch:
+        with tempfile.TemporaryDirectory(prefix='liveness-primer-requirements-', dir=destination.parent) as scratch:
             inputs = Path(scratch)
             atomic_write_text(inputs / 'requirements.in', '\n'.join(requirements) + '\n')
             command = [

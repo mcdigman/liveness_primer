@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the container-backed detector environments (contract §3, §11, §15)."""
 
+import concurrent.futures
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -12,6 +13,7 @@ import runpy
 import shutil
 import stat
 import sys
+import threading
 import urllib.request
 from collections import deque
 from collections.abc import Sequence
@@ -192,7 +194,10 @@ def test_prefetch_resolves_with_uv_and_downloads_in_separate_containers(tmp_path
     assert '--format' in resolve
     assert resolve[resolve.index('--format') + 1] == 'pylock.toml'
     assert f'{tmp_path}:/liveness/wheelhouse' not in resolve
-    assert any(volume.endswith(':/liveness/inputs:ro') for volume in resolve)
+    inputs_mount = next(volume for volume in resolve if volume.endswith(':/liveness/inputs:ro'))
+    inputs = Path(inputs_mount.removesuffix(':/liveness/inputs:ro'))
+    assert inputs.parent == tmp_path.parent
+    assert not inputs.exists()
     assert f'{tmp_path}:/liveness/wheelhouse' in fetch
     assert json.loads(fetch[-1]) == [['https://example.invalid/tomli.whl', 'tomli.whl', 'a' * 64, None]]
     for argv, rm in ((resolve, resolve_rm), (fetch, fetch_rm)):
@@ -254,7 +259,11 @@ def test_locked_downloads_deduplicates() -> None:
         ('packages = 1', 'invalid uv dependency lock'),
         (PREFETCH_LOCK.replace('"' + 'a' * 64 + '"', '1'), 'invalid uv dependency lock'),
         (PREFETCH_LOCK.replace('url =', 'size = -1, url ='), 'invalid uv dependency lock'),
-        ('[[packages]]\nname = "git-package"', 'requires a wheel or source archive'),
+        (
+            '[[packages]]\nvcs = {type = "git", url = "https://example.invalid/repo.git"}',
+            'VCS and directories are unsupported',
+        ),
+        ('[[packages]]\ndirectory = {path = "/src/package"}', 'VCS and directories are unsupported'),
         (PREFETCH_LOCK.replace('sha256 = "' + 'a' * 64 + '"', ''), 'missing an archive SHA-256'),
         (
             PREFETCH_LOCK.replace('https://example.invalid/tomli.whl', 'file:///tmp/tomli.whl'),
@@ -363,6 +372,44 @@ def test_distribution_fetch_script_verifies_bytes(
     else:
         with pytest.raises(RuntimeError, match=error):
             runpy.run_path(str(script))
+
+
+def test_distribution_fetch_stops_on_failure_before_earlier_downloads_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release = threading.Event()
+    started: list[str] = []
+    shutdown = concurrent.futures.ThreadPoolExecutor.shutdown
+
+    def stop_pool(
+        pool: concurrent.futures.ThreadPoolExecutor, *, wait: bool = True, cancel_futures: bool = False
+    ) -> None:
+        shutdown(pool, wait=False, cancel_futures=cancel_futures)
+        release.set()
+        shutdown(pool, wait=wait)
+
+    def open_response(url: str, *, timeout: int) -> io.BytesIO:
+        assert timeout == 300
+        started.append(url)
+        if url.endswith('/1'):
+            return io.BytesIO(b'corrupt')
+        assert release.wait(10), 'failure was hidden behind an earlier download'
+        return io.BytesIO(b'payload')
+
+    monkeypatch.setattr(concurrent.futures.ThreadPoolExecutor, 'shutdown', stop_pool)
+    monkeypatch.setattr(urllib.request, 'urlopen', open_response)
+    launcher = RecordingLauncher(stdout=PREFETCH_LOCK)
+    DockerCli(launcher=launcher).prefetch('builder:1', ('tomli>=2',), tmp_path)
+    script = tmp_path / 'fetch.py'
+    atomic_write_text(script, launcher.calls[2][-2].replace('/liveness/wheelhouse', str(tmp_path)))
+    artifacts = [
+        (f'https://example.invalid/{index}', f'{index}.whl', hashlib.sha256(b'payload').hexdigest(), 7)
+        for index in range(70)
+    ]
+    monkeypatch.setattr(sys, 'argv', [str(script), json.dumps(artifacts)])
+    with pytest.raises(RuntimeError, match=r'digest mismatch: 1\.whl'):
+        runpy.run_path(str(script))
+    assert 1 < len(started) <= 9
 
 
 def test_image_probe_script_requires_uv_only_for_builder(
@@ -1300,8 +1347,8 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         assert '"uv", "venv"' in dockerfile
         assert '--compile-bytecode' in dockerfile
         assert 'ENV HOME=/liveness/home UV_VENV_SEED=0' in dockerfile
-        uninstall = 'uv pip uninstall --python /liveness/venv/bin/python pip'
-        assert dockerfile.index('uv pip install') < dockerfile.index(uninstall) < dockerfile.index('uv pip freeze')
+        assert 'uv pip uninstall' not in dockerfile
+        assert dockerfile.index('uv pip install') < dockerfile.index('uv pip freeze')
         assert dockerfile.index('USER 0') < dockerfile.index('RUN mkdir -p /liveness/home')
         assert dockerfile.index('USER 65532:65532') < dockerfile.index('uv pip install')
         assert dockerfile.count('USER 0') == 1

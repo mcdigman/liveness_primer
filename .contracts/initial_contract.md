@@ -41,11 +41,12 @@ point*: pre-triage, triage, or post-triage (§10).
     and the result must expose the managed virtual-environment interpreter. An offline
     multi-stage `docker build --network none` installs the detector as a non-root user
     with `uv` from the builder image, captures its package freeze, and copies the
-    pip-free environment into the runtime. The default builder and distroless runtime
-    are digest-pinned Chainguard images. Adapter-declared runtime executables come from
-    pinned artifacts whose archive and extracted executable are SHA-256 checked before
-    the build.
-  - **Dependency provenance:** base and head use separate wheelhouses. The head fetch may
+    environment into the runtime; environments containing pip are rejected. The default
+    builder and distroless runtime are digest-pinned Chainguard images. Adapter-declared
+    runtime executables come from pinned artifacts whose archive and extracted executable
+    are SHA-256 checked before the build.
+  - **Dependency provenance:** container fetch supports index and direct-archive requirements,
+    excluding VCS and directories. Base and head use separate wheelhouses. The head fetch may
     reuse the base wheelhouse read-only, but the base image consumes only base-owned
     artifacts and the head wheelhouse cannot replace their names. Fetch promotion and
     build-context assembly accept only regular, non-symlink files and never follow a
