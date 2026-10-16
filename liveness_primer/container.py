@@ -26,7 +26,7 @@ import shutil
 import stat
 import tempfile
 import tomllib
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
 from pathlib import Path, PurePosixPath
@@ -1797,7 +1797,7 @@ class ContainerEnvironments:
         return self._docker
 
     @contextlib.contextmanager
-    def _pair_lock(self, pair_dir: Path) -> Iterator[None]:
+    def _pair_lock(self, pair_dir: Path) -> Generator[None, None, None]:
         """Hold the cross-process lock of one pair's wheelhouses (contract §3).
 
         The Docker image store serializes builds of a tag, but the
@@ -2137,7 +2137,7 @@ class ContainerEnvironments:
         adapter: DetectorAdapter,
         *,
         native_tools: tuple[ContainerNativeTool, ...] = (),
-    ) -> Iterator[PreparedContainerPair]:
+    ) -> Generator[PreparedContainerPair, None, None]:
         """Prepare both environment images and run their ephemeral containers (contract §3, §11).
 
         The two refs are fetched in sequence into separate wheelhouses: the

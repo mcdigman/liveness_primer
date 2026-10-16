@@ -12,7 +12,7 @@ import contextlib
 import os
 import stat
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import BinaryIO
 
@@ -125,7 +125,7 @@ def read_small_text(path: Path, *, max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES) 
 
 
 @contextlib.contextmanager
-def open_bounded_regular(path: Path, *, description: str, max_bytes: int) -> Iterator[BinaryIO]:
+def open_bounded_regular(path: Path, *, description: str, max_bytes: int) -> Generator[BinaryIO, None, None]:
     """Open one bounded regular file, binding the opened bytes to the inspected ones.
 
     ``lstat`` rejects a symlink or non-regular path before the open, and the
@@ -225,7 +225,7 @@ def read_bounded_chunks(
 
 
 @contextlib.contextmanager
-def atomic_write_stream(path: Path, *, mode: int | None = None) -> Iterator[BinaryIO]:
+def atomic_write_stream(path: Path, *, mode: int | None = None) -> Generator[BinaryIO, None, None]:
     """Replace one file beneath a trusted parent with whatever the body writes.
 
     Nothing appears at ``path`` until the body completes, so a body that
