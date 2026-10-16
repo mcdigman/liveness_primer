@@ -21,7 +21,7 @@ import sys
 import sysconfig
 import tempfile
 import tomllib
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -1224,7 +1224,9 @@ class DetectorEnvironments:
             stack.callback(lock.release)
 
     @contextlib.contextmanager
-    def prepare_pair(self, repo: str, base_ref: str, head_ref: str, adapter: DetectorAdapter) -> Iterator[PreparedPair]:
+    def prepare_pair(
+        self, repo: str, base_ref: str, head_ref: str, adapter: DetectorAdapter
+    ) -> Generator[PreparedPair, None, None]:
         """Prepare the base/head environment pair with paired delta resolution (contract §3).
 
         Cached pairs with an empty non-detector dependency delta are used
