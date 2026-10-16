@@ -2,7 +2,7 @@
   "dependencies": {
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "tabulator-tables": "^6.5.3"
+    "tabulator-tables": "^6.6.1"
   },
   "description": "Static desktop workbench for reviewing completed liveness_primer JSON reports.",
   "devDependencies": {
