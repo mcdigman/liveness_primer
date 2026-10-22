@@ -95,8 +95,8 @@ Maintainer checklist; the ordering matters:
    (`project.version`) and [CITATION.cff](CITATION.cff) (`version:`), and add
    `date-released:` to `CITATION.cff`. Nothing enforces that these agree, so a
    mismatch ships a distribution whose citation metadata names a different
-   version. The report/manifest `schema_version` is versioned independently and
-   is bumped only when a payload changes.
+   version. Also bump `version` in [explorer/package.json](explorer/package.json)
+   and the two root entries in `explorer/package-lock.json`.
 2. Move the `## [Unreleased]` heading in [CHANGELOG.md](CHANGELOG.md) to the new
    version with its release date.
 3. Publish a GitHub Release; [.github/workflows/publish.yml](.github/workflows/publish.yml)
