@@ -72,7 +72,16 @@ jobs:
             exit 1
           fi
 
+      # Avoid the degraded Azure archive while keeping the remaining mirrors.
+      - name: Bypass degraded Ubuntu mirror
+        run: |
+          grep -Eq '^https://archive\.ubuntu\.com/ubuntu/([[:space:]]|$)' /etc/apt/apt-mirrors.txt
+          sudo sed -i -E '\@^https?://azure\.archive\.ubuntu\.com/ubuntu/([[:space:]]|$)@d' /etc/apt/apt-mirrors.txt
+          cat /etc/apt/apt-mirrors.txt
+
+      # Normally about a minute; a slow mirror can otherwise stall for hours.
       - name: Install Playwright browsers
+        timeout-minutes: 10
         run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Browser, layout, accessibility, adversarial, and network suites
