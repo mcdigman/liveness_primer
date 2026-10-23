@@ -51,14 +51,14 @@ repos:
   - id: ssort
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.17.0
+  rev: v0.17.1
   hooks:
   - id: ruff-check
     args: [--fix, --preview]
   - id: ruff-format
 
 - repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: 1.3.2
+  rev: 1.4.0
   hooks:
   - id: pyrefly-check
     args: [--preset=strict]
@@ -66,9 +66,9 @@ repos:
     # These must cover every import in liveness_primer/ and tests/ so the
     # isolated hook environment can resolve them.
     additional_dependencies:
-      - pydantic>=2.14.0
-      - platformdirs>=4.12.4
-      - filelock>=4.1.0
+      - pydantic>=2.14.1
+      - platformdirs>=4.13.3
+      - filelock>=4.2.0
       - packaging>=26.3
       - PyYAML>=6.0.3
       - types-PyYAML
@@ -77,7 +77,7 @@ repos:
       - pytest
 
 - repo: https://github.com/zizmorcore/zizmor-pre-commit
-  rev: v1.30.1
+  rev: v1.31.1
   hooks:
   - id: zizmor
 
