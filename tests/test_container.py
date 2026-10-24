@@ -1314,10 +1314,11 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
     # Two fetches: base first (no find-links), then head reusing the base
     # wheelhouse read-only — the shared closure is downloaded only once.
     (base_fetch, head_fetch) = docker.prefetches
-    assert base_fetch == (DEFAULT_CONTAINER_BUILDER_IMAGE, ('tomli>=2', 'setuptools>=61'), None)
+    cython = "Cython>=3.0; python_version >= '3.15'"
+    assert base_fetch == (DEFAULT_CONTAINER_BUILDER_IMAGE, ('tomli>=2', 'setuptools>=61', cython), None)
     head_image, head_reqs, head_links = head_fetch
     assert head_image == DEFAULT_CONTAINER_BUILDER_IMAGE
-    assert head_reqs == ('tomli>=2.1', 'setuptools>=61')
+    assert head_reqs == ('tomli>=2.1', 'setuptools>=61', cython)
     assert head_links is not None
     prefetch_indexes = [index for index, event in enumerate(docker.events) if event == 'prefetch']
     assert prefetch_indexes[0] < docker.events.index('build')
@@ -1327,6 +1328,7 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
     # each shared wheel is recorded once.
     wheel_fetches = [record for record in pair.fetches if record.kind == 'wheel']
     assert sorted(record.name for record in wheel_fetches) == [
+        'Cython-1.0-py3-none-any.whl',
         'setuptools-1.0-py3-none-any.whl',
         'tomli-1.0-py3-none-any.whl',
     ]
@@ -1355,6 +1357,7 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
         assert 'COPY --chown=65532:65532 wheelhouse /liveness/wheelhouse' in dockerfile
         assert 'COPY --chown=65532:65532 detector /liveness/detector' in dockerfile
         assert 'detector/pyproject.toml' in names
+        assert 'wheelhouse/Cython-1.0-py3-none-any.whl' in names
         assert 'wheelhouse/tomli-1.0-py3-none-any.whl' in names
         assert 'wheelhouse/setuptools-1.0-py3-none-any.whl' in names
         assert 'tools/rg' not in names
@@ -1780,6 +1783,7 @@ def test_stale_wheelhouses_from_a_cached_base_run_are_reset(tmp_path: Path, dete
     with environments(tmp_path, docker).prepare_pair(detector_repo.url, 'base-branch', 'head-branch', VultureAdapter()):
         pass
     assert sorted(entry.name for entry in (pair_dir / 'head').iterdir()) == [
+        'Cython-1.0-py3-none-any.whl',
         'setuptools-1.0-py3-none-any.whl',
         'tomli-1.0-py3-none-any.whl',
     ]
@@ -1793,6 +1797,7 @@ def test_stale_wheelhouses_from_a_cached_base_run_are_reset(tmp_path: Path, dete
         pass
     assert len(evicted.built) == 2
     assert sorted(entry.name for entry in (pair_dir / 'base').iterdir()) == [
+        'Cython-1.0-py3-none-any.whl',
         'setuptools-1.0-py3-none-any.whl',
         'tomli-1.0-py3-none-any.whl',
     ]

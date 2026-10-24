@@ -62,10 +62,10 @@ from liveness_primer.tools.base import DetectorAdapter, RuntimeBinary
 # multi-platform OCI indexes so a cache fingerprint names exact builder and
 # runtime bytes on both supported architectures.
 DEFAULT_CONTAINER_BUILDER_IMAGE = (
-    'cgr.dev/chainguard/python:latest-dev@sha256:14acabef9a759e7d07bf647afec92bc28cbe0f89c978fe426411c85035121c14'
+    'cgr.dev/chainguard/python:latest-dev@sha256:9bff0d7edba90589c302b2e08014340b0b4c718fba28ff0326b519771e379c0a'
 )
 DEFAULT_CONTAINER_IMAGE = (
-    'cgr.dev/chainguard/python:latest@sha256:d812438658b47b73cb4c089f4cca09bca1ba50f6cd1843133864ee074d9ec49b'
+    'cgr.dev/chainguard/python:latest@sha256:8d518c3454134ac288e7efd0460d0e9856a046f60e23dc0d2cd02161195bda3e'
 )
 
 
@@ -1936,6 +1936,8 @@ class ContainerEnvironments:
         requirements = self._side_requirements(repo, sha)
         if not requirements:
             return
+        # Remove once PyYAML publishes cp315 wheels.
+        requirements = (*requirements, "Cython>=3.0; python_version >= '3.15'")
         # Same filesystem as the wheelhouse, so promotion is an atomic rename.
         with tempfile.TemporaryDirectory(prefix='liveness-primer-fetch-', dir=wheelhouse.parent) as scratch:
             staging = Path(scratch)
