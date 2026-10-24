@@ -12,8 +12,8 @@ independently of the package version; `liveness-primer --version` prints both.
 
 ### Security
 
-- **Default images** Upgrade default containers to use uv versions that remove
-  compromised emSign certificates
+- **Default images** Upgrade default containers to 3.15 images that remove
+  compromised emSign certificates.
 
 
 ## [0.2.0] - 2026-09-18

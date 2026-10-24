@@ -1314,10 +1314,11 @@ def test_cold_pair_builds_images_and_prepares_side_workspaces(tmp_path: Path, de
     # Two fetches: base first (no find-links), then head reusing the base
     # wheelhouse read-only — the shared closure is downloaded only once.
     (base_fetch, head_fetch) = docker.prefetches
-    assert base_fetch == (DEFAULT_CONTAINER_BUILDER_IMAGE, ('tomli>=2', 'setuptools>=61', 'Cython>=3.0'), None)
+    cython = "Cython>=3.0; python_version >= '3.15'"
+    assert base_fetch == (DEFAULT_CONTAINER_BUILDER_IMAGE, ('tomli>=2', 'setuptools>=61', cython), None)
     head_image, head_reqs, head_links = head_fetch
     assert head_image == DEFAULT_CONTAINER_BUILDER_IMAGE
-    assert head_reqs == ('tomli>=2.1', 'setuptools>=61', 'Cython>=3.0')
+    assert head_reqs == ('tomli>=2.1', 'setuptools>=61', cython)
     assert head_links is not None
     prefetch_indexes = [index for index, event in enumerate(docker.events) if event == 'prefetch']
     assert prefetch_indexes[0] < docker.events.index('build')
