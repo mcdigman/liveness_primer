@@ -8,13 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Report and manifest payloads carry their own `schema_version`, versioned
 independently of the package version; `liveness-primer --version` prints both.
 
-## Unreleased
+## [0.2.1] - 2026-10-23
 
-### Security
+### Changed
 
-- **Default images** Upgrade default containers to 3.15 images that remove
+- **Default images** - Upgrade default containers to 3.15 images that remove
   compromised emSign certificates.
-
+- **Python 3.15** — Make Python 3.15 test and package-install CI jobs required.
 
 ## [0.2.0] - 2026-09-18
 
