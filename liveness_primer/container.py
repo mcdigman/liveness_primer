@@ -1936,6 +1936,7 @@ class ContainerEnvironments:
         requirements = self._side_requirements(repo, sha)
         if not requirements:
             return
+        requirements = (*requirements, 'Cython>=3.0')
         # Same filesystem as the wheelhouse, so promotion is an atomic rename.
         with tempfile.TemporaryDirectory(prefix='liveness-primer-fetch-', dir=wheelhouse.parent) as scratch:
             staging = Path(scratch)
