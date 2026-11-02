@@ -51,7 +51,7 @@ repos:
   - id: ssort
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.17.1
+  rev: v0.17.2
   hooks:
   - id: ruff-check
     args: [--fix, --preview]
@@ -67,8 +67,8 @@ repos:
     # isolated hook environment can resolve them.
     additional_dependencies:
       - pydantic>=2.14.1
-      - platformdirs>=4.13.3
-      - filelock>=4.2.0
+      - platformdirs>=4.13.5
+      - filelock>=4.2.4
       - packaging>=26.3
       - PyYAML>=6.0.3
       - types-PyYAML
