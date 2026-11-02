@@ -931,9 +931,10 @@ def test_validate_container_native_tool_wraps_descriptor_errors(
         message = 'denied descriptor'
         raise PermissionError(message)
 
-    monkeypatch.setattr(os, 'fstat', deny_fstat)
-    with pytest.raises(ContainerError, match='cannot read native helper SKYLOS_GO_BIN: denied descriptor'):
-        validate_container_native_tool_platform(tool, 'aarch64')
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'fstat', deny_fstat)
+        with pytest.raises(ContainerError, match='cannot read native helper SKYLOS_GO_BIN: denied descriptor'):
+            validate_container_native_tool_platform(tool, 'aarch64')
 
 
 def test_validate_container_native_tool_wraps_read_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
