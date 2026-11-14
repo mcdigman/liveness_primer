@@ -5,7 +5,7 @@
 // is any static file host.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -61,8 +61,8 @@ export function serve(port = PORT, host = HOST) {
     if (path === '' || path.endsWith('/')) {
       path += 'index.html';
     }
-    const file = normalize(join(dist, path));
-    if (!file.startsWith(dist)) {
+    const file = resolve(dist, `./${path}`);
+    if (!file.startsWith(dist + sep)) {
       response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
       response.end('forbidden');
       return;
